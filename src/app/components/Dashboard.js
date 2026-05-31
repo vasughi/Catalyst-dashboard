@@ -9,10 +9,18 @@ const C = {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function repairJSON(str) {
+  if (!str || typeof str !== 'string') throw new Error('Empty response from AI')
   let s = str.replace(/```json|```/g,'').trim()
+  // If response starts with { already (from prefilling) use as-is
   const start = s.indexOf('{')
-  if (start === -1) throw new Error('No JSON found in response')
+  if (start === -1) {
+    // Show first 100 chars of what we got to help debug
+    throw new Error(`AI returned text instead of JSON: "${s.slice(0,100)}"`)
+  }
   s = s.slice(start)
+  // Try direct parse first
+  try { return JSON.parse(s) } catch {}
+  // Try to close any open brackets
   const opens = []
   let inStr = false, esc = false
   for (let i = 0; i < s.length; i++) {
@@ -24,9 +32,10 @@ function repairJSON(str) {
     if (c==='{'||c==='[') opens.push(c==='{'?'}':']')
     if (c==='}'||c===']') opens.pop()
   }
-  try { return JSON.parse(s) } catch {}
   const fixed = s.replace(/,\s*([}\]])/g,'$1').trimEnd() + opens.reverse().join('')
-  try { return JSON.parse(fixed) } catch(e) { throw new Error('Could not parse AI response') }
+  try { return JSON.parse(fixed) } catch(e) {
+    throw new Error(`Could not parse AI response. Got: "${s.slice(0,80)}"`)
+  }
 }
 
 // ── UI Components ─────────────────────────────────────────────────────────────
