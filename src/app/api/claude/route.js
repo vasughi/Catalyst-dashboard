@@ -13,11 +13,8 @@ export async function POST(request) {
     }
 
     let body
-    try {
-      body = JSON.parse(text)
-    } catch {
-      return NextResponse.json({ error: 'Invalid JSON in request' }, { status: 400 })
-    }
+    try { body = JSON.parse(text) }
+    catch { return NextResponse.json({ error: 'Invalid JSON in request' }, { status: 400 }) }
 
     const prompt = body?.prompt
     const mode = body?.mode || 'section'
@@ -35,8 +32,9 @@ export async function POST(request) {
       },
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
-        max_tokens: mode === 'deepdive' ? 600 : 1000,
-        system: 'Return ONLY valid compact JSON. No markdown. No backticks. No explanation.',
+        // Increased from 1000 — was cutting off JSON mid-response
+        max_tokens: mode === 'deepdive' ? 800 : 2000,
+        system: 'Return ONLY valid compact JSON. No markdown. No backticks. No explanation. Be concise — use short values.',
         messages: [{ role: 'user', content: prompt.trim() }]
       })
     })
