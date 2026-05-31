@@ -38,7 +38,7 @@ export async function POST(request) {
   const makeRequest = async (useWebSearch) => {
     const requestBody = {
       model: 'claude-sonnet-4-6',
-      max_tokens: mode === 'deepdive' ? 2000 : 4000,
+      max_tokens: mode === 'deepdive' ? 500 : 1000,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: prompt }]
     }
