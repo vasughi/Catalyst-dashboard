@@ -465,11 +465,11 @@ export default function Dashboard() {
   const [drillLoading, setDrillLoading] = useState(false)
   const [lastUpdated, setLastUpdated] = useState({})
 
-  const callAPI = useCallback(async (prompt, mode = 'section') => {
+  const callAPI = useCallback(async (payload) => {
     const res = await fetch('/api/claude', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, mode })
+      body: JSON.stringify(payload)
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
@@ -480,7 +480,7 @@ export default function Dashboard() {
     setLoading(p => ({ ...p, [key]: true }))
     setErrors(p => ({ ...p, [key]: null }))
     try {
-      const data = await callAPI(SECTIONS[key].prompt, 'section')
+      const data = await callAPI({ mode: 'section', sectionKey: key })
       const textBlock = data.content?.find(b => b.type === 'text')
       if (!textBlock) throw new Error('No response from AI')
       const clean = textBlock.text.replace(/```json|```/g, '').trim()
@@ -504,10 +504,10 @@ export default function Dashboard() {
     setDrillLoading(true)
     setDrillContent(null)
     try {
-      const data = await callAPI(
-        `Brief analysis of ${opp.ticker} (${opp.company}): key risks, recent news, technical setup, analyst view. Be concise. Mark each point FACT or ANALYSIS.`,
-        'deepdive'
-      )
+      const data = await callAPI({
+        mode: 'deepdive',
+        prompt: `Search for current real info on ${opp.ticker} (${opp.company}). Cover: latest news today, recent analyst price targets, insider activity last 30 days, last earnings result, key upcoming catalysts, technical trend. Mark each point FACT or ANALYSIS. Say INSUFFICIENT EVIDENCE if no real data found.`
+      })
       const textBlock = data.content?.find(b => b.type === 'text')
       setDrillContent(textBlock?.text || 'No data found.')
     } catch (err) {
