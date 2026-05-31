@@ -6,44 +6,38 @@ const SECTIONS = {
   opportunities: {
     label: '🔥 Top Opportunities',
     color: '#f59e0b',
-    prompt: `Search current market data and find up to 10 stocks passing ALL gates:
-1. Return Gate: 15%+ upside path identifiable with evidence
-2. Catalyst dated within 40 trading days
-3. Risk/Reward minimum 3:1
-4. Stop loss within 8% of entry
-5. Not already fully priced in
-Return JSON only with this exact structure:
-{"count":0,"marketCondition":"BUY AGGRESSIVELY","opportunities":[{"rank":1,"ticker":"","company":"","market":"US","sector":"","action":"BUY","currentPrice":"","entryZone":"","stopLoss":"","takeProfit":"","expectedGain":"","confidence":7,"riskLevel":"MEDIUM","catalyst":"","catalystDate":"","mispricingReason":"","returnMechanism":"","riskReward":"3:1","allocation":"10%","buyNow":"YES","thesis":"","invalidation":""}],"cashRecommendation":"","lastUpdated":""}`
+    prompt: `Find 3-5 swing trade opportunities with 15%+ upside in 5-40 days. Return JSON only:
+{"marketCondition":"BUY SELECTIVELY","opportunities":[{"rank":1,"ticker":"NVDA","company":"Nvidia","action":"BUY","currentPrice":"$950","entryZone":"$940-960","stopLoss":"$870","takeProfit":"$1100","expectedGain":"16%","confidence":7,"riskLevel":"MEDIUM","catalyst":"Earnings beat expected","catalystDate":"May 2025","riskReward":"3:1","allocation":"10%","buyNow":"YES","thesis":"Strong AI demand driving revenue growth","invalidation":"Earnings miss or guidance cut"}],"cashRecommendation":"Keep 40% cash","lastUpdated":"today"}`
   },
   global: {
     label: '🌍 Global Overview',
     color: '#00d4aa',
-    prompt: `Search current global market data. Return JSON only:
-{"sentiment":"RISK ON","sentimentReason":"","markets":[{"name":"Nikkei","value":"","change":"","direction":"up"}],"commodities":[{"name":"Oil WTI","value":"","change":"","direction":"up"}],"currencies":[{"pair":"DXY","value":"","change":""}],"bonds":[{"name":"US 10Y","yield":"","change":""}],"macroEvents":[{"date":"","event":"","impact":"HIGH"}],"lastUpdated":""}`
+    prompt: `Give current global market snapshot. Return JSON only:
+{"sentiment":"RISK ON","sentimentReason":"Markets rising on strong earnings","markets":[{"name":"S&P 500","value":"5,200","change":"+0.5%","direction":"up"},{"name":"NASDAQ","value":"16,400","change":"+0.8%","direction":"up"},{"name":"FTSE 100","value":"8,100","change":"+0.3%","direction":"up"},{"name":"DAX","value":"18,200","change":"+0.4%","direction":"up"},{"name":"Nikkei","value":"38,000","change":"-0.2%","direction":"down"}],"commodities":[{"name":"Oil WTI","value":"$78","change":"-0.5%","direction":"down"},{"name":"Gold","value":"$2,320","change":"+0.3%","direction":"up"}],"currencies":[{"pair":"DXY","value":"104.5","change":"-0.1%"},{"pair":"GBP/USD","value":"1.27","change":"+0.2%"}],"bonds":[{"name":"US 10Y","yield":"4.45%","change":"+2bps"}],"macroEvents":[{"date":"This week","event":"Fed meeting minutes","impact":"HIGH"}],"lastUpdated":"today"}`
   },
   us: {
     label: '🇺🇸 US Pre-Market',
     color: '#4f9eff',
-    prompt: `Search current US pre-market data. Return JSON only:
-{"outlook":"BULLISH","outlookReason":"","futures":[{"index":"S&P 500","value":"","change":"","direction":"up"}],"preMarketMovers":[{"ticker":"","company":"","change":"","direction":"up","reason":""}],"earningsThisWeek":[{"ticker":"","company":"","date":"","consensus":"","expectedReaction":""}],"catalysts":[{"type":"","detail":"","impact":"HIGH"}],"sectorLeaders":[],"sectorLaggards":[],"lastUpdated":""}`
+    prompt: `Give US pre-market summary. Return JSON only:
+{"outlook":"BULLISH","outlookReason":"Futures up on strong earnings","futures":[{"index":"S&P 500","value":"5,210","change":"+0.4%","direction":"up"},{"index":"NASDAQ","value":"16,450","change":"+0.6%","direction":"up"},{"index":"Dow","value":"39,100","change":"+0.2%","direction":"up"}],"preMarketMovers":[{"ticker":"NVDA","company":"Nvidia","change":"+3.2%","direction":"up","reason":"Strong earnings beat"},{"ticker":"AAPL","company":"Apple","change":"-1.1%","direction":"down","reason":"iPhone sales concern"}],"earningsThisWeek":[{"ticker":"MSFT","company":"Microsoft","date":"Wednesday","consensus":"$2.82 EPS","expectedReaction":"+5% if beat"}],"catalysts":[{"type":"Fed","detail":"FOMC minutes release","impact":"HIGH"}],"sectorLeaders":["Technology","Energy"],"sectorLaggards":["Utilities","Real Estate"],"lastUpdated":"today"}`
   },
   europe: {
     label: '🇪🇺 Europe Pre-Market',
     color: '#a78bfa',
-    prompt: `Search current European pre-market data. Return JSON only:
-{"outlook":"BULLISH","outlookReason":"","futures":[{"index":"FTSE 100","value":"","change":"","direction":"up"}],"preMarketMovers":[{"ticker":"","company":"","change":"","direction":"up","reason":""}],"earningsThisWeek":[{"ticker":"","company":"","date":"","expectedReaction":""}],"catalysts":[{"type":"","detail":"","impact":"HIGH"}],"sectorLeaders":[],"sectorLaggards":[],"lastUpdated":""}`
+    prompt: `Give Europe pre-market summary. Return JSON only:
+{"outlook":"NEUTRAL","outlookReason":"Mixed signals from ECB","futures":[{"index":"FTSE 100","value":"8,120","change":"+0.2%","direction":"up"},{"index":"DAX","value":"18,250","change":"+0.3%","direction":"up"},{"index":"CAC 40","value":"8,050","change":"-0.1%","direction":"down"}],"preMarketMovers":[{"ticker":"ASML","company":"ASML Holding","change":"+2.1%","direction":"up","reason":"Strong order book"}],"earningsThisWeek":[{"ticker":"SAP","company":"SAP SE","date":"Tuesday","expectedReaction":"+3% if beat"}],"catalysts":[{"type":"ECB","detail":"ECB rate decision","impact":"HIGH"}],"sectorLeaders":["Semiconductors","Defence"],"sectorLaggards":["Banks","Retail"],"lastUpdated":"today"}`
   },
   catalysts: {
     label: '📅 Catalyst Calendar',
     color: '#34d399',
-    prompt: `Search upcoming catalysts next 40 trading days across AI Infrastructure, Semiconductors, Data Centres, Defence, Aerospace, Cybersecurity. Return JSON only:
-{"catalysts":[{"date":"","ticker":"","company":"","type":"Earnings","detail":"","expectedImpact":"HIGH","opportunity":"BUY BEFORE"}],"lastUpdated":""}`
+    prompt: `List key upcoming catalysts for swing traders. Return JSON only:
+{"catalysts":[{"date":"This week","ticker":"NVDA","company":"Nvidia","type":"Earnings","detail":"Q1 earnings - consensus $5.50 EPS","expectedImpact":"HIGH","opportunity":"BUY BEFORE"},{"date":"This week","ticker":"MSFT","company":"Microsoft","type":"Earnings","detail":"Q3 earnings - Azure growth key","expectedImpact":"HIGH","opportunity":"WATCH"},{"date":"Next week","ticker":"AMD","company":"AMD","type":"Product Launch","detail":"New AI chip announcement","expectedImpact":"MEDIUM","opportunity":"BUY BEFORE"}],"lastUpdated":"today"}`
   },
   risk: {
     label: '⚠️ Risk Dashboard',
     color: '#f87171',
-    prompt: `Search current global risk factors. Return JSON only:
-{"overallRisk":"MODERATE","macroRisks":[{"risk":"","detail":"","severity":"HIGH"}],"geopoliticalRisks":[{"risk":"","detail":"","severity":"MEDIUM"}],"sectorRisks":[{"sector":"","risk":"","severity":"LOW"}],"hedgeIdeas":[],"lastUpdated":""}`
+    prompt: `Give current market risk assessment. Return JSON only:
+{"overallRisk":"MODERATE","macroRisks":[{"risk":"Fed rate uncertainty","detail":"Higher for longer narrative returning","severity":"HIGH"},{"risk":"Inflation sticky","detail":"CPI above 3% target","severity":"MEDIUM"}],"geopoliticalRisks":[{"risk":"Middle East tensions","detail":"Oil supply risk","severity":"MEDIUM"}],"sectorRisks":[{"sector":"Technology","risk":"High valuations","severity":"MEDIUM"},{"sector":"Banks","risk":"Commercial real estate exposure","severity":"HIGH"}],"hedgeIdeas":["Buy gold ETF as hedge","Reduce tech concentration","Keep 30%+ cash"],"lastUpdated":"today"}`
   }
 }
 
@@ -84,8 +78,8 @@ function LoadingState({ color }) {
   return (
     <div style={{ textAlign: 'center', padding: '60px 20px' }}>
       <div style={{ fontSize: 36, marginBottom: 12, display: 'inline-block', animation: 'spin 1s linear infinite' }}>⟳</div>
-      <div style={{ color, fontWeight: 600, marginBottom: 6 }}>Searching live market data…</div>
-      <div style={{ color: C.muted, fontSize: 13 }}>This takes 15–30 seconds</div>
+      <div style={{ color, fontWeight: 600, marginBottom: 6 }}>Generating analysis…</div>
+      <div style={{ color: C.muted, fontSize: 13 }}>Usually takes 5–10 seconds</div>
     </div>
   )
 }
@@ -95,7 +89,7 @@ function ErrorState({ error, onRetry }) {
     <div style={{ textAlign: 'center', padding: '60px 20px' }}>
       <div style={{ fontSize: 32, marginBottom: 12 }}>⚠️</div>
       <div style={{ color: C.down, fontWeight: 600, marginBottom: 8 }}>Could not fetch data</div>
-      <div style={{ color: C.muted, fontSize: 13, marginBottom: 8, maxWidth: 500, margin: '0 auto 20px' }}>{error}</div>
+      <div style={{ color: C.muted, fontSize: 13, marginBottom: 20, maxWidth: 500, margin: '0 auto 20px' }}>{error}</div>
       <button onClick={onRetry} style={{
         background: C.down + '22', border: `1px solid ${C.down}55`, color: C.down,
         borderRadius: 6, padding: '8px 20px', cursor: 'pointer', fontWeight: 600, fontFamily: 'inherit'
@@ -109,7 +103,7 @@ function EmptyState({ section, onLoad }) {
     <div style={{ textAlign: 'center', padding: '80px 20px' }}>
       <div style={{ fontSize: 44, marginBottom: 16 }}>{section.label.split(' ')[0]}</div>
       <div style={{ color: C.text, fontWeight: 600, marginBottom: 8, fontSize: 16 }}>{section.label.replace(/^.\s/, '')}</div>
-      <div style={{ color: C.muted, fontSize: 14, marginBottom: 28 }}>Click below to fetch live data</div>
+      <div style={{ color: C.muted, fontSize: 14, marginBottom: 28 }}>Click below to generate analysis</div>
       <button onClick={onLoad} style={{
         background: section.color + '22', border: `1px solid ${section.color}`,
         color: section.color, borderRadius: 8, padding: '12px 32px',
@@ -129,7 +123,7 @@ function RefreshBtn({ onClick, loading }) {
       fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'inherit'
     }}>
       <span style={{ display: 'inline-block', animation: loading ? 'spin 1s linear infinite' : 'none' }}>↻</span>
-      {loading ? 'Fetching…' : 'Refresh'}
+      {loading ? 'Generating…' : 'Refresh'}
     </button>
   )
 }
@@ -146,7 +140,7 @@ function GlobalView({ data }) {
         </div>
       </Card>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(260px,1fr))', gap: 12 }}>
-        {[{ title: 'Equity Futures', items: data.markets }, { title: 'Commodities', items: data.commodities }].map(g => g.items?.length > 0 && (
+        {[{ title: 'Equity Markets', items: data.markets }, { title: 'Commodities', items: data.commodities }].map(g => g.items?.length > 0 && (
           <Card key={g.title}>
             <SectionHeader title={g.title} />
             {g.items.map((it, i) => (
@@ -315,7 +309,7 @@ function OpportunitiesView({ data, onStockClick }) {
             <Badge color={mc[data.marketCondition] || C.muted}>{data.marketCondition}</Badge>
           </div>
           <div style={{ textAlign: 'center' }}>
-            <div style={{ color: C.muted, fontSize: 11, marginBottom: 4 }}>QUALIFIED OPPORTUNITIES</div>
+            <div style={{ color: C.muted, fontSize: 11, marginBottom: 4 }}>OPPORTUNITIES</div>
             <div style={{ color: C.accent, fontWeight: 800, fontSize: 28 }}>{(data.opportunities || []).length}</div>
           </div>
           <div style={{ maxWidth: 280 }}>
@@ -339,7 +333,7 @@ function CatalystsView({ data }) {
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
         <thead>
           <tr>{['Date', 'Ticker', 'Company', 'Type', 'Detail', 'Impact', 'Opportunity'].map(h => (
-            <th key={h} style={{ color: C.muted, fontWeight: 600, fontSize: 11, textAlign: 'left', padding: '8px 12px', borderBottom: `1px solid ${C.border}`, textTransform: 'uppercase', letterSpacing: 0.5 }}>{h}</th>
+            <th key={h} style={{ color: C.muted, fontWeight: 600, fontSize: 11, textAlign: 'left', padding: '8px 12px', borderBottom: `1px solid ${C.border}`, textTransform: 'uppercase' }}>{h}</th>
           ))}</tr>
         </thead>
         <tbody>
@@ -375,25 +369,25 @@ function RiskView({ data }) {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(260px,1fr))', gap: 12 }}>
         {[{ title: 'Macro Risks', items: data.macroRisks }, { title: 'Geopolitical Risks', items: data.geopoliticalRisks }, { title: 'Sector Risks', items: data.sectorRisks }]
           .filter(g => g.items?.length > 0).map(g => (
-          <Card key={g.title}>
-            <SectionHeader title={g.title} />
-            {g.items.map((it, i) => {
-              const sc = it.severity === 'HIGH' ? C.down : it.severity === 'MEDIUM' ? '#f59e0b' : C.muted
-              return (
-                <div key={i}>
-                  <div style={{ padding: '8px 0' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-                      <span style={{ color: C.text, fontSize: 13, fontWeight: 600 }}>{it.risk || it.sector}</span>
-                      <Badge color={sc}>{it.severity}</Badge>
+            <Card key={g.title}>
+              <SectionHeader title={g.title} />
+              {g.items.map((it, i) => {
+                const sc = it.severity === 'HIGH' ? C.down : it.severity === 'MEDIUM' ? '#f59e0b' : C.muted
+                return (
+                  <div key={i}>
+                    <div style={{ padding: '8px 0' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                        <span style={{ color: C.text, fontSize: 13, fontWeight: 600 }}>{it.risk || it.sector}</span>
+                        <Badge color={sc}>{it.severity}</Badge>
+                      </div>
+                      <div style={{ color: C.muted, fontSize: 12 }}>{it.detail || it.risk}</div>
                     </div>
-                    <div style={{ color: C.muted, fontSize: 12 }}>{it.detail || it.risk}</div>
+                    <Divider index={i} total={g.items.length} />
                   </div>
-                  <Divider index={i} total={g.items.length} />
-                </div>
-              )
-            })}
-          </Card>
-        ))}
+                )
+              })}
+            </Card>
+          ))}
       </div>
       {data.hedgeIdeas?.length > 0 && (
         <Card>
@@ -419,7 +413,7 @@ function DeepDiveModal({ opp, onClose, onRefresh, loading, content }) {
             <span style={{ color: C.muted, fontSize: 14 }}>{opp.company}</span>
             <Badge color={ac}>{opp.action}</Badge>
           </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', color: C.muted, fontSize: 22, cursor: 'pointer', lineHeight: 1 }}>✕</button>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: C.muted, fontSize: 22, cursor: 'pointer' }}>✕</button>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(130px,1fr))', gap: 10, marginBottom: 20 }}>
           {[
@@ -444,7 +438,6 @@ function DeepDiveModal({ opp, onClose, onRefresh, loading, content }) {
           <SectionHeader title="Catalyst" />
           <div style={{ color: C.accent, fontSize: 14, fontWeight: 600 }}>{opp.catalyst}</div>
           {opp.catalystDate && <div style={{ color: C.muted, fontSize: 13, marginTop: 4 }}>Expected: {opp.catalystDate}</div>}
-          {opp.mispricingReason && <div style={{ color: C.text, fontSize: 13, marginTop: 8 }}>Why mispriced: {opp.mispricingReason}</div>}
         </Card>
         <Card style={{ marginBottom: 16, borderColor: C.down + '44' }}>
           <SectionHeader title="⚠ What Would Change My Mind" />
@@ -452,7 +445,7 @@ function DeepDiveModal({ opp, onClose, onRefresh, loading, content }) {
         </Card>
         {loading ? <LoadingState color={C.accent} /> : content && (
           <Card>
-            <SectionHeader title="Live Deep Dive Analysis" />
+            <SectionHeader title="Deep Dive Analysis" />
             <div style={{ color: C.text, fontSize: 13, lineHeight: 1.8, whiteSpace: 'pre-wrap' }}>{content}</div>
           </Card>
         )}
@@ -479,9 +472,7 @@ export default function Dashboard() {
       body: JSON.stringify({ prompt, mode })
     })
     const data = await res.json()
-    if (!res.ok) {
-      throw new Error(data.error || data.detail || `HTTP ${res.status}`)
-    }
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
     return data
   }, [])
 
@@ -489,19 +480,16 @@ export default function Dashboard() {
     setLoading(p => ({ ...p, [key]: true }))
     setErrors(p => ({ ...p, [key]: null }))
     try {
-      const section = SECTIONS[key]
-      const data = await callAPI(section.prompt, 'section')
+      const data = await callAPI(SECTIONS[key].prompt, 'section')
       const textBlock = data.content?.find(b => b.type === 'text')
-      if (!textBlock) throw new Error('No text response received from AI')
+      if (!textBlock) throw new Error('No response from AI')
       const clean = textBlock.text.replace(/```json|```/g, '').trim()
       let parsed
-      try {
-        parsed = JSON.parse(clean)
-      } catch {
-        // Try to extract JSON from the response
+      try { parsed = JSON.parse(clean) }
+      catch {
         const match = clean.match(/\{[\s\S]*\}/)
         if (match) parsed = JSON.parse(match[0])
-        else throw new Error('AI returned invalid JSON format')
+        else throw new Error('Invalid JSON from AI')
       }
       setSectionData(p => ({ ...p, [key]: parsed }))
       setLastUpdated(p => ({ ...p, [key]: new Date().toLocaleTimeString() }))
@@ -517,13 +505,13 @@ export default function Dashboard() {
     setDrillContent(null)
     try {
       const data = await callAPI(
-        `Deep dive on ${opp.ticker} (${opp.company}). Search for: latest news, analyst price targets, insider activity last 30 days, recent earnings and guidance, technical setup, key risks. Plain English. Mark each finding FACT, ANALYSIS, or OPINION. Say INSUFFICIENT EVIDENCE if data missing.`,
+        `Brief analysis of ${opp.ticker} (${opp.company}): key risks, recent news, technical setup, analyst view. Be concise. Mark each point FACT or ANALYSIS.`,
         'deepdive'
       )
       const textBlock = data.content?.find(b => b.type === 'text')
-      setDrillContent(textBlock?.text || 'No additional data found.')
+      setDrillContent(textBlock?.text || 'No data found.')
     } catch (err) {
-      setDrillContent('Could not fetch deep dive: ' + err.message)
+      setDrillContent('Error: ' + err.message)
     } finally {
       setDrillLoading(false)
     }
