@@ -310,8 +310,8 @@ export default function Dashboard() {
   }, [])
 
   const setDone = useCallback((key) => {
-    setLoadStep((p) => ({ ...p, [key]: -1 }))
-  }, [])
+  setLoadStep((p) => ({ ...p, -1 }))
+}, [])
 
   const loadGlobal = useCallback(async () => {
     setLoadStep((p) => ({ ...p, global: 0 }))
