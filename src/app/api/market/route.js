@@ -313,22 +313,61 @@ export async function GET(request) {
     // ── EUROPE PRE-MARKET ──────────────────────────────────────────────────
     if (type === 'europe') {
       const meta = baseMeta(type)
-      const etfs = { EWG: 'DAX (EWG)', EWQ: 'CAC 40 (EWQ)', EWU: 'FTSE 100 (EWU)' }
-      const q    = await quotes(Object.keys(etfs))
 
-      return resp({
-        meta,
-        futures: Object.entries(etfs).map(([sym, label]) => {
-          const d = q[sym]
-          if (!d) return null
+      // Index ETF proxies for the headline numbers
+      const indexEtfs = { EWG: 'DAX', EWQ: 'CAC 40', EWU: 'FTSE 100' }
+
+      // Real European stocks available on US exchanges (ADRs) or direct listings
+      // These are tradeable on Trading 212 and have real price data on Finnhub
+      const europeanStocks = [
+        { sym: 'RHMG.DE', name: 'Rheinmetall',    sector: 'Defence' },
+        { sym: 'BA.L',    name: 'BAE Systems',     sector: 'Defence' },
+        { sym: 'RR.L',    name: 'Rolls-Royce',     sector: 'Aerospace' },
+        { sym: 'AIR.PA',  name: 'Airbus',          sector: 'Aerospace' },
+        { sym: 'SAP',     name: 'SAP SE (ADR)',    sector: 'Software' },
+        { sym: 'ASML',    name: 'ASML (ADR)',      sector: 'Semis' },
+        { sym: 'SIE.DE',  name: 'Siemens',         sector: 'Industrial' },
+        { sym: 'ENR.DE',  name: 'Siemens Energy',  sector: 'Grid/Power' },
+      ]
+
+      const [indexQ, stockQ] = await Promise.all([
+        quotes(Object.keys(indexEtfs)),
+        quotes(europeanStocks.map(s => s.sym)),
+      ])
+
+      const indices = Object.entries(indexEtfs).map(([sym, label]) => {
+        const d = indexQ[sym]
+        if (!d) return null
+        return {
+          index: label,
+          value: d.price.toLocaleString('en-US', { maximumFractionDigits: 2 }),
+          change: `${d.changePct >= 0 ? '+' : ''}${d.changePct.toFixed(2)}%`,
+          direction: d.changePct >= 0 ? 'up' : 'down',
+          provider: 'finnhub',
+        }
+      }).filter(Boolean)
+
+      const stocks = europeanStocks
+        .filter(s => stockQ[s.sym])
+        .map(s => {
+          const d = stockQ[s.sym]
           return {
-            index: label,
-            value: d.price.toLocaleString('en-US', { maximumFractionDigits: 2 }),
-            change: `${d.changePct >= 0 ? '+' : ''}${d.changePct.toFixed(2)}%`,
+            ticker: s.sym,
+            name: s.name,
+            sector: s.sector,
+            price: d.price,
+            priceFormatted: d.price.toFixed(2),
+            changePct: d.changePct,
+            change1d: `${d.changePct >= 0 ? '+' : ''}${d.changePct.toFixed(2)}%`,
             direction: d.changePct >= 0 ? 'up' : 'down',
             provider: 'finnhub',
           }
-        }).filter(Boolean),
+        })
+
+      return resp({
+        meta,
+        futures: indices,
+        europeanStocks: stocks,
       })
     }
 
@@ -385,10 +424,34 @@ export async function GET(request) {
         cyber:    sectorQ['CIBR'] ? (sectorQ['CIBR'].changePct > 0 ? 'BULLISH' : 'BEARISH') : 'UNKNOWN',
       }
 
-      // Build stock objects with SMA data (fetch candles for top movers only to save API calls)
-      // We prioritise stocks with imminent earnings first
+      // Hardcoded fallback dates for stocks Finnhub doesn't have confirmed yet
+      // Update these each quarter when actual dates are announced
+      const FALLBACK_EARNINGS = {
+        NVDA: { date: '2026-08-27', note: 'est — confirm at investor.nvidia.com' },
+        PLTR: { date: '2026-08-04', note: 'est — confirm at investors.palantir.com' },
+        CRWD: { date: '2026-08-26', note: 'est — confirm at ir.crowdstrike.com' },
+        AMD:  { date: '2026-07-29', note: 'est — confirm at ir.amd.com' },
+        SMCI: { date: '2026-08-05', note: 'est — confirm at investors.supermicro.com' },
+      }
+
+      // Merge Finnhub calendar with fallbacks (Finnhub takes priority when available)
       const earningsMap = {}
       universeEarnings.forEach(e => { earningsMap[e.ticker] = e })
+      Object.entries(FALLBACK_EARNINGS).forEach(([ticker, fb]) => {
+        if (!earningsMap[ticker]) {
+          const days = tradingDaysUntil(fb.date)
+          if (days !== null && days >= 0) {
+            earningsMap[ticker] = {
+              ticker,
+              date: fb.date,
+              tradingDaysAway: days,
+              epsEstimate: null,
+              source: 'fallback_estimate',
+              note: fb.note,
+            }
+          }
+        }
+      })
 
       const stocks = UNIVERSE
         .filter(sym => stockQuotes[sym])
