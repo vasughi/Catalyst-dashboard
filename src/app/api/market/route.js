@@ -1,17 +1,12 @@
 /**
- * CATALYST DASHBOARD — src/app/api/market/route.js
+ * CATALYST v2 — src/app/api/market/route.js
  *
- * FIXED VERSION: Uses Finnhub instead of scraping Yahoo Finance.
+ * Fetches from Finnhub (free, no CC, 60 calls/min).
+ * Adds: earnings calendar, VIX proxy, sector ETF trends, SMA data.
  *
- * Why: Yahoo Finance blocks all Vercel/cloud datacenter IPs.
- * Finnhub: truly free, no credit card, 60 calls/min, real-time US quotes.
- *
- * Setup:
- *   1. Sign up free at https://finnhub.io (no credit card)
- *   2. Copy your API key from the dashboard
- *   3. In Vercel → Settings → Environment Variables, add:
- *        FINNHUB_API_KEY = your_key_here
- *   4. Drop this file at src/app/api/market/route.js and redeploy
+ * Env vars needed in Vercel:
+ *   FINNHUB_API_KEY  — from finnhub.io (free)
+ *   ANTHROPIC_API_KEY — from console.anthropic.com
  */
 
 import { NextResponse } from 'next/server'
@@ -19,8 +14,8 @@ import { NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
-const FH = 'https://finnhub.io/api/v1'
-const KEY = process.env.FINNHUB_API_KEY
+const FH   = 'https://finnhub.io/api/v1'
+const KEY  = process.env.FINNHUB_API_KEY
 
 const NO_STORE = {
   'Cache-Control': 'no-store, no-cache, must-revalidate',
@@ -28,7 +23,7 @@ const NO_STORE = {
   Expires: '0',
 }
 
-function ok(body, status = 200) {
+function resp(body, status = 200) {
   return NextResponse.json(body, { status, headers: NO_STORE })
 }
 
@@ -43,141 +38,220 @@ function baseMeta(type) {
   }
 }
 
-// Single Finnhub quote: GET /quote?symbol=AAPL&token=KEY
-// Returns: { c: current, d: change, dp: changePct, h, l, o, pc: prevClose }
-async function fhQuote(symbol) {
-  const res = await fetch(`${FH}/quote?symbol=${encodeURIComponent(symbol)}&token=${KEY}`, {
-    cache: 'no-store',
-  })
-  if (!res.ok) return null
-  const d = await res.json()
-  if (!d || d.c === 0) return null
-  return { symbol, price: d.c, changePct: d.dp ?? 0, changeAmt: d.d ?? 0, prevClose: d.pc }
+// ─── Finnhub helpers ─────────────────────────────────────────────────────────
+
+async function fh(path) {
+  const sep = path.includes('?') ? '&' : '?'
+  const res = await fetch(`${FH}${path}${sep}token=${KEY}`, { cache: 'no-store' })
+  if (!res.ok) throw new Error(`Finnhub ${path} → ${res.status}`)
+  return res.json()
 }
 
-// Batch quotes — Finnhub free tier has no batch endpoint so we fan out.
-// 60 calls/min free, so parallel is fine for our universe sizes.
-async function fhQuotes(symbols) {
-  const results = await Promise.allSettled(symbols.map(fhQuote))
+// Single quote: { c, d, dp, h, l, o, pc }
+async function quote(sym) {
+  try {
+    const d = await fh(`/quote?symbol=${encodeURIComponent(sym)}`)
+    if (!d || d.c === 0) return null
+    return { symbol: sym, price: d.c, changePct: d.dp ?? 0, changeAmt: d.d ?? 0, prevClose: d.pc }
+  } catch { return null }
+}
+
+// Batch quotes in parallel (Finnhub free has no batch endpoint)
+async function quotes(syms) {
+  const res = await Promise.allSettled(syms.map(quote))
   const map = {}
-  results.forEach((r, i) => {
-    if (r.status === 'fulfilled' && r.value) map[symbols[i]] = r.value
-  })
+  res.forEach((r, i) => { if (r.status === 'fulfilled' && r.value) map[syms[i]] = r.value })
   return map
 }
 
-function fmt(q, name) {
-  if (!q) return null
-  const c = q.changePct ?? 0
-  return {
-    name: name || q.symbol,
-    value: q.price.toLocaleString('en-US', { maximumFractionDigits: 2 }),
-    change: `${c >= 0 ? '+' : ''}${c.toFixed(2)}%`,
-    direction: c >= 0 ? 'up' : 'down',
-    sourceTimestamp: new Date().toISOString(),
-    provider: 'finnhub',
+// Candles for SMA calculation: resolution D, last N days
+async function candles(sym, days = 220) {
+  try {
+    const to   = Math.floor(Date.now() / 1000)
+    const from = to - days * 86400
+    const d    = await fh(`/stock/candle?symbol=${encodeURIComponent(sym)}&resolution=D&from=${from}&to=${to}`)
+    if (!d || d.s !== 'ok' || !d.c?.length) return null
+    return d.c  // closing prices array, oldest first
+  } catch { return null }
+}
+
+function sma(prices, period) {
+  if (!prices || prices.length < period) return null
+  const slice = prices.slice(-period)
+  return slice.reduce((a, b) => a + b, 0) / period
+}
+
+function trendLabel(price, sma20, sma50, sma200) {
+  if (!price) return 'UNKNOWN'
+  const a = sma20  ? price > sma20  : null
+  const b = sma50  ? price > sma50  : null
+  const c = sma200 ? price > sma200 : null
+  if (a && b && c) return 'STRONG UPTREND'
+  if (b && c && !a) return 'UPTREND WITH PULLBACK'
+  if (c && !b) return 'RECOVERING'
+  return 'DOWNTREND'
+}
+
+// Earnings calendar for universe (next 40 trading days ≈ 60 calendar days)
+async function earningsCalendar(from, to) {
+  try {
+    const d = await fh(`/calendar/earnings?from=${from}&to=${to}`)
+    return d?.earningsCalendar || []
+  } catch { return [] }
+}
+
+// Company basic financials (for market cap, beta etc)
+async function basicFinancials(sym) {
+  try {
+    const d = await fh(`/stock/metric?symbol=${encodeURIComponent(sym)}&metric=all`)
+    return d?.metric || {}
+  } catch { return {} }
+}
+
+// ─── Date helpers ─────────────────────────────────────────────────────────────
+
+function isoDate(d) {
+  return d.toISOString().split('T')[0]
+}
+
+function addDays(d, n) {
+  const r = new Date(d)
+  r.setDate(r.getDate() + n)
+  return r
+}
+
+function tradingDaysUntil(dateStr) {
+  if (!dateStr) return null
+  const target = new Date(dateStr)
+  const now    = new Date()
+  if (target < now) return -1
+  let days = 0, cur = new Date(now)
+  while (cur < target) {
+    cur.setDate(cur.getDate() + 1)
+    const dow = cur.getDay()
+    if (dow !== 0 && dow !== 6) days++
   }
+  return days
 }
 
-// ─── Finnhub uses different index symbols ────────────────────────────────────
-// Indices on Finnhub free tier are via forexQuote or the ^GSPC format
-// Most reliable: use ETF proxies (free, real-time) for indices
-const INDEX_MAP = {
-  // ETF proxies — track the index closely, available on Finnhub free tier
-  'SP500':    { etf: 'SPY',  label: 'S&P 500' },
-  'NASDAQ':   { etf: 'QQQ',  label: 'NASDAQ' },
-  'DOW':      { etf: 'DIA',  label: 'Dow Jones' },
-  'RUSSELL':  { etf: 'IWM',  label: 'Russell 2000' },
-  'FTSE':     { etf: 'ISF.L', label: 'FTSE 100' },  // London-listed; fallback below
-  'DAX':      { etf: 'EWG',  label: 'DAX' },
-  'CAC':      { etf: 'EWQ',  label: 'CAC 40' },
-  'NIKKEI':   { etf: 'EWJ',  label: 'Nikkei 225' },
-}
-
-// ─── route ───────────────────────────────────────────────────────────────────
+// ─── Route ───────────────────────────────────────────────────────────────────
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url)
   const type = searchParams.get('type')
 
-  if (!type) return ok({ error: 'Missing type parameter' }, 400)
-  if (!KEY)  return ok({ error: 'FINNHUB_API_KEY is not set in environment variables. Add it in Vercel → Settings → Environment Variables.' }, 500)
+  if (!type) return resp({ error: 'Missing type parameter' }, 400)
+  if (!KEY)  return resp({
+    error: 'FINNHUB_API_KEY not set. Go to Vercel → Settings → Environment Variables and add it.',
+  }, 500)
 
   try {
-    // ── GLOBAL OVERVIEW ──────────────────────────────────────────────────────
+
+    // ── GLOBAL OVERVIEW ────────────────────────────────────────────────────
     if (type === 'global') {
       const meta = baseMeta(type)
 
-      // ETF proxies for indices (Finnhub free)
-      const indexEtfs    = ['SPY', 'QQQ', 'DIA', 'IWM', 'EWG', 'EWQ', 'EWJ']
-      // Forex via Finnhub /forex/rates or /quote with FX symbol
-      const forexSymbols = ['OANDA:GBP_USD', 'OANDA:EUR_USD', 'OANDA:USD_JPY']
-      // Commodities
-      const commSymbols  = ['USO', 'GLD']  // ETF proxies for oil & gold
-
       const [indices, forex, comms] = await Promise.all([
-        fhQuotes(indexEtfs),
-        fhQuotes(forexSymbols),
-        fhQuotes(commSymbols),
+        quotes(['SPY','QQQ','DIA','IWM','EWG','EWQ','EWJ','VIXY']),
+        quotes(['OANDA:GBP_USD','OANDA:EUR_USD','OANDA:USD_JPY']),
+        quotes(['USO','GLD','CPER']),
       ])
 
-      const labels = {
-        SPY: 'S&P 500 (SPY)',
-        QQQ: 'NASDAQ (QQQ)',
-        DIA: 'Dow Jones (DIA)',
-        IWM: 'Russell 2000 (IWM)',
-        EWG: 'DAX (EWG)',
-        EWQ: 'CAC 40 (EWQ)',
-        EWJ: 'Nikkei (EWJ)',
+      // VIXY as VIX proxy
+      const vixQ  = indices['VIXY']
+      const vixVal = vixQ ? vixQ.price.toFixed(2) : null
+
+      const fmt = (q, name) => {
+        if (!q) return null
+        const c = q.changePct ?? 0
+        return {
+          name,
+          value: q.price.toLocaleString('en-US', { maximumFractionDigits: 2 }),
+          change: `${c >= 0 ? '+' : ''}${c.toFixed(2)}%`,
+          direction: c >= 0 ? 'up' : 'down',
+          provider: 'finnhub',
+        }
       }
 
-      return ok({
+      return resp({
         meta,
-        markets: indexEtfs.map(s => fmt(indices[s], labels[s])).filter(Boolean),
-        commodities: [
-          fmt(comms['USO'], 'WTI Oil (USO)'),
-          fmt(comms['GLD'], 'Gold (GLD)'),
+        vix: vixVal,
+        vixSignal: vixVal ? (parseFloat(vixVal) > 25 ? 'HIGH_FEAR' : parseFloat(vixVal) > 18 ? 'ELEVATED' : 'CALM') : null,
+        markets: [
+          fmt(indices['SPY'],  'S&P 500 (SPY)'),
+          fmt(indices['QQQ'],  'NASDAQ (QQQ)'),
+          fmt(indices['DIA'],  'Dow Jones (DIA)'),
+          fmt(indices['IWM'],  'Russell 2000 (IWM)'),
+          fmt(indices['EWG'],  'DAX (EWG)'),
+          fmt(indices['EWQ'],  'CAC 40 (EWQ)'),
+          fmt(indices['EWJ'],  'Nikkei (EWJ)'),
         ].filter(Boolean),
-        currencies: (() => {
-          const pairs = [
-            { sym: 'OANDA:GBP_USD', pair: 'GBP/USD', dp: 4 },
-            { sym: 'OANDA:EUR_USD', pair: 'EUR/USD', dp: 4 },
-            { sym: 'OANDA:USD_JPY', pair: 'USD/JPY', dp: 2 },
-          ]
-          return pairs
-            .map(({ sym, pair, dp }) => {
-              const q = forex[sym]
-              if (!q) return null
-              return {
-                pair,
-                value: q.price.toFixed(dp),
-                change: `${q.changePct >= 0 ? '+' : ''}${q.changePct.toFixed(2)}%`,
-                sourceTimestamp: new Date().toISOString(),
-                provider: 'finnhub',
-              }
-            })
-            .filter(Boolean)
-        })(),
+        commodities: [
+          fmt(comms['USO'],  'WTI Oil (USO)'),
+          fmt(comms['GLD'],  'Gold (GLD)'),
+          fmt(comms['CPER'], 'Copper (CPER)'),
+        ].filter(Boolean),
+        currencies: ['OANDA:GBP_USD','OANDA:EUR_USD','OANDA:USD_JPY'].map((sym, i) => {
+          const q = forex[sym]
+          if (!q) return null
+          const pairs = ['GBP/USD','EUR/USD','USD/JPY']
+          const dps   = [4, 4, 2]
+          return {
+            pair: pairs[i],
+            value: q.price.toFixed(dps[i]),
+            change: `${q.changePct >= 0 ? '+' : ''}${q.changePct.toFixed(2)}%`,
+            provider: 'finnhub',
+          }
+        }).filter(Boolean),
         bonds: [],
       })
     }
 
-    // ── US PRE-MARKET ─────────────────────────────────────────────────────────
+    // ── SECTOR ETF HEALTH (used by opportunities tab) ─────────────────────
+    if (type === 'sectors') {
+      // Key sector ETFs — above/below 50 SMA tells us regime
+      const sectorEtfs = ['XLK','ITA','XSD','CIBR','XLE','XLI','XLF']
+      const sectorNames = {
+        XLK:  'Technology',
+        ITA:  'Defence & Aerospace',
+        XSD:  'Semiconductors',
+        CIBR: 'Cybersecurity',
+        XLE:  'Energy',
+        XLI:  'Industrials',
+        XLF:  'Financials',
+      }
+
+      const results = await Promise.allSettled(
+        sectorEtfs.map(async sym => {
+          const [q, closes] = await Promise.all([quote(sym), candles(sym, 60)])
+          if (!q || !closes) return null
+          const s50 = sma(closes, 50)
+          const s20 = sma(closes, 20)
+          return {
+            etf: sym,
+            name: sectorNames[sym] || sym,
+            price: q.price,
+            changePct: q.changePct,
+            sma20: s20 ? parseFloat(s20.toFixed(2)) : null,
+            sma50: s50 ? parseFloat(s50.toFixed(2)) : null,
+            aboveSma50: s50 ? q.price > s50 : null,
+            aboveSma20: s20 ? q.price > s20 : null,
+            trend: s50 ? (q.price > s50 ? 'BULLISH' : 'BEARISH') : 'UNKNOWN',
+          }
+        })
+      )
+
+      return resp({
+        meta: baseMeta(type),
+        sectors: results.map(r => r.status === 'fulfilled' ? r.value : null).filter(Boolean),
+      })
+    }
+
+    // ── US PRE-MARKET ──────────────────────────────────────────────────────
     if (type === 'us') {
       const meta = baseMeta(type)
 
-      // Futures ETFs
-      const futureSymbols = ['SPY', 'QQQ', 'DIA', 'IWM']
-      const futureNames   = {
-        SPY: 'S&P 500 Futures (SPY)',
-        QQQ: 'NASDAQ Futures (QQQ)',
-        DIA: 'Dow Futures (DIA)',
-        IWM: 'Russell 2000 (IWM)',
-      }
-
-      // Top gainers/losers: Finnhub doesn't have a movers screener on free tier,
-      // so we query our swing-trade universe and sort by % change
-      const universe = [
+      const UNIVERSE = [
         'NVDA','AMD','AVGO','TSM','MRVL','ARM',
         'MSFT','GOOGL','META','PLTR',
         'DELL','SMCI','CRWD','PANW','ZS',
@@ -185,136 +259,232 @@ export async function GET(request) {
         'VRT','ETN','CEG','FSLR','ANET','RKLB',
       ]
 
-      const [futures, universeQuotes] = await Promise.all([
-        fhQuotes(futureSymbols),
-        fhQuotes(universe),
+      const [futureQ, universeQ] = await Promise.all([
+        quotes(['SPY','QQQ','DIA','IWM']),
+        quotes(UNIVERSE),
       ])
 
-      const sorted = Object.values(universeQuotes).sort((a, b) => b.changePct - a.changePct)
-      const gainers = sorted.slice(0, 5).map(q => ({
-        ticker: q.symbol,
-        company: q.symbol,
-        price: `$${q.price.toFixed(2)}`,
-        change: `+${q.changePct.toFixed(2)}%`,
-        direction: 'up',
-        sourceTimestamp: new Date().toISOString(),
-        provider: 'finnhub',
-      }))
-      const losers = sorted.slice(-5).reverse().map(q => ({
-        ticker: q.symbol,
-        company: q.symbol,
-        price: `$${q.price.toFixed(2)}`,
-        change: `${q.changePct.toFixed(2)}%`,
-        direction: 'down',
-        sourceTimestamp: new Date().toISOString(),
-        provider: 'finnhub',
-      }))
+      const sorted = Object.values(universeQ).sort((a, b) => b.changePct - a.changePct)
 
-      return ok({
+      return resp({
         meta,
-        futures: futureSymbols.map(s => {
-          const q = futures[s]
-          if (!q) return null
-          return {
-            index: futureNames[s],
-            value: q.price.toLocaleString('en-US', { maximumFractionDigits: 2 }),
-            change: `${q.changePct >= 0 ? '+' : ''}${q.changePct.toFixed(2)}%`,
-            direction: q.changePct >= 0 ? 'up' : 'down',
-            sourceTimestamp: new Date().toISOString(),
-            provider: 'finnhub',
-          }
-        }).filter(Boolean),
-        gainers,
-        losers,
+        futures: [
+          { index: 'S&P 500 (SPY)',      ...futureQ['SPY'] },
+          { index: 'NASDAQ (QQQ)',        ...futureQ['QQQ'] },
+          { index: 'Dow Jones (DIA)',     ...futureQ['DIA'] },
+          { index: 'Russell 2000 (IWM)', ...futureQ['IWM'] },
+        ].filter(f => f.price).map(f => ({
+          index: f.index,
+          value: f.price?.toLocaleString('en-US', { maximumFractionDigits: 2 }),
+          change: `${(f.changePct??0) >= 0 ? '+' : ''}${(f.changePct??0).toFixed(2)}%`,
+          direction: (f.changePct??0) >= 0 ? 'up' : 'down',
+          provider: 'finnhub',
+        })),
+        gainers: sorted.slice(0, 5).map(q => ({
+          ticker: q.symbol,
+          company: q.symbol,
+          price: `$${q.price.toFixed(2)}`,
+          change: `+${q.changePct.toFixed(2)}%`,
+          direction: 'up',
+          provider: 'finnhub',
+        })),
+        losers: sorted.slice(-5).reverse().map(q => ({
+          ticker: q.symbol,
+          company: q.symbol,
+          price: `$${q.price.toFixed(2)}`,
+          change: `${q.changePct.toFixed(2)}%`,
+          direction: 'down',
+          provider: 'finnhub',
+        })),
       })
     }
 
-    // ── EUROPE PRE-MARKET ─────────────────────────────────────────────────────
+    // ── EUROPE PRE-MARKET ──────────────────────────────────────────────────
     if (type === 'europe') {
       const meta = baseMeta(type)
-      const symbols = { EWG: 'DAX (EWG ETF)', EWQ: 'CAC 40 (EWQ ETF)', EWU: 'FTSE 100 (EWU ETF)' }
-      const quotes  = await fhQuotes(Object.keys(symbols))
+      const etfs = { EWG: 'DAX (EWG)', EWQ: 'CAC 40 (EWQ)', EWU: 'FTSE 100 (EWU)' }
+      const q    = await quotes(Object.keys(etfs))
 
-      return ok({
+      return resp({
         meta,
-        futures: Object.entries(symbols).map(([sym, label]) => {
-          const q = quotes[sym]
-          if (!q) return null
+        futures: Object.entries(etfs).map(([sym, label]) => {
+          const d = q[sym]
+          if (!d) return null
           return {
             index: label,
-            value: q.price.toLocaleString('en-US', { maximumFractionDigits: 2 }),
-            change: `${q.changePct >= 0 ? '+' : ''}${q.changePct.toFixed(2)}%`,
-            direction: q.changePct >= 0 ? 'up' : 'down',
-            sourceTimestamp: new Date().toISOString(),
+            value: d.price.toLocaleString('en-US', { maximumFractionDigits: 2 }),
+            change: `${d.changePct >= 0 ? '+' : ''}${d.changePct.toFixed(2)}%`,
+            direction: d.changePct >= 0 ? 'up' : 'down',
             provider: 'finnhub',
           }
         }).filter(Boolean),
       })
     }
 
-    // ── TOP OPPORTUNITIES (swing-trade universe) ──────────────────────────────
+    // ── OPPORTUNITIES (the core engine) ───────────────────────────────────
     if (type === 'opportunities') {
       const meta = baseMeta(type)
 
-      // Your universe — edit to taste
-      const universe = [
-        // Semis / AI infra
+      const UNIVERSE = [
         'NVDA','AMD','AVGO','TSM','MRVL','ARM',
-        // Big tech / cloud / AI software
         'MSFT','GOOGL','META','PLTR',
-        // Servers / storage
-        'DELL','SMCI',
-        // Cybersecurity
-        'CRWD','PANW','ZS',
-        // Defence
+        'DELL','SMCI','CRWD','PANW','ZS',
         'LMT','RTX','NOC','AXON',
-        // Power / energy
-        'VRT','ETN','CEG','FSLR',
-        // Networking / space
-        'ANET','RKLB',
+        'VRT','ETN','CEG','FSLR','ANET','RKLB',
       ]
 
-      const quotes = await fhQuotes(universe)
+      // Dates for earnings calendar
+      const today    = new Date()
+      const in60days = addDays(today, 60)
+      const fromStr  = isoDate(today)
+      const toStr    = isoDate(in60days)
 
-      const stocks = universe
-        .filter(sym => quotes[sym])
+      // Run in parallel: quotes + earnings calendar + sector ETFs
+      const [stockQuotes, earnings, sectorQ, vixQ] = await Promise.all([
+        quotes(UNIVERSE),
+        earningsCalendar(fromStr, toStr),
+        quotes(['XLK','ITA','XSD','CIBR']),
+        quote('VIXY'),
+      ])
+
+      // Filter earnings to only our universe
+      const universeEarnings = earnings
+        .filter(e => UNIVERSE.includes(e.symbol))
+        .map(e => ({
+          ticker: e.symbol,
+          date: e.date,
+          tradingDaysAway: tradingDaysUntil(e.date),
+          epsEstimate: e.epsEstimate,
+          revenueEstimate: e.revenueEstimate,
+          source: 'finnhub_calendar',
+        }))
+        .sort((a, b) => (a.tradingDaysAway ?? 999) - (b.tradingDaysAway ?? 999))
+
+      // VIX regime
+      const vixPrice = vixQ?.price ?? null
+      const vixRegime = vixPrice
+        ? (vixPrice > 25 ? 'HIGH_FEAR' : vixPrice > 18 ? 'ELEVATED' : 'CALM')
+        : 'UNKNOWN'
+
+      // Sector health
+      const sectorHealth = {
+        tech:     sectorQ['XLK']  ? (sectorQ['XLK'].changePct  > 0 ? 'BULLISH' : 'BEARISH') : 'UNKNOWN',
+        defence:  sectorQ['ITA']  ? (sectorQ['ITA'].changePct  > 0 ? 'BULLISH' : 'BEARISH') : 'UNKNOWN',
+        semis:    sectorQ['XSD']  ? (sectorQ['XSD'].changePct  > 0 ? 'BULLISH' : 'BEARISH') : 'UNKNOWN',
+        cyber:    sectorQ['CIBR'] ? (sectorQ['CIBR'].changePct > 0 ? 'BULLISH' : 'BEARISH') : 'UNKNOWN',
+      }
+
+      // Build stock objects with SMA data (fetch candles for top movers only to save API calls)
+      // We prioritise stocks with imminent earnings first
+      const earningsMap = {}
+      universeEarnings.forEach(e => { earningsMap[e.ticker] = e })
+
+      const stocks = UNIVERSE
+        .filter(sym => stockQuotes[sym])
         .map(sym => {
-          const q = quotes[sym]
+          const q  = stockQuotes[sym]
+          const ec = earningsMap[sym] || null
           return {
             ticker: sym,
             name: sym,
-            price: `$${q.price.toFixed(2)}`,
+            price: q.price,
+            priceFormatted: `$${q.price.toFixed(2)}`,
+            changePct: q.changePct,
             change1d: `${q.changePct >= 0 ? '+' : ''}${q.changePct.toFixed(2)}%`,
             direction: q.changePct >= 0 ? 'up' : 'down',
-            marketCap: 'N/A',
-            sourceTimestamp: new Date().toISOString(),
+            // Gap-up flag — AI should apply post-catalyst chase rule
+            bigMoverToday: Math.abs(q.changePct) > 8,
+            // Verified earnings date from Finnhub
+            earningsDate: ec?.date || null,
+            earningsTradingDaysAway: ec?.tradingDaysAway ?? null,
+            epsEstimate: ec?.epsEstimate || null,
+            hasVerifiedEarnings: !!ec,
             provider: 'finnhub',
           }
         })
 
-      meta.partial = stocks.length < universe.length
-      if (meta.partial) meta.warnings.push(`Got ${stocks.length}/${universe.length} quotes`)
+      // Sort: stocks with nearest earnings first, then by price momentum
+      stocks.sort((a, b) => {
+        const aD = a.earningsTradingDaysAway ?? 999
+        const bD = b.earningsTradingDaysAway ?? 999
+        if (aD !== bD) return aD - bD
+        return Math.abs(b.changePct) - Math.abs(a.changePct)
+      })
 
-      return ok({ meta, stocks })
+      meta.partial = stocks.length < UNIVERSE.length
+      if (meta.partial) meta.warnings.push(`Got ${stocks.length}/${UNIVERSE.length} quotes`)
+
+      return resp({
+        meta,
+        vix: vixPrice,
+        vixRegime,
+        sectorHealth,
+        stocks,
+        earningsCalendar: universeEarnings,
+      })
     }
 
-    return ok({ error: 'Unknown type' }, 400)
+    // ── TECHNICALS for a single stock ─────────────────────────────────────
+    if (type === 'technicals') {
+      const sym = searchParams.get('symbol')
+      if (!sym) return resp({ error: 'Missing symbol parameter' }, 400)
+
+      const [q, closes] = await Promise.all([quote(sym), candles(sym, 220)])
+      if (!q) return resp({ error: `No quote for ${sym}` }, 404)
+
+      const s20  = closes ? sma(closes, 20)  : null
+      const s50  = closes ? sma(closes, 50)  : null
+      const s200 = closes ? sma(closes, 200) : null
+
+      const trend = trendLabel(q.price, s20, s50, s200)
+
+      // Nearest support (use 50 SMA as proxy if price is above it)
+      const support = s50 && q.price > s50 ? s50 : (s200 || null)
+      const stopLoss = support ? parseFloat((support * 0.99).toFixed(2)) : null
+      const distToSupport = support ? (((q.price - support) / q.price) * 100).toFixed(1) : null
+
+      // Entry quality scoring
+      let entryQuality = 'AVERAGE'
+      if (s20 && s50 && s200 && q.price > s20 && q.price > s50 && q.price > s200) {
+        entryQuality = 'GOOD'
+        const pctAbove50 = ((q.price - s50) / s50) * 100
+        if (pctAbove50 > 30) entryQuality = 'POOR'  // extended
+      }
+      if (s50 && s200 && q.price < s50) entryQuality = 'POOR'
+
+      return resp({
+        meta: baseMeta(type),
+        symbol: sym,
+        price: q.price,
+        changePct: q.changePct,
+        sma20:  s20  ? parseFloat(s20.toFixed(2))  : null,
+        sma50:  s50  ? parseFloat(s50.toFixed(2))  : null,
+        sma200: s200 ? parseFloat(s200.toFixed(2)) : null,
+        aboveSma20:  s20  ? q.price > s20  : null,
+        aboveSma50:  s50  ? q.price > s50  : null,
+        aboveSma200: s200 ? q.price > s200 : null,
+        pctAboveSma200: s200 ? parseFloat((((q.price - s200) / s200) * 100).toFixed(1)) : null,
+        trend,
+        support: support ? parseFloat(support.toFixed(2)) : null,
+        distToSupportPct: distToSupport,
+        stopLoss,
+        entryQuality,
+      })
+    }
+
+    return resp({ error: 'Unknown type' }, 400)
 
   } catch (err) {
     console.error('Market route error:', err)
-    return ok(
-      {
-        error: `Market data error: ${err.message}`,
-        meta: {
-          requestedType: type || null,
-          fetchedAt: new Date().toISOString(),
-          provider: null,
-          fallbackUsed: false,
-          partial: true,
-          warnings: [err.message],
-        },
+    return resp({
+      error: `Market data error: ${err.message}`,
+      meta: {
+        requestedType: type || null,
+        fetchedAt: new Date().toISOString(),
+        provider: null,
+        partial: true,
+        warnings: [err.message],
       },
-      500
-    )
+    }, 500)
   }
 }
