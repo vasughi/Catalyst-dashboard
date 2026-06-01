@@ -2,6 +2,17 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react'
 
+// Responsive hook — drives all layout decisions in JS (no CSS class fighting)
+function useWindowWidth() {
+  const [width, setWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200)
+  useEffect(() => {
+    const handler = () => setWidth(window.innerWidth)
+    window.addEventListener('resize', handler)
+    return () => window.removeEventListener('resize', handler)
+  }, [])
+  return width
+}
+
 // ─── Light theme design tokens ────────────────────────────────────────────────
 const C = {
   bg:       '#f5f6fa',
@@ -247,9 +258,12 @@ function CIOPanel({ cio }) {
       {cio.watchList?.length > 0 && (
         <div style={{ marginBottom: 10 }}>
           <div style={{ ...LBL, marginBottom: 8 }}>WATCH</div>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {cio.watchList.map((w, i) => (
-              <Pill key={i} tone="amber" size="sm">{w.ticker || w}{w.reason ? ` — ${w.reason}` : ''}</Pill>
+              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
+                <Pill tone="amber" size="sm">{w.ticker || w}</Pill>
+                {w.reason && <span style={{ color: C.textSub, fontSize: 13, lineHeight: 1.5, flex: 1, minWidth: 0 }}>{w.reason}</span>}
+              </div>
             ))}
           </div>
         </div>
@@ -257,9 +271,12 @@ function CIOPanel({ cio }) {
       {cio.avoidList?.length > 0 && (
         <div>
           <div style={{ ...LBL, marginBottom: 8 }}>AVOID</div>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {cio.avoidList.map((w, i) => (
-              <Pill key={i} tone="red" size="sm">{w.ticker || w}{w.reason ? ` — ${w.reason}` : ''}</Pill>
+              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
+                <Pill tone="red" size="sm">{w.ticker || w}</Pill>
+                {w.reason && <span style={{ color: C.textSub, fontSize: 13, lineHeight: 1.5, flex: 1, minWidth: 0 }}>{w.reason}</span>}
+              </div>
             ))}
           </div>
         </div>
@@ -489,6 +506,8 @@ export default function Dashboard() {
   const [lastUpdated,  setLastUpdated]  = useState({})
   const [showDetail,   setShowDetail]   = useState(false) // mobile detail overlay
   const loadedRef = useRef({})
+  const windowWidth = useWindowWidth()
+  const isMobile    = windowWidth < 900
 
   const callClaude = useCallback(async (prompt, mode = 'json') => {
     const res  = await fetch('/api/claude', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, mode }) })
@@ -657,9 +676,8 @@ Return ONLY this JSON (max 5 opportunities, keep all strings SHORT):
           </div>
         )}
 
-        {/* Desktop: two-col. Mobile: single col, detail as overlay */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.4fr) minmax(300px,0.8fr)', gap: 18, alignItems: 'start' }}
-             className="catalyst-grid">
+        {/* Responsive grid: two-col desktop, single col mobile */}
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0,1.45fr) minmax(320px,0.85fr)', gap: 18, alignItems: 'start' }}>
           <div style={{ display: 'grid', gap: 14 }}>
             {opps.length ? opps.map((opp, i) => (
               <OpportunityCard key={`${opp.ticker}-${i}`} opp={opp} rank={i+1} active={selected?.ticker === opp.ticker} onClick={handleStockClick} />
@@ -673,10 +691,10 @@ Return ONLY this JSON (max 5 opportunities, keep all strings SHORT):
             <EarningsCalendar calendar={d.earningsCalendar} />
           </div>
 
-          {/* Sticky side panel — hidden on mobile, shown in overlay instead */}
-          <div className="catalyst-side">
+          {/* Side panel: only rendered on desktop; mobile gets overlay instead */}
+          {!isMobile && (
             <DeepDivePanel stock={selected} content={drillContent} loading={drillLoading} onRun={() => selected && deepDive(selected)} />
-          </div>
+          )}
         </div>
 
         {/* Mobile overlay */}
@@ -906,33 +924,31 @@ Return ONLY this JSON (max 5 opportunities, keep all strings SHORT):
 
   // ── Shell ──────────────────────────────────────────────────────────────────
   return (
-    <div style={{ minHeight: '100vh', background: C.bg, color: C.text, fontFamily: FONT_BODY }}>
+    <div style={{ minHeight: '100vh', background: C.bg, color: C.text, fontFamily: FONT_BODY, overflowX: 'hidden', width: '100%', WebkitFontSmoothing: 'antialiased' }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800;900&family=DM+Mono:wght@400;500;700&display=swap');
-        * { box-sizing: border-box; }
+        *, *::before, *::after { box-sizing: border-box; }
+        html { -webkit-text-size-adjust: 100%; }
         @keyframes spin { to { transform: rotate(360deg); } }
-        .catalyst-grid { grid-template-columns: minmax(0,1.4fr) minmax(300px,0.8fr); }
-        .catalyst-side { display: block; }
-        @media (max-width: 768px) {
-          .catalyst-grid { grid-template-columns: 1fr !important; }
-          .catalyst-side { display: none !important; }
-        }
+        button { -webkit-tap-highlight-color: transparent; }
         button:hover { opacity: 0.88; }
+        img, video { max-width: 100%; }
+        body { margin: 0; overflow-x: hidden; }
       `}</style>
 
-      <div style={{ maxWidth: 1560, margin: '0 auto', padding: '12px 16px' }}>
+      <div style={{ maxWidth: 1560, margin: '0 auto', padding: isMobile ? '10px 12px' : '12px 20px' }}>
 
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 14, padding: '14px 18px', background: C.card, borderRadius: 16, border: `1px solid ${C.border}`, boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
           <div>
-            <div style={{ fontWeight: 900, fontSize: 24, color: C.accent, fontFamily: FONT_HEAD, letterSpacing: -0.5 }}>CATALYST</div>
+            <div style={{ fontWeight: 900, fontSize: isMobile ? 20 : 24, color: C.accent, fontFamily: FONT_HEAD, letterSpacing: -0.5 }}>CATALYST</div>
             <div style={{ color: C.muted, fontSize: 12, fontWeight: 600, letterSpacing: 0.5 }}>TRADING INTELLIGENCE · {new Date().toDateString().toUpperCase()}</div>
           </div>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             {lastUpdated[activeTab] && (
               <span style={{ color: C.muted, fontSize: 12 }}>Updated {timeStr(lastUpdated[activeTab])}</span>
             )}
-            <button onClick={refresh} style={btn(true)}>↻ Refresh</button>
+            <button onClick={refresh} style={{ ...btn(true), padding: isMobile ? '8px 14px' : '10px 18px', fontSize: isMobile ? 13 : 14 }}>↻ {isMobile ? '' : 'Refresh'}</button>
           </div>
         </div>
 
