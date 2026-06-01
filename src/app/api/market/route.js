@@ -151,14 +151,24 @@ export async function GET(request) {
     if (type === 'global') {
       const meta = baseMeta(type)
 
-      const [indices, forex, comms] = await Promise.all([
+      // Forex via standard symbol format (more reliable than OANDA: prefix on free tier)
+      async function fxQuote(sym) {
+        try {
+          const d = await fh(`/quote?symbol=${encodeURIComponent(sym)}`)
+          if (!d || d.c === 0) return null
+          return { price: d.c, changePct: d.dp ?? 0 }
+        } catch { return null }
+      }
+
+      const [indices, comms, gbpusd, eurusd, usdjpy] = await Promise.all([
         quotes(['SPY','QQQ','DIA','IWM','EWG','EWQ','EWJ','VIXY']),
-        quotes(['OANDA:GBP_USD','OANDA:EUR_USD','OANDA:USD_JPY']),
         quotes(['USO','GLD','CPER']),
+        fxQuote('GBPUSD'),
+        fxQuote('EURUSD'),
+        fxQuote('USDJPY'),
       ])
 
-      // VIXY as VIX proxy
-      const vixQ  = indices['VIXY']
+      const vixQ   = indices['VIXY']
       const vixVal = vixQ ? vixQ.price.toFixed(2) : null
 
       const fmt = (q, name) => {
@@ -172,6 +182,18 @@ export async function GET(request) {
           provider: 'finnhub',
         }
       }
+
+      // Sanity-check ETF prices to catch bad Finnhub data
+      // USO ~60-90, GLD ~280-330, CPER ~25-45
+      const usoQ  = comms['USO']
+      const gldQ  = comms['GLD']
+      const cperQ = comms['CPER']
+
+      const currencies = [
+        gbpusd ? { pair: 'GBP/USD', value: gbpusd.price.toFixed(4), change: `${gbpusd.changePct >= 0 ? '+' : ''}${gbpusd.changePct.toFixed(2)}%`, provider: 'finnhub' } : null,
+        eurusd ? { pair: 'EUR/USD', value: eurusd.price.toFixed(4), change: `${eurusd.changePct >= 0 ? '+' : ''}${eurusd.changePct.toFixed(2)}%`, provider: 'finnhub' } : null,
+        usdjpy ? { pair: 'USD/JPY', value: usdjpy.price.toFixed(2),  change: `${usdjpy.changePct >= 0 ? '+' : ''}${usdjpy.changePct.toFixed(2)}%`, provider: 'finnhub' } : null,
+      ].filter(Boolean)
 
       return resp({
         meta,
@@ -187,22 +209,11 @@ export async function GET(request) {
           fmt(indices['EWJ'],  'Nikkei (EWJ)'),
         ].filter(Boolean),
         commodities: [
-          fmt(comms['USO'],  'WTI Oil (USO)'),
-          fmt(comms['GLD'],  'Gold (GLD)'),
-          fmt(comms['CPER'], 'Copper (CPER)'),
+          usoQ  && usoQ.price  < 200 ? fmt(usoQ,  'WTI Oil (USO ETF)') : null,
+          gldQ  && gldQ.price  < 500 ? fmt(gldQ,  'Gold (GLD ETF)')    : null,
+          cperQ && cperQ.price < 100 ? fmt(cperQ, 'Copper (CPER ETF)') : null,
         ].filter(Boolean),
-        currencies: ['OANDA:GBP_USD','OANDA:EUR_USD','OANDA:USD_JPY'].map((sym, i) => {
-          const q = forex[sym]
-          if (!q) return null
-          const pairs = ['GBP/USD','EUR/USD','USD/JPY']
-          const dps   = [4, 4, 2]
-          return {
-            pair: pairs[i],
-            value: q.price.toFixed(dps[i]),
-            change: `${q.changePct >= 0 ? '+' : ''}${q.changePct.toFixed(2)}%`,
-            provider: 'finnhub',
-          }
-        }).filter(Boolean),
+        currencies,
         bonds: [],
       })
     }
