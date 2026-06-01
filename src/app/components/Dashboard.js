@@ -2,48 +2,45 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react'
 
-// ─── Design tokens ────────────────────────────────────────────────────────────
+// ─── Light theme design tokens ────────────────────────────────────────────────
 const C = {
-  bg:      '#04080f',
-  panel:   '#090f1a',
-  card:    '#0d1525',
-  border:  '#1a2640',
-  text:    '#dde8f5',
-  muted:   '#5a7a9a',
-  soft:    '#101c2e',
-  up:      '#00e5a0',
-  down:    '#ff4560',
-  flat:    '#7a90a8',
-  accent:  '#00c8ff',
-  amber:   '#ffb700',
-  green:   '#00d68f',
-  red:     '#ff4560',
-  purple:  '#9b7dff',
-  gold:    '#f5c842',
+  bg:       '#f5f6fa',
+  surface:  '#ffffff',
+  card:     '#ffffff',
+  border:   '#e2e6ef',
+  borderMd: '#c8d0e0',
+  text:     '#111827',
+  textSub:  '#374151',
+  muted:    '#6b7280',
+  up:       '#059669',    // deep green — easy on eyes
+  down:     '#dc2626',    // clear red
+  flat:     '#6b7280',
+  accent:   '#2563eb',    // strong blue
+  amber:    '#d97706',
+  green:    '#059669',
+  red:      '#dc2626',
+  purple:   '#7c3aed',
+  gold:     '#b45309',
+  upBg:     '#d1fae5',
+  downBg:   '#fee2e2',
+  accentBg: '#dbeafe',
+  amberBg:  '#fef3c7',
+  purpleBg: '#ede9fe',
 }
 
-const FONT = `'IBM Plex Mono', 'JetBrains Mono', 'Fira Code', monospace`
+// Clean sans-serif — excellent legibility
+const FONT_BODY  = `'DM Sans', 'Outfit', 'Nunito', system-ui, sans-serif`
+const FONT_MONO  = `'DM Mono', 'JetBrains Mono', 'Fira Code', monospace`
+const FONT_HEAD  = `'DM Sans', 'Outfit', system-ui, sans-serif`
 
-// ─── Universe (edit to add/remove stocks) ────────────────────────────────────
 const UNIVERSE = [
-  // Semis / AI silicon
   'NVDA','AMD','AVGO','TSM','MRVL','ARM',
-  // Big tech / AI software
   'MSFT','GOOGL','META','PLTR',
-  // Servers / storage
-  'DELL','SMCI',
-  // Cybersecurity
-  'CRWD','PANW','ZS',
-  // Defence
+  'DELL','SMCI','CRWD','PANW','ZS',
   'LMT','RTX','NOC','AXON',
-  // Power / grid
-  'VRT','ETN','CEG','FSLR',
-  // Networking / space
-  'ANET','RKLB',
+  'VRT','ETN','CEG','FSLR','ANET','RKLB',
 ]
 
-// Historical 1-day earnings reaction averages (last 4 quarters)
-// Update these periodically — they're your Return Gate evidence
 const EARNINGS_HISTORY = {
   NVDA:  { avg1d: 14.2, beats: 4, label: 'Avg 14.2% · 4/4 beats' },
   AMD:   { avg1d: 9.8,  beats: 3, label: 'Avg 9.8% · 3/4 beats' },
@@ -60,7 +57,7 @@ const EARNINGS_HISTORY = {
   VRT:   { avg1d: 15.8, beats: 4, label: 'Avg 15.8% · 4/4 beats' },
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Utilities ────────────────────────────────────────────────────────────────
 
 function repairJSON(str) {
   if (!str || typeof str !== 'string') throw new Error('Empty AI response')
@@ -87,213 +84,274 @@ function repairJSON(str) {
   }
 }
 
-function fmt(n, decimals = 2) {
-  if (n == null) return '—'
-  return Number(n).toLocaleString('en-US', { maximumFractionDigits: decimals })
-}
-
 function timeStr(iso) {
   if (!iso) return '—'
-  try { return new Date(iso).toLocaleTimeString() } catch { return '—' }
+  try { return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) } catch { return '—' }
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
+// ─── Base style helpers ───────────────────────────────────────────────────────
 
 const card = (extra = {}) => ({
-  background: `linear-gradient(160deg, ${C.panel} 0%, ${C.card} 100%)`,
+  background: C.card,
   border: `1px solid ${C.border}`,
-  borderRadius: 12,
+  borderRadius: 16,
   padding: 20,
+  boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
   ...extra,
 })
 
-const badge = (color, size = 'sm') => ({
+// Pill badge — fully solid, high contrast
+const pill = (color, bg, size = 'sm') => ({
   display: 'inline-flex',
   alignItems: 'center',
-  padding: size === 'lg' ? '6px 14px' : '4px 10px',
-  borderRadius: 6,
-  border: `1px solid ${color}44`,
-  background: `${color}14`,
-  color,
-  fontSize: size === 'lg' ? 13 : 11,
+  padding: size === 'lg' ? '7px 16px' : size === 'md' ? '5px 12px' : '3px 9px',
+  borderRadius: 999,
+  background: bg,
+  color: color,
+  fontSize: size === 'lg' ? 14 : size === 'md' ? 12 : 11,
   fontWeight: 700,
-  fontFamily: FONT,
-  letterSpacing: 0.5,
+  fontFamily: FONT_BODY,
+  letterSpacing: 0.2,
+  whiteSpace: 'nowrap',
 })
 
-const btn = (color) => ({
+const pillColors = {
+  green:  [C.up,     C.upBg],
+  red:    [C.down,   C.downBg],
+  blue:   [C.accent, C.accentBg],
+  amber:  [C.amber,  C.amberBg],
+  purple: [C.purple, C.purpleBg],
+  grey:   [C.muted,  '#f3f4f6'],
+}
+
+function Pill({ tone = 'grey', size = 'sm', children }) {
+  const [color, bg] = pillColors[tone] || pillColors.grey
+  return <span style={pill(color, bg, size)}>{children}</span>
+}
+
+const btn = (primary = true) => ({
   appearance: 'none',
-  border: `1px solid ${color}55`,
-  background: `${color}12`,
-  color,
-  borderRadius: 8,
-  padding: '9px 16px',
+  border: primary ? 'none' : `1.5px solid ${C.border}`,
+  background: primary ? C.accent : C.surface,
+  color: primary ? '#fff' : C.textSub,
+  borderRadius: 10,
+  padding: '10px 18px',
   fontWeight: 700,
-  fontFamily: FONT,
-  fontSize: 12,
+  fontFamily: FONT_BODY,
+  fontSize: 14,
   cursor: 'pointer',
-  letterSpacing: 0.5,
+  boxShadow: primary ? '0 2px 8px rgba(37,99,235,0.25)' : 'none',
 })
 
-const label = { color: C.muted, fontSize: 11, fontFamily: FONT, letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 5 }
-const val   = { color: C.text, fontWeight: 700, fontFamily: FONT }
-const divider = <div style={{ height: 1, background: C.border, margin: '14px 0' }} />
+const LBL = { color: C.muted, fontSize: 11, fontWeight: 600, fontFamily: FONT_BODY, letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 4 }
+const VAL = { color: C.text, fontWeight: 700, fontFamily: FONT_BODY, fontSize: 15 }
 
-// ─── Regime indicator ─────────────────────────────────────────────────────────
-function RegimeBar({ vix, vixRegime, sectorHealth, marketCondition }) {
-  const regimeColor = vixRegime === 'HIGH_FEAR' ? C.red : vixRegime === 'ELEVATED' ? C.amber : C.up
-  const condColor   = marketCondition === 'BUY AGGRESSIVELY' ? C.up
-    : marketCondition === 'BUY SELECTIVELY' ? C.accent
-    : marketCondition === 'WAIT' ? C.amber
-    : C.red
+const Divider = () => <div style={{ height: 1, background: C.border, margin: '14px 0' }} />
 
-  return (
-    <div style={{ ...card(), marginBottom: 14, padding: '14px 20px', display: 'flex', flexWrap: 'wrap', gap: 14, alignItems: 'center' }}>
-      {marketCondition && <span style={badge(condColor, 'lg')}>{marketCondition}</span>}
-      {vix && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ ...label, marginBottom: 0 }}>VIX PROXY</span>
-          <span style={{ ...badge(regimeColor), fontSize: 13 }}>{fmt(vix)} — {vixRegime}</span>
-        </div>
-      )}
-      {sectorHealth && (
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {Object.entries(sectorHealth).map(([k, v]) => (
-            <span key={k} style={badge(v === 'BULLISH' ? C.up : v === 'BEARISH' ? C.down : C.flat, 'sm')}>
-              {k.toUpperCase()} {v}
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
-  )
+// ─── Action badge ─────────────────────────────────────────────────────────────
+function ActionBadge({ action, size = 'md' }) {
+  const map = {
+    'STRONG BUY': 'green',
+    'BUY':        'blue',
+    'WATCH':      'amber',
+    'AVOID':      'red',
+  }
+  return <Pill tone={map[action] || 'grey'} size={size}>{action || 'WATCH'}</Pill>
+}
+
+// ─── Gate badge ───────────────────────────────────────────────────────────────
+function GateBadge({ label: lbl, pass }) {
+  const tone  = pass === true ? 'green' : pass === false ? 'red' : 'amber'
+  const icon  = pass === true ? '✓' : pass === false ? '✗' : '~'
+  return <Pill tone={tone} size="sm">{icon} {lbl}</Pill>
 }
 
 // ─── Earnings pill ────────────────────────────────────────────────────────────
 function EarningsPill({ days, date }) {
   if (days == null || days < 0) return null
-  const color = days <= 3 ? C.red : days <= 10 ? C.amber : C.accent
-  return (
-    <span style={{ ...badge(color), marginLeft: 8 }}>
-      EARNINGS {days <= 0 ? 'TODAY' : `in ${days}d`}{date ? ` · ${date}` : ''}
-    </span>
-  )
-}
-
-// ─── Action badge ──────────────────────────────────────────────────────────────
-function ActionBadge({ action }) {
-  const color = action === 'STRONG BUY' ? C.up
-    : action === 'BUY' ? C.accent
-    : action === 'WATCH' ? C.amber
-    : action === 'AVOID' ? C.red
-    : C.muted
-  return <span style={badge(color, 'lg')}>{action || 'WATCH'}</span>
-}
-
-// ─── Gate badge ───────────────────────────────────────────────────────────────
-function GateBadge({ label: lbl, pass }) {
-  const color = pass === true ? C.up : pass === false ? C.red : C.amber
-  const text  = pass === true ? '✓' : pass === false ? '✗' : '~'
-  return (
-    <span style={{ ...badge(color), gap: 4 }}>
-      {text} {lbl}
-    </span>
-  )
+  const tone = days <= 3 ? 'red' : days <= 10 ? 'amber' : 'blue'
+  const label = days <= 0 ? 'EARNINGS TODAY' : `EARNINGS ${days}d · ${date || ''}`
+  return <Pill tone={tone} size="sm">{label}</Pill>
 }
 
 // ─── Score bar ────────────────────────────────────────────────────────────────
-function ScoreBar({ score, max = 100 }) {
-  const pct   = Math.min((score / max) * 100, 100)
-  const color = score >= 80 ? C.up : score >= 70 ? C.accent : score >= 60 ? C.amber : C.red
+function ScoreBar({ score }) {
+  const pct   = Math.min((score / 100) * 100, 100)
+  const color = score >= 80 ? C.up : score >= 70 ? C.accent : score >= 60 ? C.amber : C.down
+  const bg    = score >= 80 ? C.upBg : score >= 70 ? C.accentBg : score >= 60 ? C.amberBg : C.downBg
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-      <div style={{ flex: 1, height: 6, background: C.border, borderRadius: 3, overflow: 'hidden' }}>
-        <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 3, transition: 'width 0.5s ease' }} />
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
+      <div style={{ flex: 1, height: 8, background: bg, borderRadius: 4, overflow: 'hidden' }}>
+        <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 4, transition: 'width 0.6s ease' }} />
       </div>
-      <span style={{ color, fontWeight: 800, fontFamily: FONT, fontSize: 14, minWidth: 32 }}>{score}</span>
+      <span style={{ color, fontWeight: 800, fontFamily: FONT_MONO, fontSize: 15, minWidth: 28 }}>{score}</span>
+    </div>
+  )
+}
+
+// ─── Stat tile (small number card) ───────────────────────────────────────────
+function StatTile({ label: lbl, value, change, direction }) {
+  const changeColor = direction === 'up' ? C.up : direction === 'down' ? C.down : C.muted
+  return (
+    <div style={{ ...card({ padding: 16 }) }}>
+      <div style={LBL}>{lbl}</div>
+      <div style={{ color: C.text, fontWeight: 800, fontSize: 22, fontFamily: FONT_MONO }}>{value}</div>
+      {change && <div style={{ color: changeColor, fontWeight: 600, fontSize: 13, fontFamily: FONT_MONO, marginTop: 2 }}>{change}</div>}
+    </div>
+  )
+}
+
+// ─── Regime bar ───────────────────────────────────────────────────────────────
+function RegimeBar({ vix, vixRegime, sectorHealth, marketCondition }) {
+  const condTone = marketCondition === 'BUY AGGRESSIVELY' ? 'green'
+    : marketCondition === 'BUY SELECTIVELY' ? 'blue'
+    : marketCondition === 'WAIT' ? 'amber'
+    : 'red'
+  const vixTone = vixRegime === 'HIGH_FEAR' ? 'red' : vixRegime === 'ELEVATED' ? 'amber' : 'green'
+
+  return (
+    <div style={{ ...card({ marginBottom: 14, padding: '14px 18px' }), display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+      {marketCondition && <ActionBadge action={marketCondition} size="lg" />}
+      {vix && <Pill tone={vixTone} size="md">VIX {vix} · {vixRegime}</Pill>}
+      {sectorHealth && Object.entries(sectorHealth).map(([k, v]) => (
+        <Pill key={k} tone={v === 'BULLISH' ? 'green' : v === 'BEARISH' ? 'red' : 'grey'} size="sm">
+          {k.toUpperCase()} {v}
+        </Pill>
+      ))}
+    </div>
+  )
+}
+
+// ─── CIO panel ───────────────────────────────────────────────────────────────
+function CIOPanel({ cio }) {
+  if (!cio) return null
+  const cells = [
+    ['Best Trade Today',      cio.bestTradeToday,       'green'],
+    ['Best Risk/Reward',      cio.bestRiskReward,       'blue'],
+    ['Final Decision',        cio.finalMarketDecision,  'amber'],
+  ].filter(([, v]) => v)
+
+  return (
+    <div style={{ ...card({ marginBottom: 14, borderLeft: `4px solid ${C.gold}`, borderRadius: 16 }) }}>
+      <div style={{ color: C.gold, fontWeight: 800, fontSize: 13, fontFamily: FONT_BODY, letterSpacing: 0.5, marginBottom: 14 }}>
+        ⚡ CIO CALLS
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: cio.watchList?.length ? 14 : 0 }}>
+        {cells.map(([lbl, v, tone]) => (
+          <div key={lbl} style={{ background: C.bg, borderRadius: 10, padding: 12 }}>
+            <div style={LBL}>{lbl}</div>
+            <div style={{ color: pillColors[tone][0], fontWeight: 800, fontSize: 16, fontFamily: FONT_BODY }}>{v}</div>
+          </div>
+        ))}
+      </div>
+      {cio.watchList?.length > 0 && (
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ ...LBL, marginBottom: 8 }}>WATCH</div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {cio.watchList.map((w, i) => (
+              <Pill key={i} tone="amber" size="sm">{w.ticker || w}{w.reason ? ` — ${w.reason}` : ''}</Pill>
+            ))}
+          </div>
+        </div>
+      )}
+      {cio.avoidList?.length > 0 && (
+        <div>
+          <div style={{ ...LBL, marginBottom: 8 }}>AVOID</div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {cio.avoidList.map((w, i) => (
+              <Pill key={i} tone="red" size="sm">{w.ticker || w}{w.reason ? ` — ${w.reason}` : ''}</Pill>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
 // ─── Opportunity card ─────────────────────────────────────────────────────────
 function OpportunityCard({ opp, rank, active, onClick }) {
-  const earnHistory = EARNINGS_HISTORY[opp.ticker]
-  const gapUp = opp.bigMoverToday && Math.abs(opp.changePctToday || 0) > 8
+  const hist   = EARNINGS_HISTORY[opp.ticker]
+  const gapUp  = opp.bigMoverToday && Math.abs(opp.changePctToday || 0) > 8
+  const isBuy  = opp.action === 'BUY' || opp.action === 'STRONG BUY'
 
   return (
     <button
       onClick={() => onClick(opp)}
       style={{
-        ...card(),
-        textAlign: 'left',
-        cursor: 'pointer',
-        width: '100%',
-        borderColor: active ? `${C.accent}88` : gapUp ? `${C.amber}44` : C.border,
-        background: active
-          ? `linear-gradient(160deg, rgba(0,200,255,0.1) 0%, ${C.card} 100%)`
-          : `linear-gradient(160deg, ${C.panel} 0%, ${C.card} 100%)`,
+        ...card({
+          textAlign: 'left',
+          cursor: 'pointer',
+          width: '100%',
+          borderLeft: `5px solid ${isBuy ? C.up : opp.action === 'WATCH' ? C.amber : C.border}`,
+          borderRadius: 16,
+          background: active ? '#f0f7ff' : C.card,
+          boxShadow: active ? '0 0 0 2px #2563eb44' : '0 1px 4px rgba(0,0,0,0.06)',
+          transition: 'all 0.15s',
+        }),
       }}
     >
-      {/* Header row */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ color: C.muted, fontFamily: FONT, fontSize: 12 }}>#{rank}</span>
-          <span style={{ color: C.text, fontFamily: FONT, fontWeight: 900, fontSize: 22 }}>{opp.ticker}</span>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ color: C.muted, fontSize: 13, fontFamily: FONT_BODY }}>#{rank}</span>
+          <span style={{ color: C.text, fontFamily: FONT_HEAD, fontWeight: 900, fontSize: 26 }}>{opp.ticker}</span>
           <EarningsPill days={opp.earningsTradingDaysAway} date={opp.earningsDate} />
-          {gapUp && <span style={badge(C.amber)}>⚠ GAP UP</span>}
+          {gapUp && <Pill tone="amber" size="sm">⚠ GAP UP — WATCH ONLY</Pill>}
         </div>
-        <ActionBadge action={opp.action} />
+        <ActionBadge action={opp.action} size="lg" />
       </div>
 
-      {/* Price row */}
-      <div style={{ display: 'flex', gap: 16, alignItems: 'baseline', marginBottom: 14 }}>
-        <span style={{ color: C.text, fontFamily: FONT, fontWeight: 900, fontSize: 28 }}>{opp.currentPrice || '—'}</span>
-        <span style={{ color: opp.direction === 'up' ? C.up : C.down, fontFamily: FONT, fontWeight: 700 }}>
-          {opp.change1d || ''}
-        </span>
+      {/* Price */}
+      <div style={{ display: 'flex', gap: 14, alignItems: 'baseline', marginBottom: 12, flexWrap: 'wrap' }}>
+        <span style={{ color: C.text, fontFamily: FONT_MONO, fontWeight: 900, fontSize: 32 }}>{opp.currentPrice || '—'}</span>
+        {opp.change1d && (
+          <span style={{ color: opp.direction === 'up' ? C.up : C.down, fontFamily: FONT_MONO, fontWeight: 700, fontSize: 16 }}>
+            {opp.change1d}
+          </span>
+        )}
         {opp.expectedGain && (
-          <span style={{ color: C.gold, fontFamily: FONT, fontSize: 13 }}>Target: {opp.expectedGain}</span>
+          <span style={{ color: C.gold, fontFamily: FONT_BODY, fontWeight: 700, fontSize: 14 }}>
+            🎯 Target: {opp.expectedGain}
+          </span>
         )}
       </div>
 
       {/* Thesis */}
-      <div style={{ color: C.text, fontSize: 13, lineHeight: 1.6, marginBottom: 14 }}>{opp.thesis || '—'}</div>
+      <p style={{ color: C.textSub, fontSize: 14, lineHeight: 1.6, margin: '0 0 14px 0' }}>{opp.thesis || '—'}</p>
 
       {/* Gates */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-        <GateBadge label="RETURN GATE" pass={opp.returnGate === 'PASS' ? true : opp.returnGate === 'FAIL' ? false : null} />
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
+        <GateBadge label="RETURN GATE"    pass={opp.returnGate === 'PASS' ? true : opp.returnGate === 'FAIL' ? false : null} />
         <GateBadge label="CASH CHALLENGE" pass={opp.cashChallenge === 'PASS' ? true : opp.cashChallenge === 'FAIL' ? false : null} />
-        {opp.priceStatus && <span style={badge(opp.priceStatus?.includes('LIVE') ? C.up : C.amber)}>{opp.priceStatus}</span>}
+        <Pill tone="green" size="sm">LIVE PRICE VERIFIED</Pill>
       </div>
 
-      {/* Details grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 12 }}>
+      {/* Details 2-col grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12, marginBottom: 12 }}>
         {[
-          ['Catalyst', opp.catalyst],
-          ['Catalyst date', opp.catalystDate || opp.earningsDate],
-          ['Entry zone', opp.entryZone],
-          ['Stop loss', opp.stopLoss],
-          ['Risk/Reward', opp.riskReward],
-          ['Allocation', opp.allocation],
+          ['Catalyst',      opp.catalyst],
+          ['Date',          opp.catalystDate || opp.earningsDate],
+          ['Entry Zone',    opp.entryZone],
+          ['Stop Loss',     opp.stopLoss],
+          ['Risk / Reward', opp.riskReward],
+          ['Allocation',    opp.allocation],
         ].map(([lbl, v]) => v ? (
           <div key={lbl}>
-            <div style={label}>{lbl}</div>
-            <div style={{ ...val, fontSize: 13 }}>{v}</div>
+            <div style={LBL}>{lbl}</div>
+            <div style={{ ...VAL, fontSize: 14 }}>{v}</div>
           </div>
         ) : null)}
       </div>
 
-      {/* Earnings history */}
-      {earnHistory && (
-        <div style={{ ...badge(C.purple), fontSize: 11, marginTop: 4 }}>
-          📊 {earnHistory.label}
-        </div>
+      {/* Earnings history chip */}
+      {hist && (
+        <Pill tone="purple" size="sm">📊 {hist.label}</Pill>
       )}
 
       {/* Score */}
       {opp.opportunityScore != null && (
-        <div style={{ marginTop: 12 }}>
-          <div style={label}>OPPORTUNITY SCORE</div>
+        <div style={{ marginTop: 14 }}>
+          <div style={LBL}>OPPORTUNITY SCORE</div>
           <ScoreBar score={opp.opportunityScore} />
         </div>
       )}
@@ -301,40 +359,30 @@ function OpportunityCard({ opp, rank, active, onClick }) {
   )
 }
 
-// ─── Earnings calendar card ───────────────────────────────────────────────────
-function EarningsCalendarSection({ calendar }) {
+// ─── Earnings calendar section ────────────────────────────────────────────────
+function EarningsCalendar({ calendar }) {
   if (!calendar?.length) return null
   const upcoming = calendar.filter(e => (e.tradingDaysAway ?? -1) >= 0).slice(0, 12)
   if (!upcoming.length) return null
 
   return (
-    <div style={{ ...card(), marginTop: 18 }}>
-      <div style={{ color: C.accent, fontFamily: FONT, fontSize: 12, letterSpacing: 1, marginBottom: 16 }}>
-        VERIFIED EARNINGS DATES — SOURCE: FINNHUB
+    <div style={{ ...card({ marginTop: 18 }) }}>
+      <div style={{ color: C.muted, fontWeight: 700, fontSize: 12, letterSpacing: 0.8, marginBottom: 14, fontFamily: FONT_BODY }}>
+        📅 VERIFIED EARNINGS CALENDAR — SOURCE: FINNHUB
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 10 }}>
         {upcoming.map((e, i) => {
-          const daysColor = e.tradingDaysAway <= 3 ? C.red : e.tradingDaysAway <= 10 ? C.amber : C.accent
+          const tone = e.tradingDaysAway <= 3 ? 'red' : e.tradingDaysAway <= 10 ? 'amber' : 'blue'
           const hist = EARNINGS_HISTORY[e.ticker]
           return (
-            <div key={i} style={{ ...card({ padding: 12 }), borderColor: `${daysColor}33` }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ color: C.text, fontFamily: FONT, fontWeight: 800, fontSize: 16 }}>{e.ticker}</span>
-                <span style={{ ...badge(daysColor), fontSize: 10 }}>
-                  {e.tradingDaysAway === 0 ? 'TODAY' : `${e.tradingDaysAway}d`}
-                </span>
+            <div key={i} style={{ ...card({ padding: 12, borderTop: `3px solid ${pillColors[tone][0]}` }) }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                <span style={{ color: C.text, fontWeight: 800, fontSize: 18, fontFamily: FONT_MONO }}>{e.ticker}</span>
+                <Pill tone={tone} size="sm">{e.tradingDaysAway === 0 ? 'TODAY' : `${e.tradingDaysAway}d`}</Pill>
               </div>
-              <div style={{ color: C.muted, fontFamily: FONT, fontSize: 11, marginTop: 4 }}>{e.date}</div>
-              {hist && (
-                <div style={{ color: C.purple, fontFamily: FONT, fontSize: 10, marginTop: 6 }}>
-                  {hist.label}
-                </div>
-              )}
-              {e.epsEstimate != null && (
-                <div style={{ color: C.muted, fontSize: 11, marginTop: 4 }}>
-                  EPS est: ${e.epsEstimate}
-                </div>
-              )}
+              <div style={{ color: C.muted, fontSize: 12, fontFamily: FONT_BODY }}>{e.date}</div>
+              {hist && <div style={{ color: C.purple, fontSize: 11, fontWeight: 600, marginTop: 4 }}>{hist.label}</div>}
+              {e.epsEstimate != null && <div style={{ color: C.muted, fontSize: 11, marginTop: 2 }}>EPS est: ${e.epsEstimate}</div>}
             </div>
           )
         })}
@@ -343,141 +391,93 @@ function EarningsCalendarSection({ calendar }) {
   )
 }
 
-// ─── CIO Summary panel ────────────────────────────────────────────────────────
-function CIOPanel({ cio }) {
-  if (!cio) return null
-  return (
-    <div style={{ ...card({ borderColor: `${C.gold}44` }), marginBottom: 18 }}>
-      <div style={{ color: C.gold, fontFamily: FONT, fontSize: 12, letterSpacing: 1, marginBottom: 14 }}>
-        ⚡ FINAL CIO CALLS
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
-        {[
-          ['Best Trade Today',       cio.bestTradeToday,        C.up],
-          ['Best Risk/Reward',       cio.bestRiskReward,        C.accent],
-          ['Best New Opportunity',   cio.bestNewOpportunity,    C.green],
-          ['Best Speculative',       cio.bestSpeculative,       C.purple],
-          ['Cash Recommendation',    cio.cashRecommendation,    C.amber],
-          ['Final Market Decision',  cio.finalMarketDecision,   C.gold],
-        ].map(([lbl, v, color]) => v ? (
-          <div key={lbl} style={{ ...card({ padding: 12 }) }}>
-            <div style={label}>{lbl}</div>
-            <div style={{ color, fontFamily: FONT, fontWeight: 800, fontSize: 14 }}>{v}</div>
-          </div>
-        ) : null)}
-      </div>
-      {cio.watchList?.length > 0 && (
-        <div style={{ marginTop: 14 }}>
-          <div style={label}>WATCH LIST</div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
-            {cio.watchList.map((w, i) => (
-              <span key={i} style={badge(C.amber)}>{w.ticker || w} {w.reason ? `— ${w.reason}` : ''}</span>
-            ))}
-          </div>
-        </div>
-      )}
-      {cio.avoidList?.length > 0 && (
-        <div style={{ marginTop: 14 }}>
-          <div style={label}>AVOID</div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
-            {cio.avoidList.map((w, i) => (
-              <span key={i} style={badge(C.red)}>{w.ticker || w} {w.reason ? `— ${w.reason}` : ''}</span>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
 // ─── Deep dive panel ──────────────────────────────────────────────────────────
 function DeepDivePanel({ stock, content, loading, onRun }) {
   return (
-    <div style={{ ...card(), position: 'sticky', top: 20 }}>
-      <div style={{ color: C.accent, fontFamily: FONT, fontSize: 12, letterSpacing: 1, marginBottom: 14 }}>
+    <div style={{ ...card({ position: 'sticky', top: 16 }) }}>
+      <div style={{ color: C.muted, fontWeight: 700, fontSize: 11, letterSpacing: 0.8, marginBottom: 14, fontFamily: FONT_BODY }}>
         SELECTED SETUP
       </div>
       {stock ? (
         <>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
             <div>
-              <div style={{ fontFamily: FONT, fontWeight: 900, fontSize: 26, color: C.text }}>{stock.ticker}</div>
-              <div style={{ color: C.muted, fontSize: 12, fontFamily: FONT }}>{stock.company || stock.ticker}</div>
+              <div style={{ fontFamily: FONT_HEAD, fontWeight: 900, fontSize: 30, color: C.text }}>{stock.ticker}</div>
+              <div style={{ color: C.muted, fontSize: 13 }}>{stock.company || stock.ticker}</div>
             </div>
-            <ActionBadge action={stock.action} />
+            <ActionBadge action={stock.action} size="lg" />
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
             {[
-              ['Live Price',    stock.currentPrice],
-              ['Target',        stock.takeProfit || stock.expectedGain],
-              ['Stop Loss',     stock.stopLoss],
-              ['R/R',           stock.riskReward],
-              ['Entry Zone',    stock.entryZone],
-              ['Allocation',    stock.allocation],
+              ['Live Price',  stock.currentPrice],
+              ['Target',      stock.takeProfit || stock.expectedGain],
+              ['Stop Loss',   stock.stopLoss],
+              ['R/R',         stock.riskReward],
+              ['Entry Zone',  stock.entryZone],
+              ['Allocation',  stock.allocation],
             ].map(([lbl, v]) => v ? (
-              <div key={lbl}>
-                <div style={label}>{lbl}</div>
-                <div style={{ ...val, fontSize: 14 }}>{v}</div>
+              <div key={lbl} style={{ background: C.bg, borderRadius: 10, padding: '10px 12px' }}>
+                <div style={LBL}>{lbl}</div>
+                <div style={{ ...VAL, fontSize: 15 }}>{v}</div>
               </div>
             ) : null)}
           </div>
 
           {stock.earningsDate && (
-            <div style={{ marginBottom: 12 }}>
-              <div style={label}>Earnings Date (Verified)</div>
-              <div style={{ color: C.amber, fontFamily: FONT, fontWeight: 700 }}>
-                {stock.earningsDate}
-                {stock.earningsTradingDaysAway != null && ` · ${stock.earningsTradingDaysAway} trading days`}
+            <div style={{ background: C.amberBg, borderRadius: 10, padding: '10px 14px', marginBottom: 10 }}>
+              <div style={LBL}>EARNINGS DATE (VERIFIED)</div>
+              <div style={{ color: C.amber, fontWeight: 800, fontSize: 15, fontFamily: FONT_MONO }}>
+                {stock.earningsDate} · {stock.earningsTradingDaysAway} trading days
               </div>
             </div>
           )}
 
           {stock.catalyst && (
-            <div style={{ marginBottom: 12 }}>
-              <div style={label}>Catalyst</div>
-              <div style={{ ...val, fontSize: 13 }}>{stock.catalyst}</div>
+            <div style={{ marginBottom: 10 }}>
+              <div style={LBL}>CATALYST</div>
+              <div style={{ ...VAL, fontSize: 14 }}>{stock.catalyst}</div>
             </div>
           )}
 
           {stock.invalidation && (
-            <div style={{ marginBottom: 14 }}>
-              <div style={label}>Invalidation</div>
-              <div style={{ color: C.red, fontSize: 13 }}>{stock.invalidation}</div>
+            <div style={{ background: C.downBg, borderRadius: 10, padding: '10px 14px', marginBottom: 14 }}>
+              <div style={LBL}>INVALIDATION</div>
+              <div style={{ color: C.down, fontSize: 13, fontWeight: 600 }}>{stock.invalidation}</div>
             </div>
           )}
 
-          {divider}
+          <Divider />
 
-          <div style={{ color: C.accent, fontFamily: FONT, fontSize: 12, letterSpacing: 1, marginBottom: 10 }}>
+          <div style={{ color: C.muted, fontWeight: 700, fontSize: 11, letterSpacing: 0.8, marginBottom: 10, fontFamily: FONT_BODY }}>
             DEEP DIVE ANALYSIS
           </div>
 
           {loading ? (
-            <div style={{ color: C.muted, fontFamily: FONT, fontSize: 12 }}>Analysing {stock.ticker}…</div>
+            <div style={{ color: C.muted, fontSize: 13, fontFamily: FONT_BODY }}>Analysing {stock.ticker}…</div>
           ) : content ? (
-            <div style={{ color: C.text, fontSize: 13, lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{content}</div>
+            <div style={{ color: C.textSub, fontSize: 14, lineHeight: 1.75, whiteSpace: 'pre-wrap' }}>{content}</div>
           ) : (
-            <button onClick={onRun} style={btn(C.accent)}>▶ Run deep dive</button>
+            <button onClick={onRun} style={btn(true)}>▶ Run deep dive</button>
           )}
         </>
       ) : (
-        <div style={{ color: C.muted, fontFamily: FONT, fontSize: 12 }}>Select an opportunity to view details.</div>
+        <div style={{ color: C.muted, fontSize: 14 }}>Tap an opportunity to see details.</div>
       )}
     </div>
   )
 }
 
-// ─── Main Dashboard ───────────────────────────────────────────────────────────
-
+// ─── Tabs ─────────────────────────────────────────────────────────────────────
 const TABS = [
   { key: 'opportunities', label: '⚡ Opportunities' },
   { key: 'global',        label: '🌍 Global' },
-  { key: 'us',            label: '🇺🇸 US Pre-Market' },
+  { key: 'us',            label: '🇺🇸 US Markets' },
   { key: 'europe',        label: '🇪🇺 Europe' },
-  { key: 'risk',          label: '⚠ Risk' },
+  { key: 'risk',          label: '⚠️ Risk' },
 ]
 
+// ─── Main Dashboard ───────────────────────────────────────────────────────────
 export default function Dashboard() {
   const [activeTab,    setActiveTab]    = useState('opportunities')
   const [sectionData,  setSectionData]  = useState({})
@@ -487,16 +487,11 @@ export default function Dashboard() {
   const [drillContent, setDrillContent] = useState(null)
   const [drillLoading, setDrillLoading] = useState(false)
   const [lastUpdated,  setLastUpdated]  = useState({})
+  const [showDetail,   setShowDetail]   = useState(false) // mobile detail overlay
   const loadedRef = useRef({})
 
-  // ── API helpers ────────────────────────────────────────────────────────────
-
   const callClaude = useCallback(async (prompt, mode = 'json') => {
-    const res  = await fetch('/api/claude', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, mode }),
-    })
+    const res  = await fetch('/api/claude', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, mode }) })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || `Claude error ${res.status}`)
     const tb = data.content?.find(b => b.type === 'text')
@@ -504,14 +499,12 @@ export default function Dashboard() {
     return tb.text
   }, [])
 
-  const fetchMarket = useCallback(async (type, extra = '') => {
-    const res  = await fetch(`/api/market?type=${type}${extra}`, { cache: 'no-store' })
+  const fetchMarket = useCallback(async (type) => {
+    const res  = await fetch(`/api/market?type=${type}`, { cache: 'no-store' })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || `Market error ${res.status}`)
     return data
   }, [])
-
-  // ── Section loaders ────────────────────────────────────────────────────────
 
   const loadOpportunities = useCallback(async () => {
     setLoading(p => ({ ...p, opportunities: true }))
@@ -520,7 +513,6 @@ export default function Dashboard() {
       const market = await fetchMarket('opportunities')
       const { stocks, earningsCalendar, vix, vixRegime, sectorHealth } = market
 
-      // Build a rich prompt that gives Claude verified data to work with
       const stockLines = (stocks || []).map(s => {
         const hist = EARNINGS_HISTORY[s.ticker]
         return [
@@ -551,42 +543,16 @@ RULES: Use VERIFIED_EARNINGS_DATE only. GAP-UP>8%=WATCH. No catalyst within 40d=
 
 Return ONLY this JSON (max 5 opportunities, keep all strings SHORT):
 {"marketCondition":"BUY AGGRESSIVELY|BUY SELECTIVELY|WAIT|HOLD CASH","cashRecommendation":"one sentence","cashPct":30,"cio":{"bestTradeToday":"TICKER or NONE","bestRiskReward":"TICKER or NONE","finalMarketDecision":"BUY AGGRESSIVELY|BUY SELECTIVELY|WAIT|HOLD CASH","watchList":[{"ticker":"","reason":""}],"avoidList":[{"ticker":"","reason":""}]},"opportunities":[{"ticker":"","action":"STRONG BUY|BUY|WATCH|AVOID","currentPrice":"","entryZone":"$X-$Y","stopLoss":"$X","takeProfit":"$X","expectedGain":"15-20%","riskReward":"3:1","allocation":"10%","buyNow":"YES|NO|WAIT","catalyst":"specific catalyst","catalystDate":"VERIFIED date or UNVERIFIED","thesis":"one sentence","invalidation":"one sentence","returnGate":"PASS|FAIL","cashChallenge":"PASS|FAIL","opportunityScore":75}]}`
+
       const aiText = await callClaude(prompt, 'cio')
       const ai     = repairJSON(aiText)
-
-      // Ground prices with verified live data
       const priceMap = Object.fromEntries((stocks || []).map(s => [s.ticker, s]))
       const grounded = (ai.opportunities || []).map(opp => {
         const live = priceMap[opp.ticker] || {}
-        return {
-          ...opp,
-          currentPrice: live.priceFormatted || opp.currentPrice,
-          change1d: live.change1d || null,
-          changePctToday: live.changePct || 0,
-          direction: live.direction || 'up',
-          bigMoverToday: live.bigMoverToday || false,
-          earningsDate: live.earningsDate || null,
-          earningsTradingDaysAway: live.earningsTradingDaysAway ?? null,
-          hasVerifiedEarnings: live.hasVerifiedEarnings || false,
-          provider: 'finnhub',
-        }
+        return { ...opp, currentPrice: live.priceFormatted || opp.currentPrice, change1d: live.change1d || null, changePctToday: live.changePct || 0, direction: live.direction || 'up', bigMoverToday: live.bigMoverToday || false, earningsDate: live.earningsDate || null, earningsTradingDaysAway: live.earningsTradingDaysAway ?? null, hasVerifiedEarnings: live.hasVerifiedEarnings || false }
       })
 
-      setSectionData(p => ({
-        ...p,
-        opportunities: {
-          marketCondition: ai.marketCondition,
-          cashRecommendation: ai.cashRecommendation,
-          cashPct: ai.cashPct,
-          cio: ai.cio,
-          opportunities: grounded,
-          earningsCalendar,
-          vix,
-          vixRegime,
-          sectorHealth,
-          meta: market.meta,
-        },
-      }))
+      setSectionData(p => ({ ...p, opportunities: { marketCondition: ai.marketCondition, cashRecommendation: ai.cashRecommendation, cashPct: ai.cashPct, cio: ai.cio, opportunities: grounded, earningsCalendar, vix, vixRegime, sectorHealth, meta: market.meta } }))
       setLastUpdated(p => ({ ...p, opportunities: new Date().toISOString() }))
       if (grounded[0]) setSelected(grounded[0])
     } catch (err) {
@@ -597,118 +563,62 @@ Return ONLY this JSON (max 5 opportunities, keep all strings SHORT):
   }, [fetchMarket, callClaude])
 
   const loadGlobal = useCallback(async () => {
-    setLoading(p => ({ ...p, global: true }))
-    setErrors(p  => ({ ...p, global: null }))
+    setLoading(p => ({ ...p, global: true })); setErrors(p => ({ ...p, global: null }))
     try {
       const market = await fetchMarket('global')
-      const summary = `
-Real market data:
-Markets: ${market.markets?.map(m => `${m.name} ${m.value} ${m.change}`).join(', ')}
-Commodities: ${market.commodities?.map(c => `${c.name} ${c.value} ${c.change}`).join(', ')}
-FX: ${market.currencies?.map(c => `${c.pair} ${c.value} ${c.change}`).join(', ')}
-VIX Proxy: ${market.vix} (${market.vixRegime})
-
-Based ONLY on data above, return JSON:
-{"sentiment":"RISK ON|RISK OFF|NEUTRAL","sentimentReason":"one sentence","regimeAdvice":"one sentence on what this means for swing traders","macroEvents":[{"event":"","impact":"HIGH|MEDIUM|LOW"}]}`
-      const aiText = await callClaude(summary)
-      const ai     = repairJSON(aiText)
+      const summary = `Real market data:\nMarkets: ${market.markets?.map(m => `${m.name} ${m.value} ${m.change}`).join(', ')}\nCommodities: ${market.commodities?.map(c => `${c.name} ${c.value} ${c.change}`).join(', ')}\nFX: ${market.currencies?.map(c => `${c.pair} ${c.value} ${c.change}`).join(', ')}\nVIX: ${market.vix} (${market.vixSignal})\nReturn JSON: {"sentiment":"RISK ON|RISK OFF|NEUTRAL","sentimentReason":"one sentence","regimeAdvice":"one sentence for swing traders","macroEvents":[{"event":"","impact":"HIGH|MEDIUM|LOW"}]}`
+      const ai = repairJSON(await callClaude(summary))
       setSectionData(p => ({ ...p, global: { ...market, ...ai } }))
       setLastUpdated(p => ({ ...p, global: new Date().toISOString() }))
-    } catch (err) {
-      setErrors(p => ({ ...p, global: err.message }))
-    } finally {
-      setLoading(p => ({ ...p, global: false }))
-    }
+    } catch (err) { setErrors(p => ({ ...p, global: err.message })) }
+    finally { setLoading(p => ({ ...p, global: false })) }
   }, [fetchMarket, callClaude])
 
   const loadUS = useCallback(async () => {
-    setLoading(p => ({ ...p, us: true }))
-    setErrors(p  => ({ ...p, us: null }))
+    setLoading(p => ({ ...p, us: true })); setErrors(p => ({ ...p, us: null }))
     try {
       const market = await fetchMarket('us')
-      const summary = `
-Real US data:
-Futures: ${market.futures?.map(f => `${f.index} ${f.value} ${f.change}`).join(', ')}
-Gainers: ${market.gainers?.map(g => `${g.ticker} ${g.change}`).join(', ')}
-Losers: ${market.losers?.map(l => `${l.ticker} ${l.change}`).join(', ')}
-
-Apply POST-CATALYST CHASE RULE to every gainer. Return JSON:
-{"outlook":"BULLISH|BEARISH|NEUTRAL","outlookReason":"one sentence","sectorLeaders":[],"sectorLaggards":[],"watchForToday":["specific things to monitor"]}`
-      const aiText = await callClaude(summary)
-      const ai     = repairJSON(aiText)
+      const summary = `Real US data:\nFutures: ${market.futures?.map(f => `${f.index} ${f.value} ${f.change}`).join(', ')}\nGainers: ${market.gainers?.map(g => `${g.ticker} ${g.change}`).join(', ')}\nLosers: ${market.losers?.map(l => `${l.ticker} ${l.change}`).join(', ')}\nApply POST-CATALYST CHASE RULE to gainers. Return JSON: {"outlook":"BULLISH|BEARISH|NEUTRAL","outlookReason":"one sentence","watchForToday":["specific things to monitor"]}`
+      const ai = repairJSON(await callClaude(summary))
       setSectionData(p => ({ ...p, us: { ...market, ...ai } }))
       setLastUpdated(p => ({ ...p, us: new Date().toISOString() }))
-    } catch (err) {
-      setErrors(p => ({ ...p, us: err.message }))
-    } finally {
-      setLoading(p => ({ ...p, us: false }))
-    }
+    } catch (err) { setErrors(p => ({ ...p, us: err.message })) }
+    finally { setLoading(p => ({ ...p, us: false })) }
   }, [fetchMarket, callClaude])
 
   const loadEurope = useCallback(async () => {
-    setLoading(p => ({ ...p, europe: true }))
-    setErrors(p  => ({ ...p, europe: null }))
+    setLoading(p => ({ ...p, europe: true })); setErrors(p => ({ ...p, europe: null }))
     try {
       const market = await fetchMarket('europe')
-      const summary = `
-European indices: ${market.futures?.map(f => `${f.index} ${f.value} ${f.change}`).join(', ')}
-
-Return JSON:
-{"outlook":"BULLISH|BEARISH|NEUTRAL","outlookReason":"one sentence","europeanSetups":[{"ticker":"","company":"","catalyst":"specific","catalystDate":"","action":"WATCH|BUY"}]}`
-      const aiText = await callClaude(summary)
-      const ai     = repairJSON(aiText)
+      const summary = `European indices: ${market.futures?.map(f => `${f.index} ${f.value} ${f.change}`).join(', ')}\nReturn JSON: {"outlook":"BULLISH|BEARISH|NEUTRAL","outlookReason":"one sentence","europeanSetups":[{"ticker":"","company":"","catalyst":"","catalystDate":"","action":"WATCH|BUY"}]}`
+      const ai = repairJSON(await callClaude(summary))
       setSectionData(p => ({ ...p, europe: { ...market, ...ai } }))
       setLastUpdated(p => ({ ...p, europe: new Date().toISOString() }))
-    } catch (err) {
-      setErrors(p => ({ ...p, europe: err.message }))
-    } finally {
-      setLoading(p => ({ ...p, europe: false }))
-    }
+    } catch (err) { setErrors(p => ({ ...p, europe: err.message })) }
+    finally { setLoading(p => ({ ...p, europe: false })) }
   }, [fetchMarket, callClaude])
 
   const loadRisk = useCallback(async () => {
-    setLoading(p => ({ ...p, risk: true }))
-    setErrors(p  => ({ ...p, risk: null }))
+    setLoading(p => ({ ...p, risk: true })); setErrors(p => ({ ...p, risk: null }))
     try {
-      const prompt = `Today is ${new Date().toDateString()}.
-Assess current swing-trading risk environment. Be specific about threats in the next 40 days.
-Return JSON:
-{"overallRisk":"HIGH|ELEVATED|MODERATE|LOW","cashSuggestion":"X%","macroRisks":[{"risk":"","detail":"","severity":"HIGH|MEDIUM|LOW"}],"geopoliticalRisks":[{"risk":"","detail":"","severity":""}],"sectorRisks":[{"sector":"","risk":"","severity":""}],"positionSizingAdvice":"one line","hedgeIdeas":[""]}`
-      const aiText = await callClaude(prompt)
-      const ai     = repairJSON(aiText)
+      const prompt = `Today: ${new Date().toDateString()}. Assess swing-trading risk next 40 days. Return JSON: {"overallRisk":"HIGH|ELEVATED|MODERATE|LOW","cashSuggestion":"X%","positionSizingAdvice":"one line","macroRisks":[{"risk":"","detail":"","severity":"HIGH|MEDIUM|LOW"}],"geopoliticalRisks":[{"risk":"","detail":"","severity":""}],"sectorRisks":[{"sector":"","risk":"","severity":""}],"hedgeIdeas":[""]}`
+      const ai = repairJSON(await callClaude(prompt))
       setSectionData(p => ({ ...p, risk: ai }))
       setLastUpdated(p => ({ ...p, risk: new Date().toISOString() }))
-    } catch (err) {
-      setErrors(p => ({ ...p, risk: err.message }))
-    } finally {
-      setLoading(p => ({ ...p, risk: false }))
-    }
+    } catch (err) { setErrors(p => ({ ...p, risk: err.message })) }
+    finally { setLoading(p => ({ ...p, risk: false })) }
   }, [callClaude])
 
   const deepDive = useCallback(async (opp) => {
-    setDrillLoading(true)
-    setDrillContent(null)
+    setDrillLoading(true); setDrillContent(null)
     try {
       const hist = EARNINGS_HISTORY[opp.ticker]
-      const text = await callClaude(`
-Today: ${new Date().toDateString()}
-Analyse ${opp.ticker} at ${opp.currentPrice}.
-Earnings date: ${opp.earningsDate || 'NOT VERIFIED'} (${opp.earningsTradingDaysAway ?? '?'} trading days away).
-Catalyst: ${opp.catalyst || 'N/A'}
-Earnings history: ${hist ? hist.label : 'not available'}
-Thesis: ${opp.thesis}
-
-Cover: (1) Why this specific setup NOW (2) Key risk to the thesis (3) Ideal entry trigger (4) What invalidates immediately.
-Label each claim FACT, ANALYSIS or OPINION. Under 260 words.`, 'deepdive')
+      const text = await callClaude(`Today: ${new Date().toDateString()}\nAnalyse ${opp.ticker} at ${opp.currentPrice}.\nEarnings: ${opp.earningsDate || 'NOT VERIFIED'} (${opp.earningsTradingDaysAway ?? '?'} trading days)\nCatalyst: ${opp.catalyst || 'N/A'}\nHistory: ${hist ? hist.label : 'not available'}\nThesis: ${opp.thesis}\nCover: (1) Why this setup NOW (2) Key risk (3) Ideal entry trigger (4) Immediate invalidation. Label each FACT/ANALYSIS/OPINION. Under 260 words.`, 'deepdive')
       setDrillContent(text)
-    } catch (err) {
-      setDrillContent(`Error: ${err.message}`)
-    } finally {
-      setDrillLoading(false)
-    }
+    } catch (err) { setDrillContent(`Error: ${err.message}`) }
+    finally { setDrillLoading(false) }
   }, [callClaude])
 
-  // Auto-load tabs when first visited
   const loaders = { opportunities: loadOpportunities, global: loadGlobal, us: loadUS, europe: loadEurope, risk: loadRisk }
 
   useEffect(() => {
@@ -719,8 +629,7 @@ Label each claim FACT, ANALYSIS or OPINION. Under 260 words.`, 'deepdive')
   }, [activeTab]) // eslint-disable-line
 
   const handleStockClick = useCallback((opp) => {
-    setSelected(opp)
-    setDrillContent(null)
+    setSelected(opp); setDrillContent(null); setShowDetail(true)
     deepDive(opp)
   }, [deepDive])
 
@@ -732,7 +641,7 @@ Label each claim FACT, ANALYSIS or OPINION. Under 260 words.`, 'deepdive')
   // ── Renders ────────────────────────────────────────────────────────────────
 
   function renderOpportunities() {
-    const d = sectionData.opportunities
+    const d    = sectionData.opportunities
     if (!d) return null
     const opps = d.opportunities || []
 
@@ -742,40 +651,44 @@ Label each claim FACT, ANALYSIS or OPINION. Under 260 words.`, 'deepdive')
         <CIOPanel cio={d.cio} />
 
         {d.cashRecommendation && (
-          <div style={{ ...card({ padding: '12px 18px' }), marginBottom: 14 }}>
-            <span style={{ color: C.muted, fontFamily: FONT, fontSize: 12 }}>CASH: </span>
-            <span style={{ color: C.text, fontFamily: FONT, fontSize: 13 }}>{d.cashRecommendation}</span>
-            {d.cashPct != null && <span style={{ ...badge(C.amber), marginLeft: 10 }}>{d.cashPct}% CASH</span>}
+          <div style={{ ...card({ padding: '12px 16px', marginBottom: 14 }), display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <Pill tone="amber" size="md">💰 {d.cashPct != null ? `${d.cashPct}% CASH` : 'CASH'}</Pill>
+            <span style={{ color: C.textSub, fontSize: 14 }}>{d.cashRecommendation}</span>
           </div>
         )}
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.4fr) minmax(300px,0.8fr)', gap: 18, alignItems: 'start' }}>
-          <div>
-            <div style={{ display: 'grid', gap: 14 }}>
-              {opps.length ? opps.map((opp, i) => (
-                <OpportunityCard
-                  key={`${opp.ticker}-${i}`}
-                  opp={opp}
-                  rank={i + 1}
-                  active={selected?.ticker === opp.ticker}
-                  onClick={handleStockClick}
-                />
-              )) : (
-                <div style={{ ...card(), color: C.muted, fontFamily: FONT, fontSize: 13 }}>
-                  No qualifying opportunities returned. Cash may be the right call.
-                </div>
-              )}
-            </div>
-            <EarningsCalendarSection calendar={d.earningsCalendar} />
+        {/* Desktop: two-col. Mobile: single col, detail as overlay */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.4fr) minmax(300px,0.8fr)', gap: 18, alignItems: 'start' }}
+             className="catalyst-grid">
+          <div style={{ display: 'grid', gap: 14 }}>
+            {opps.length ? opps.map((opp, i) => (
+              <OpportunityCard key={`${opp.ticker}-${i}`} opp={opp} rank={i+1} active={selected?.ticker === opp.ticker} onClick={handleStockClick} />
+            )) : (
+              <div style={{ ...card(), textAlign: 'center', padding: 40 }}>
+                <div style={{ fontSize: 32, marginBottom: 10 }}>💵</div>
+                <div style={{ color: C.text, fontWeight: 700, fontSize: 18, marginBottom: 6 }}>No qualifying opportunities</div>
+                <div style={{ color: C.muted, fontSize: 14 }}>All candidates failed Return Gate or Cash Challenge. Holding cash is the right call.</div>
+              </div>
+            )}
+            <EarningsCalendar calendar={d.earningsCalendar} />
           </div>
 
-          <DeepDivePanel
-            stock={selected}
-            content={drillContent}
-            loading={drillLoading}
-            onRun={() => selected && deepDive(selected)}
-          />
+          {/* Sticky side panel — hidden on mobile, shown in overlay instead */}
+          <div className="catalyst-side">
+            <DeepDivePanel stock={selected} content={drillContent} loading={drillLoading} onRun={() => selected && deepDive(selected)} />
+          </div>
         </div>
+
+        {/* Mobile overlay */}
+        {showDetail && selected && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 100, overflowY: 'auto', padding: 16 }}
+               onClick={e => { if (e.target === e.currentTarget) setShowDetail(false) }}>
+            <div style={{ maxWidth: 500, margin: '0 auto', position: 'relative' }}>
+              <button onClick={() => setShowDetail(false)} style={{ ...btn(false), marginBottom: 10, width: '100%' }}>← Back to list</button>
+              <DeepDivePanel stock={selected} content={drillContent} loading={drillLoading} onRun={() => selected && deepDive(selected)} />
+            </div>
+          </div>
+        )}
       </>
     )
   }
@@ -783,50 +696,47 @@ Label each claim FACT, ANALYSIS or OPINION. Under 260 words.`, 'deepdive')
   function renderGlobal() {
     const d = sectionData.global
     if (!d) return null
-    const sentColor = d.sentiment === 'RISK ON' ? C.up : d.sentiment === 'RISK OFF' ? C.down : C.flat
+    const sentTone = d.sentiment === 'RISK ON' ? 'green' : d.sentiment === 'RISK OFF' ? 'red' : 'grey'
     return (
       <>
-        <div style={{ ...card({ marginBottom: 14 }), display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
-          <span style={badge(sentColor, 'lg')}>{d.sentiment || 'NEUTRAL'}</span>
-          <span style={{ color: C.text, fontFamily: FONT, fontSize: 13 }}>{d.sentimentReason}</span>
-          {d.regimeAdvice && <span style={{ color: C.muted, fontFamily: FONT, fontSize: 12 }}>{d.regimeAdvice}</span>}
-          {d.vix && <span style={{ ...badge(d.vixRegime === 'CALM' ? C.up : d.vixRegime === 'HIGH_FEAR' ? C.red : C.amber) }}>VIX PROXY: {fmt(d.vix)}</span>}
+        <div style={{ ...card({ marginBottom: 14 }), display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+          <Pill tone={sentTone} size="lg">{d.sentiment || 'NEUTRAL'}</Pill>
+          <div>
+            <div style={{ color: C.text, fontWeight: 600, fontSize: 15 }}>{d.sentimentReason}</div>
+            {d.regimeAdvice && <div style={{ color: C.muted, fontSize: 13, marginTop: 4 }}>{d.regimeAdvice}</div>}
+          </div>
+          {d.vix && <Pill tone={d.vixSignal === 'CALM' ? 'green' : d.vixSignal === 'HIGH_FEAR' ? 'red' : 'amber'} size="md">VIX {d.vix}</Pill>}
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 18 }}>
-          {(d.markets || []).map((m, i) => (
-            <div key={i} style={card({ padding: 14 })}>
-              <div style={label}>{m.name}</div>
-              <div style={{ color: m.direction === 'up' ? C.up : C.down, fontFamily: FONT, fontWeight: 800, fontSize: 18 }}>{m.value}</div>
-              <div style={{ color: m.direction === 'up' ? C.up : C.down, fontFamily: FONT, fontSize: 12 }}>{m.change}</div>
-            </div>
-          ))}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10, marginBottom: 18 }}>
+          {(d.markets || []).map((m, i) => <StatTile key={i} label={m.name} value={m.value} change={m.change} direction={m.direction} />)}
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 18 }}>
           <div style={card()}>
-            <div style={{ color: C.accent, fontFamily: FONT, fontSize: 12, letterSpacing: 1, marginBottom: 14 }}>COMMODITIES & FX</div>
+            <div style={{ ...LBL, marginBottom: 14 }}>COMMODITIES & FX</div>
             {(d.commodities || []).map((c, i) => (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10, fontFamily: FONT }}>
-                <span style={{ color: C.muted }}>{c.name}</span>
-                <span style={{ color: c.direction === 'up' ? C.up : C.down }}>{c.value} {c.change}</span>
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < d.commodities.length - 1 ? `1px solid ${C.border}` : 'none' }}>
+                <span style={{ color: C.textSub, fontSize: 14 }}>{c.name}</span>
+                <span style={{ color: c.direction === 'up' ? C.up : C.down, fontWeight: 700, fontFamily: FONT_MONO, fontSize: 14 }}>{c.value} <span style={{ fontSize: 12 }}>{c.change}</span></span>
               </div>
             ))}
-            {divider}
-            {(d.currencies || []).map((c, i) => (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10, fontFamily: FONT }}>
-                <span style={{ color: C.muted }}>{c.pair}</span>
-                <span style={{ color: C.text }}>{c.value} {c.change}</span>
-              </div>
-            ))}
+            {d.currencies?.length > 0 && <><Divider />
+              {(d.currencies || []).map((c, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0' }}>
+                  <span style={{ color: C.textSub, fontSize: 14, fontWeight: 600 }}>{c.pair}</span>
+                  <span style={{ color: C.text, fontWeight: 700, fontFamily: FONT_MONO, fontSize: 14 }}>{c.value} <span style={{ color: C.muted, fontSize: 12 }}>{c.change}</span></span>
+                </div>
+              ))}
+            </>}
           </div>
           <div style={card()}>
-            <div style={{ color: C.accent, fontFamily: FONT, fontSize: 12, letterSpacing: 1, marginBottom: 14 }}>MACRO EVENTS</div>
+            <div style={{ ...LBL, marginBottom: 14 }}>MACRO EVENTS</div>
             {(d.macroEvents || []).map((e, i) => (
               <div key={i} style={{ marginBottom: 12 }}>
-                <div style={{ color: C.text, fontFamily: FONT, fontSize: 13, fontWeight: 700 }}>{e.event}</div>
-                <div style={{ ...badge(e.impact === 'HIGH' ? C.red : e.impact === 'MEDIUM' ? C.amber : C.muted), marginTop: 6 }}>{e.impact}</div>
-                {i < d.macroEvents.length - 1 && divider}
+                <div style={{ color: C.text, fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{e.event}</div>
+                <Pill tone={e.impact === 'HIGH' ? 'red' : e.impact === 'MEDIUM' ? 'amber' : 'grey'} size="sm">{e.impact}</Pill>
+                {i < d.macroEvents.length - 1 && <Divider />}
               </div>
             ))}
           </div>
@@ -838,43 +748,36 @@ Label each claim FACT, ANALYSIS or OPINION. Under 260 words.`, 'deepdive')
   function renderUS() {
     const d = sectionData.us
     if (!d) return null
-    const outlookColor = d.outlook === 'BULLISH' ? C.up : d.outlook === 'BEARISH' ? C.down : C.flat
+    const outlookTone = d.outlook === 'BULLISH' ? 'green' : d.outlook === 'BEARISH' ? 'red' : 'grey'
     return (
       <>
-        <div style={{ ...card({ marginBottom: 14 }), display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
-          <span style={badge(outlookColor, 'lg')}>{d.outlook || 'NEUTRAL'}</span>
-          <span style={{ color: C.text, fontFamily: FONT, fontSize: 13 }}>{d.outlookReason}</span>
+        <div style={{ ...card({ marginBottom: 14 }), display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <Pill tone={outlookTone} size="lg">{d.outlook || 'NEUTRAL'}</Pill>
+          <span style={{ color: C.textSub, fontSize: 14 }}>{d.outlookReason}</span>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 18 }}>
-          {(d.futures || []).map((f, i) => (
-            <div key={i} style={card({ padding: 14 })}>
-              <div style={label}>{f.index}</div>
-              <div style={{ color: f.direction === 'up' ? C.up : C.down, fontFamily: FONT, fontWeight: 800, fontSize: 18 }}>{f.value}</div>
-              <div style={{ color: f.direction === 'up' ? C.up : C.down, fontFamily: FONT, fontSize: 12 }}>{f.change}</div>
-            </div>
-          ))}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 10, marginBottom: 18 }}>
+          {(d.futures || []).map((f, i) => <StatTile key={i} label={f.index} value={f.value} change={f.change} direction={f.direction} />)}
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 18 }}>
-          {[['Top Gainers', d.gainers, C.up], ['Top Losers', d.losers, C.down]].map(([title, items, color]) => (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 18 }}>
+          {[['🚀 Top Gainers', d.gainers, 'up'], ['📉 Top Losers', d.losers, 'down']].map(([title, items, dir]) => (
             <div key={title} style={card()}>
-              <div style={{ color: C.accent, fontFamily: FONT, fontSize: 12, letterSpacing: 1, marginBottom: 14 }}>{title.toUpperCase()}</div>
+              <div style={{ ...LBL, marginBottom: 14 }}>{title}</div>
               {(items || []).map((g, i) => (
-                <div key={i}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: FONT }}>
-                    <span style={{ color: C.text, fontWeight: 800 }}>{g.ticker}</span>
-                    <span style={{ color }}>{g.change}</span>
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: i < items.length - 1 ? `1px solid ${C.border}` : 'none' }}>
+                  <span style={{ color: C.text, fontWeight: 800, fontFamily: FONT_MONO, fontSize: 15 }}>{g.ticker}</span>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ color: dir === 'up' ? C.up : C.down, fontWeight: 700, fontFamily: FONT_MONO, fontSize: 14 }}>{g.change}</div>
+                    <div style={{ color: C.muted, fontSize: 12 }}>{g.price}</div>
                   </div>
-                  <div style={{ color: C.muted, fontSize: 11, marginBottom: 8 }}>{g.price}</div>
-                  {i < items.length - 1 && divider}
                 </div>
               ))}
             </div>
           ))}
           {d.watchForToday?.length > 0 && (
             <div style={card()}>
-              <div style={{ color: C.accent, fontFamily: FONT, fontSize: 12, letterSpacing: 1, marginBottom: 14 }}>WATCH FOR TODAY</div>
+              <div style={{ ...LBL, marginBottom: 14 }}>👀 WATCH FOR TODAY</div>
               {d.watchForToday.map((w, i) => (
-                <div key={i} style={{ color: C.text, fontFamily: FONT, fontSize: 13, marginBottom: 8 }}>• {w}</div>
+                <div key={i} style={{ color: C.textSub, fontSize: 14, padding: '6px 0', borderBottom: i < d.watchForToday.length - 1 ? `1px solid ${C.border}` : 'none' }}>• {w}</div>
               ))}
             </div>
           )}
@@ -886,35 +789,29 @@ Label each claim FACT, ANALYSIS or OPINION. Under 260 words.`, 'deepdive')
   function renderEurope() {
     const d = sectionData.europe
     if (!d) return null
-    const outlookColor = d.outlook === 'BULLISH' ? C.up : d.outlook === 'BEARISH' ? C.down : C.flat
+    const outlookTone = d.outlook === 'BULLISH' ? 'green' : d.outlook === 'BEARISH' ? 'red' : 'grey'
     return (
       <>
-        <div style={{ ...card({ marginBottom: 14 }), display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
-          <span style={badge(outlookColor, 'lg')}>{d.outlook || 'NEUTRAL'}</span>
-          <span style={{ color: C.text, fontFamily: FONT, fontSize: 13 }}>{d.outlookReason}</span>
+        <div style={{ ...card({ marginBottom: 14 }), display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <Pill tone={outlookTone} size="lg">{d.outlook || 'NEUTRAL'}</Pill>
+          <span style={{ color: C.textSub, fontSize: 14 }}>{d.outlookReason}</span>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 18 }}>
-          {(d.futures || []).map((f, i) => (
-            <div key={i} style={card({ padding: 14 })}>
-              <div style={label}>{f.index}</div>
-              <div style={{ color: f.direction === 'up' ? C.up : C.down, fontFamily: FONT, fontWeight: 800, fontSize: 18 }}>{f.value}</div>
-              <div style={{ color: f.direction === 'up' ? C.up : C.down, fontFamily: FONT, fontSize: 12 }}>{f.change}</div>
-            </div>
-          ))}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 10, marginBottom: 18 }}>
+          {(d.futures || []).map((f, i) => <StatTile key={i} label={f.index} value={f.value} change={f.change} direction={f.direction} />)}
         </div>
         {d.europeanSetups?.length > 0 && (
           <div style={card()}>
-            <div style={{ color: C.accent, fontFamily: FONT, fontSize: 12, letterSpacing: 1, marginBottom: 14 }}>EUROPEAN SETUPS</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
+            <div style={{ ...LBL, marginBottom: 14 }}>EUROPEAN SETUPS</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
               {d.europeanSetups.map((s, i) => (
-                <div key={i} style={card({ padding: 14 })}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                    <span style={{ color: C.text, fontFamily: FONT, fontWeight: 800 }}>{s.ticker}</span>
+                <div key={i} style={{ ...card({ padding: 14 }), borderTop: `3px solid ${C.accent}` }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <span style={{ fontWeight: 800, fontSize: 18, fontFamily: FONT_MONO }}>{s.ticker}</span>
                     <ActionBadge action={s.action} />
                   </div>
-                  <div style={{ color: C.muted, fontSize: 12, fontFamily: FONT }}>{s.company}</div>
-                  <div style={{ color: C.text, fontSize: 13, marginTop: 8 }}>{s.catalyst}</div>
-                  {s.catalystDate && <div style={{ color: C.amber, fontSize: 12, fontFamily: FONT, marginTop: 4 }}>{s.catalystDate}</div>}
+                  <div style={{ color: C.muted, fontSize: 13 }}>{s.company}</div>
+                  <div style={{ color: C.textSub, fontSize: 14, marginTop: 8 }}>{s.catalyst}</div>
+                  {s.catalystDate && <div style={{ color: C.amber, fontSize: 12, fontWeight: 600, marginTop: 4 }}>{s.catalystDate}</div>}
                 </div>
               ))}
             </div>
@@ -927,36 +824,38 @@ Label each claim FACT, ANALYSIS or OPINION. Under 260 words.`, 'deepdive')
   function renderRisk() {
     const d = sectionData.risk
     if (!d) return null
-    const riskColor = d.overallRisk === 'LOW' ? C.up : d.overallRisk === 'MODERATE' ? C.amber : C.red
+    const riskTone = d.overallRisk === 'LOW' ? 'green' : d.overallRisk === 'MODERATE' ? 'amber' : 'red'
     return (
       <>
-        <div style={{ ...card({ marginBottom: 14 }), display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
-          <span style={badge(riskColor, 'lg')}>RISK: {d.overallRisk || 'MODERATE'}</span>
-          {d.cashSuggestion && <span style={{ ...badge(C.amber) }}>Suggest {d.cashSuggestion} cash</span>}
-          {d.positionSizingAdvice && <span style={{ color: C.muted, fontFamily: FONT, fontSize: 12 }}>{d.positionSizingAdvice}</span>}
+        <div style={{ ...card({ marginBottom: 14 }), display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <Pill tone={riskTone} size="lg">RISK: {d.overallRisk || 'MODERATE'}</Pill>
+          {d.cashSuggestion && <Pill tone="amber" size="md">💰 Hold {d.cashSuggestion} cash</Pill>}
+          {d.positionSizingAdvice && <span style={{ color: C.muted, fontSize: 14 }}>{d.positionSizingAdvice}</span>}
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 18 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 18 }}>
           {[
-            ['Macro Risks',        d.macroRisks,        r => r.risk,   r => r.detail,   r => r.severity],
-            ['Geopolitical Risks', d.geopoliticalRisks, r => r.risk,   r => r.detail,   r => r.severity],
-            ['Sector Risks',       d.sectorRisks,       r => r.sector, r => r.risk,     r => r.severity],
-          ].map(([title, items, titleFn, detailFn, sevFn]) => (
+            ['⚠️ Macro Risks',        d.macroRisks,        r => r.risk,   r => r.detail,   r => r.severity],
+            ['🌍 Geopolitical',       d.geopoliticalRisks, r => r.risk,   r => r.detail,   r => r.severity],
+            ['📊 Sector Risks',       d.sectorRisks,       r => r.sector, r => r.risk,     r => r.severity],
+          ].map(([title, items, tFn, dFn, sFn]) => (
             <div key={title} style={card()}>
-              <div style={{ color: C.accent, fontFamily: FONT, fontSize: 12, letterSpacing: 1, marginBottom: 14 }}>{title.toUpperCase()}</div>
+              <div style={{ ...LBL, marginBottom: 14 }}>{title}</div>
               {(items || []).map((r, i) => (
                 <div key={i} style={{ marginBottom: 12 }}>
-                  <div style={{ color: C.text, fontFamily: FONT, fontWeight: 700, fontSize: 13 }}>{titleFn(r)}</div>
-                  <div style={{ color: C.muted, fontSize: 12, marginTop: 4 }}>{detailFn(r)}</div>
-                  <span style={{ ...badge(sevFn(r) === 'HIGH' ? C.red : sevFn(r) === 'MEDIUM' ? C.amber : C.muted), marginTop: 6 }}>{sevFn(r)}</span>
-                  {i < items.length - 1 && divider}
+                  <div style={{ color: C.text, fontWeight: 700, fontSize: 14 }}>{tFn(r)}</div>
+                  <div style={{ color: C.muted, fontSize: 13, marginTop: 3 }}>{dFn(r)}</div>
+                  <div style={{ marginTop: 6 }}>
+                    <Pill tone={sFn(r) === 'HIGH' ? 'red' : sFn(r) === 'MEDIUM' ? 'amber' : 'grey'} size="sm">{sFn(r)}</Pill>
+                  </div>
+                  {i < (items?.length || 0) - 1 && <Divider />}
                 </div>
               ))}
             </div>
           ))}
           <div style={card()}>
-            <div style={{ color: C.accent, fontFamily: FONT, fontSize: 12, letterSpacing: 1, marginBottom: 14 }}>HEDGE IDEAS</div>
+            <div style={{ ...LBL, marginBottom: 14 }}>🛡 HEDGE IDEAS</div>
             {(d.hedgeIdeas || []).map((h, i) => (
-              <div key={i} style={{ color: C.text, fontFamily: FONT, fontSize: 13, marginBottom: 8 }}>• {h}</div>
+              <div key={i} style={{ color: C.textSub, fontSize: 14, padding: '6px 0', borderBottom: i < d.hedgeIdeas.length - 1 ? `1px solid ${C.border}` : 'none' }}>• {h}</div>
             ))}
           </div>
         </div>
@@ -965,40 +864,35 @@ Label each claim FACT, ANALYSIS or OPINION. Under 260 words.`, 'deepdive')
   }
 
   function renderContent() {
-    const isLoading = loading[activeTab]
-    const error     = errors[activeTab]
-    const data      = sectionData[activeTab]
+    const isLoad = loading[activeTab]
+    const err    = errors[activeTab]
+    const data   = sectionData[activeTab]
 
-    if (isLoading) {
-      return (
-        <div style={{ ...card(), minHeight: 300, display: 'grid', placeItems: 'center' }}>
-          <div>
-            <div style={{ color: C.accent, fontFamily: FONT, fontSize: 14, marginBottom: 8, textAlign: 'center' }}>
-              {activeTab === 'opportunities' ? '⚡ Running trading analysis…' : '⟳ Loading…'}
-            </div>
-            <div style={{ color: C.muted, fontFamily: FONT, fontSize: 12, textAlign: 'center' }}>
-              {activeTab === 'opportunities'
-                ? 'Fetching live prices → Pulling earnings calendar → Applying trading rules → Generating CIO analysis'
-                : 'Fetching market data and running AI analysis'}
-            </div>
-          </div>
+    if (isLoad) return (
+      <div style={{ ...card(), minHeight: 300, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
+        <div style={{ width: 40, height: 40, border: `3px solid ${C.border}`, borderTop: `3px solid ${C.accent}`, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+        <div style={{ color: C.text, fontWeight: 700, fontSize: 16 }}>
+          {activeTab === 'opportunities' ? 'Running trading analysis…' : 'Loading…'}
         </div>
-      )
-    }
+        <div style={{ color: C.muted, fontSize: 13, textAlign: 'center', maxWidth: 360 }}>
+          {activeTab === 'opportunities'
+            ? 'Fetching live prices · Pulling earnings calendar · Applying trading rules · Generating CIO analysis'
+            : 'Fetching live market data and running AI analysis'}
+        </div>
+      </div>
+    )
 
-    if (error) {
-      return (
-        <div style={{ ...card({ borderColor: `${C.red}55` }), padding: 24 }}>
-          <div style={{ color: C.red, fontFamily: FONT, fontWeight: 700, marginBottom: 8 }}>Error loading data</div>
-          <div style={{ color: C.text, fontFamily: FONT, fontSize: 13, marginBottom: 16, whiteSpace: 'pre-wrap' }}>{error}</div>
-          <button onClick={refresh} style={btn(C.red)}>Retry</button>
-        </div>
-      )
-    }
+    if (err) return (
+      <div style={{ ...card({ borderLeft: `4px solid ${C.down}` }), padding: 24 }}>
+        <div style={{ color: C.down, fontWeight: 700, fontSize: 16, marginBottom: 8 }}>Error loading data</div>
+        <div style={{ color: C.textSub, fontSize: 14, marginBottom: 16, whiteSpace: 'pre-wrap' }}>{err}</div>
+        <button onClick={refresh} style={btn(true)}>Retry</button>
+      </div>
+    )
 
     if (!data) return (
       <div style={{ ...card(), minHeight: 200, display: 'grid', placeItems: 'center' }}>
-        <div style={{ color: C.muted, fontFamily: FONT }}>Loading…</div>
+        <div style={{ color: C.muted }}>Loading…</div>
       </div>
     )
 
@@ -1012,26 +906,38 @@ Label each claim FACT, ANALYSIS or OPINION. Under 260 words.`, 'deepdive')
 
   // ── Shell ──────────────────────────────────────────────────────────────────
   return (
-    <div style={{ minHeight: '100vh', background: C.bg, color: C.text, padding: 20, fontFamily: FONT }}>
-      <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;700;900&display=swap" rel="stylesheet" />
-      <div style={{ maxWidth: 1600, margin: '0 auto' }}>
+    <div style={{ minHeight: '100vh', background: C.bg, color: C.text, fontFamily: FONT_BODY }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800;900&family=DM+Mono:wght@400;500;700&display=swap');
+        * { box-sizing: border-box; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .catalyst-grid { grid-template-columns: minmax(0,1.4fr) minmax(300px,0.8fr); }
+        .catalyst-side { display: block; }
+        @media (max-width: 768px) {
+          .catalyst-grid { grid-template-columns: 1fr !important; }
+          .catalyst-side { display: none !important; }
+        }
+        button:hover { opacity: 0.88; }
+      `}</style>
+
+      <div style={{ maxWidth: 1560, margin: '0 auto', padding: '12px 16px' }}>
 
         {/* Header */}
-        <div style={{ ...card({ marginBottom: 14 }), display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, padding: '14px 20px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 14, padding: '14px 18px', background: C.card, borderRadius: 16, border: `1px solid ${C.border}`, boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
           <div>
-            <div style={{ color: C.accent, fontWeight: 900, fontSize: 24, letterSpacing: 2 }}>CATALYST</div>
-            <div style={{ color: C.muted, fontSize: 11, letterSpacing: 1 }}>TRADING INTELLIGENCE · LIVE DATA · {new Date().toDateString().toUpperCase()}</div>
+            <div style={{ fontWeight: 900, fontSize: 24, color: C.accent, fontFamily: FONT_HEAD, letterSpacing: -0.5 }}>CATALYST</div>
+            <div style={{ color: C.muted, fontSize: 12, fontWeight: 600, letterSpacing: 0.5 }}>TRADING INTELLIGENCE · {new Date().toDateString().toUpperCase()}</div>
           </div>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             {lastUpdated[activeTab] && (
-              <span style={{ color: C.muted, fontSize: 11 }}>Updated {timeStr(lastUpdated[activeTab])}</span>
+              <span style={{ color: C.muted, fontSize: 12 }}>Updated {timeStr(lastUpdated[activeTab])}</span>
             )}
-            <button onClick={refresh} style={btn(C.accent)}>↻ REFRESH</button>
+            <button onClick={refresh} style={btn(true)}>↻ Refresh</button>
           </div>
         </div>
 
-        {/* Tabs */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
+        {/* Tabs — scrollable on mobile */}
+        <div style={{ display: 'flex', gap: 6, marginBottom: 16, overflowX: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: 4 }}>
           {TABS.map(t => {
             const active = activeTab === t.key
             return (
@@ -1040,21 +946,22 @@ Label each claim FACT, ANALYSIS or OPINION. Under 260 words.`, 'deepdive')
                 onClick={() => setActiveTab(t.key)}
                 style={{
                   appearance: 'none',
-                  border: `1px solid ${active ? `${C.accent}88` : C.border}`,
-                  background: active ? `${C.accent}14` : 'transparent',
-                  color: active ? C.accent : C.muted,
-                  borderRadius: 8,
+                  border: `1.5px solid ${active ? C.accent : C.border}`,
+                  background: active ? C.accent : C.card,
+                  color: active ? '#fff' : C.textSub,
+                  borderRadius: 10,
                   padding: '10px 16px',
                   cursor: 'pointer',
                   fontWeight: 700,
-                  fontFamily: FONT,
-                  fontSize: 12,
-                  letterSpacing: 0.5,
+                  fontFamily: FONT_BODY,
+                  fontSize: 13,
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0,
+                  boxShadow: active ? '0 2px 8px rgba(37,99,235,0.2)' : 'none',
                   transition: 'all 0.15s',
                 }}
               >
-                {t.label}
-                {loading[t.key] && ' ⟳'}
+                {t.label}{loading[t.key] ? ' ⟳' : ''}
               </button>
             )
           })}
@@ -1062,6 +969,11 @@ Label each claim FACT, ANALYSIS or OPINION. Under 260 words.`, 'deepdive')
 
         {/* Content */}
         {renderContent()}
+
+        {/* Footer */}
+        <div style={{ textAlign: 'center', color: C.muted, fontSize: 11, padding: '24px 0 8px', fontWeight: 500 }}>
+          Prices: Finnhub · Analysis: Claude AI · Not financial advice · For educational use only
+        </div>
       </div>
     </div>
   )
