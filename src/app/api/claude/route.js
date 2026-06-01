@@ -1,7 +1,5 @@
 /**
  * CATALYST v2 — src/app/api/claude/route.js
- *
- * Proxies to Anthropic API. Requires ANTHROPIC_API_KEY in Vercel env vars.
  */
 
 import { NextResponse } from 'next/server'
@@ -26,35 +24,32 @@ export async function POST(request) {
     const { prompt, mode } = body
     if (!prompt?.trim()) return NextResponse.json({ error: 'Missing prompt' }, { status: 400 })
 
-    // mode: 'json' (default) | 'deepdive' (free text) | 'cio' (full analysis)
-    const isJson     = mode !== 'deepdive'
-    const systemMap  = {
-      json:    'You are a trading data API. Output ONLY raw JSON. No markdown. No explanation. No text before or after the JSON object.',
-      deepdive:'You are a senior trading analyst. Be concise, specific and factual. Label each claim FACT, ANALYSIS or OPINION. Under 280 words.',
-      cio:     `You are a Chief Investment Officer and master swing trader. Your job is to allocate capital, not summarise markets.
+    const isJson = mode !== 'deepdive'
 
-CRITICAL RULES you must follow every time:
-1. Every stock you discuss must get an Action: STRONG BUY / BUY / WATCH / AVOID.
-2. Every BUY/STRONG BUY must have a SPECIFIC DATED CATALYST within 40 trading days.
-3. Apply the GAP-UP PENALTY: if a stock is up >8% today, maximum rating = WATCH unless a second catalyst exists.
-4. Apply the POST-CATALYST CHASE RULE: if the primary catalyst already occurred and stock moved >15%, maximum rating = WATCH.
-5. Apply the RETURN GATE: prove a credible 15%+ path before recommending BUY.
-6. Apply the CASH CHALLENGE: if cash is a better risk/reward than the trade, say so.
-7. Use VERIFIED EARNINGS DATES provided in the prompt — do not invent dates.
-8. Missing data = INSUFFICIENT EVIDENCE, not a BUY recommendation.
-9. Every entry needs: Entry Zone, Stop Loss (max 8% below entry), Take Profit, Risk/Reward ratio.
-10. Producing zero BUY recommendations is a valid and correct outcome.
+    const systemMap = {
+      json: 'You are a trading data API. Output ONLY raw JSON. No markdown. No explanation. No text before or after the JSON object.',
+      deepdive: 'You are a senior trading analyst. Be concise, specific and factual. Label each claim FACT, ANALYSIS or OPINION. Under 280 words.',
+      cio: `You are a CIO and master swing trader. Output ONLY raw JSON — no markdown, no explanation, no text outside the JSON.
 
-Output format: JSON only. No markdown.`,
+RULES:
+1. Every BUY/STRONG BUY must have a VERIFIED DATED CATALYST from the data provided.
+2. GAP-UP PENALTY: stock up >8% today → max rating = WATCH.
+3. RETURN GATE: must prove credible 15%+ path.
+4. CASH CHALLENGE: justify vs holding cash.
+5. Zero BUY recommendations is valid if nothing qualifies.
+6. Keep thesis to 1 sentence. Keep stopLoss to price only e.g. "$X".
+7. Return MAXIMUM 5 opportunities total to keep response short.`,
     }
 
     const systemPrompt = systemMap[mode] || systemMap.json
 
     const messages = [{ role: 'user', content: prompt.trim() }]
-    // Prefill assistant with { to force JSON output (not for deepdive/cio free text)
-    if (isJson && mode !== 'cio') {
+    // Prefill { for all JSON modes to force valid JSON output
+    if (isJson) {
       messages.push({ role: 'assistant', content: '{' })
     }
+
+    const tokenMap = { cio: 6000, deepdive: 700, json: 2000 }
 
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -64,8 +59,8 @@ Output format: JSON only. No markdown.`,
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-opus-4-6',
-        max_tokens: mode === 'cio' ? 4000 : mode === 'deepdive' ? 600 : 2000,
+        model: 'claude-haiku-4-5-20251001',  // Haiku is faster + cheaper for JSON generation
+        max_tokens: tokenMap[mode] || 2000,
         system: systemPrompt,
         messages,
       }),
@@ -79,8 +74,8 @@ Output format: JSON only. No markdown.`,
       )
     }
 
-    // Prepend the { we used for prefilling
-    if (isJson && mode !== 'cio' && data.content?.[0]?.text) {
+    // Prepend the { prefill
+    if (isJson && data.content?.[0]?.text) {
       data.content[0].text = '{' + data.content[0].text
     }
 
