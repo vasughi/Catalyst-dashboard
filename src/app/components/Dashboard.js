@@ -600,7 +600,21 @@ Return ONLY this JSON (max 5 opportunities, keep all strings SHORT):
     setLoading(p => ({ ...p, us: true })); setErrors(p => ({ ...p, us: null }))
     try {
       const market = await fetchMarket('us')
-      const summary = `Real US data:\nFutures: ${market.futures?.map(f => `${f.index} ${f.value} ${f.change}`).join(', ')}\nGainers: ${market.gainers?.map(g => `${g.ticker} ${g.change}`).join(', ')}\nLosers: ${market.losers?.map(l => `${l.ticker} ${l.change}`).join(', ')}\nApply POST-CATALYST CHASE RULE to gainers. Return JSON: {"outlook":"BULLISH|BEARISH|NEUTRAL","outlookReason":"one sentence","watchForToday":["specific things to monitor"]}`
+      const sectorLines = market.sectorHealth
+        ? Object.entries(market.sectorHealth).map(([k,v]) => `${k}: ${v}`).join(', ')
+        : 'N/A'
+      const gainers = market.gainers?.map(g => `${g.ticker} (${g.company}) ${g.change}`).join(', ')
+      const losers  = market.losers?.map(l => `${l.ticker} (${l.company}) ${l.change}`).join(', ')
+      const summary = `Today: ${new Date().toDateString()}
+Indices: ${market.futures?.map(f => `${f.index} ${f.value} ${f.change}`).join(', ')}
+VIX: ${market.vix || 'N/A'} (${market.vixRegime || 'N/A'})
+Sector performance: ${sectorLines}
+Top movers from watchlist universe:
+  Gainers: ${gainers || 'none'}
+  Losers: ${losers || 'none'}
+
+Apply POST-CATALYST CHASE RULE: a stock up >8% is NOT a buy signal — check if catalyst already occurred.
+Return JSON: {"outlook":"BULLISH|BEARISH|NEUTRAL","outlookReason":"one sentence max","keyTheme":"one sentence on what's driving markets today","sectorRotation":"one sentence on sector flow","watchForToday":["3-4 specific actionable items for a swing trader today"],"earningsAlert":["any earnings today/tomorrow from the universe worth noting"]}`
       const ai = repairJSON(await callClaude(summary))
       setSectionData(p => ({ ...p, us: { ...market, ...ai } }))
       setLastUpdated(p => ({ ...p, us: new Date().toISOString() }))
@@ -776,36 +790,107 @@ Return JSON: {"outlook":"BULLISH|BEARISH|NEUTRAL","outlookReason":"one sentence"
     const d = sectionData.us
     if (!d) return null
     const outlookTone = d.outlook === 'BULLISH' ? 'green' : d.outlook === 'BEARISH' ? 'red' : 'grey'
+    const vixTone = d.vixRegime === 'HIGH_FEAR' ? 'red' : d.vixRegime === 'ELEVATED' ? 'amber' : 'green'
     return (
       <>
-        <div style={{ ...card({ marginBottom: 14 }), display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+        {/* Outlook + VIX bar */}
+        <div style={{ ...card({ marginBottom: 14 }), display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <Pill tone={outlookTone} size="lg">{d.outlook || 'NEUTRAL'}</Pill>
-          <span style={{ color: C.textSub, fontSize: 14 }}>{d.outlookReason}</span>
+          {d.vix && <Pill tone={vixTone} size="md">VIX {d.vix} · {d.vixRegime}</Pill>}
+          <span style={{ color: C.textSub, fontSize: 14, flex: 1, minWidth: 180 }}>{d.outlookReason}</span>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 10, marginBottom: 18 }}>
-          {(d.futures || []).map((f, i) => <StatTile key={i} label={f.index} value={f.value} change={f.change} direction={f.direction} />)}
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 18 }}>
-          {[['🚀 Top Gainers', d.gainers, 'up'], ['📉 Top Losers', d.losers, 'down']].map(([title, items, dir]) => (
-            <div key={title} style={card()}>
-              <div style={{ ...LBL, marginBottom: 14 }}>{title}</div>
-              {(items || []).map((g, i) => (
-                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: i < items.length - 1 ? `1px solid ${C.border}` : 'none' }}>
-                  <span style={{ color: C.text, fontWeight: 800, fontFamily: FONT_MONO, fontSize: 15 }}>{g.ticker}</span>
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ color: dir === 'up' ? C.up : C.down, fontWeight: 700, fontFamily: FONT_MONO, fontSize: 14 }}>{g.change}</div>
-                    <div style={{ color: C.muted, fontSize: 12 }}>{g.price}</div>
-                  </div>
-                </div>
-              ))}
+
+        {/* Key themes from AI */}
+        {(d.keyTheme || d.sectorRotation) && (
+          <div style={{ ...card({ marginBottom: 14, padding: '12px 16px' }), display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
+            {d.keyTheme && (
+              <div>
+                <div style={LBL}>KEY THEME TODAY</div>
+                <div style={{ color: C.text, fontSize: 14, fontWeight: 600 }}>{d.keyTheme}</div>
+              </div>
+            )}
+            {d.sectorRotation && (
+              <div>
+                <div style={LBL}>SECTOR ROTATION</div>
+                <div style={{ color: C.text, fontSize: 14, fontWeight: 600 }}>{d.sectorRotation}</div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Index ETF tiles */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10, marginBottom: 18 }}>
+          {(d.futures || []).map((f, i) => (
+            <div key={i} style={{ ...card({ padding: 14 }) }}>
+              <div style={{ color: C.muted, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 4 }}>{f.index}</div>
+              <div style={{ color: C.text, fontWeight: 800, fontSize: 20, fontFamily: FONT_MONO }}>{f.value}</div>
+              <div style={{ color: f.direction === 'up' ? C.up : C.down, fontWeight: 700, fontFamily: FONT_MONO, fontSize: 13, marginTop: 2 }}>{f.change}</div>
+              {f.etf && <div style={{ color: C.muted, fontSize: 10, marginTop: 4 }}>via {f.etf} ETF</div>}
             </div>
           ))}
+        </div>
+
+        {/* Sector health */}
+        {d.sectorHealth && Object.keys(d.sectorHealth).length > 0 && (
+          <div style={{ ...card({ marginBottom: 18, padding: '14px 16px' }) }}>
+            <div style={{ ...LBL, marginBottom: 10 }}>SECTOR PERFORMANCE TODAY</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {Object.entries(d.sectorHealth).map(([sector, change]) => {
+                const isUp = change.startsWith('+')
+                return (
+                  <div key={sector} style={{ background: isUp ? C.upBg : C.downBg, borderRadius: 8, padding: '8px 12px', display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <span style={{ color: C.textSub, fontSize: 13 }}>{sector}</span>
+                    <span style={{ color: isUp ? C.up : C.down, fontWeight: 800, fontFamily: FONT_MONO, fontSize: 13 }}>{change}</span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Gainers / Losers / Watch */}
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(280px, 1fr))', gap: 18 }}>
+          {[['🚀 Top Gainers (Watchlist)', d.gainers, 'up'], ['📉 Top Losers (Watchlist)', d.losers, 'down']].map(([title, items, dir]) => (
+            <div key={title} style={card()}>
+              <div style={{ ...LBL, marginBottom: 14 }}>{title}</div>
+              {(items || []).length === 0
+                ? <div style={{ color: C.muted, fontSize: 13 }}>No data</div>
+                : (items || []).map((g, i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: i < items.length - 1 ? `1px solid ${C.border}` : 'none' }}>
+                    <div>
+                      <div style={{ color: C.text, fontWeight: 800, fontFamily: FONT_MONO, fontSize: 16 }}>{g.ticker}</div>
+                      <div style={{ color: C.muted, fontSize: 12 }}>{g.company}</div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ color: dir === 'up' ? C.up : C.down, fontWeight: 800, fontFamily: FONT_MONO, fontSize: 15 }}>{g.change}</div>
+                      <div style={{ color: C.muted, fontSize: 12 }}>{g.price}</div>
+                    </div>
+                  </div>
+                ))
+              }
+            </div>
+          ))}
+
+          {/* Watch for today */}
           {d.watchForToday?.length > 0 && (
             <div style={card()}>
               <div style={{ ...LBL, marginBottom: 14 }}>👀 WATCH FOR TODAY</div>
               {d.watchForToday.map((w, i) => (
-                <div key={i} style={{ color: C.textSub, fontSize: 14, padding: '6px 0', borderBottom: i < d.watchForToday.length - 1 ? `1px solid ${C.border}` : 'none' }}>• {w}</div>
+                <div key={i} style={{ display: 'flex', gap: 10, padding: '8px 0', borderBottom: i < d.watchForToday.length - 1 ? `1px solid ${C.border}` : 'none' }}>
+                  <span style={{ color: C.accent, fontWeight: 800, fontSize: 16, lineHeight: 1 }}>→</span>
+                  <span style={{ color: C.textSub, fontSize: 14, lineHeight: 1.5 }}>{w}</span>
+                </div>
               ))}
+              {d.earningsAlert?.length > 0 && (
+                <>
+                  <div style={{ ...LBL, marginTop: 16, marginBottom: 8 }}>📅 EARNINGS ALERT</div>
+                  {d.earningsAlert.map((e, i) => (
+                    <div key={i} style={{ background: C.amberBg, borderRadius: 8, padding: '8px 12px', marginBottom: 6 }}>
+                      <span style={{ color: C.amber, fontSize: 13, fontWeight: 600 }}>{e}</span>
+                    </div>
+                  ))}
+                </>
+              )}
             </div>
           )}
         </div>
