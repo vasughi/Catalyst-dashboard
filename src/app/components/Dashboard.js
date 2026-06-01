@@ -397,7 +397,10 @@ function EarningsCalendar({ calendar }) {
                 <span style={{ color: C.text, fontWeight: 800, fontSize: 18, fontFamily: FONT_MONO }}>{e.ticker}</span>
                 <Pill tone={tone} size="sm">{e.tradingDaysAway === 0 ? 'TODAY' : `${e.tradingDaysAway}d`}</Pill>
               </div>
-              <div style={{ color: C.muted, fontSize: 12, fontFamily: FONT_BODY }}>{e.date}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                <span style={{ color: C.muted, fontSize: 12, fontFamily: FONT_BODY }}>{e.date}</span>
+                {e.source === 'fallback_estimate' && <span style={{ background: '#fef3c7', color: '#d97706', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 4 }}>EST</span>}
+              </div>
               {hist && <div style={{ color: C.purple, fontSize: 11, fontWeight: 600, marginTop: 4 }}>{hist.label}</div>}
               {e.epsEstimate != null && <div style={{ color: C.muted, fontSize: 11, marginTop: 2 }}>EPS est: ${e.epsEstimate}</div>}
             </div>
@@ -609,7 +612,13 @@ Return ONLY this JSON (max 5 opportunities, keep all strings SHORT):
     setLoading(p => ({ ...p, europe: true })); setErrors(p => ({ ...p, europe: null }))
     try {
       const market = await fetchMarket('europe')
-      const summary = `European indices: ${market.futures?.map(f => `${f.index} ${f.value} ${f.change}`).join(', ')}\nReturn JSON: {"outlook":"BULLISH|BEARISH|NEUTRAL","outlookReason":"one sentence","europeanSetups":[{"ticker":"","company":"","catalyst":"","catalystDate":"","action":"WATCH|BUY"}]}`
+      const stockLines = (market.europeanStocks || [])
+        .map(s => `${s.ticker} (${s.name}, ${s.sector}): ${s.priceFormatted} ${s.change1d}`)
+        .join(', ')
+      const summary = `European indices: ${market.futures?.map(f => `${f.index} ${f.value} ${f.change}`).join(', ')}
+European stocks with live prices: ${stockLines || 'none'}
+Today: ${new Date().toDateString()}
+Return JSON: {"outlook":"BULLISH|BEARISH|NEUTRAL","outlookReason":"one sentence","europeanSetups":[{"ticker":"use real ticker from data above","company":"full name","sector":"","price":"use real price","change":"use real change","catalyst":"specific upcoming catalyst with date","catalystDate":"","action":"WATCH|BUY"}]}`
       const ai = repairJSON(await callClaude(summary))
       setSectionData(p => ({ ...p, europe: { ...market, ...ai } }))
       setLastUpdated(p => ({ ...p, europe: new Date().toISOString() }))
@@ -810,26 +819,60 @@ Return ONLY this JSON (max 5 opportunities, keep all strings SHORT):
     const outlookTone = d.outlook === 'BULLISH' ? 'green' : d.outlook === 'BEARISH' ? 'red' : 'grey'
     return (
       <>
+        {/* Sentiment bar */}
         <div style={{ ...card({ marginBottom: 14 }), display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           <Pill tone={outlookTone} size="lg">{d.outlook || 'NEUTRAL'}</Pill>
           <span style={{ color: C.textSub, fontSize: 14 }}>{d.outlookReason}</span>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 10, marginBottom: 18 }}>
+
+        {/* Index tiles */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10, marginBottom: 18 }}>
           {(d.futures || []).map((f, i) => <StatTile key={i} label={f.index} value={f.value} change={f.change} direction={f.direction} />)}
         </div>
+
+        {/* Live European stock prices */}
+        {d.europeanStocks?.length > 0 && (
+          <div style={{ ...card({ marginBottom: 18 }) }}>
+            <div style={{ ...LBL, marginBottom: 14 }}>🇪🇺 EUROPEAN STOCKS — LIVE PRICES</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 10 }}>
+              {d.europeanStocks.map((s, i) => (
+                <div key={i} style={{ background: C.bg, borderRadius: 10, padding: '12px 14px', border: `1px solid ${C.border}` }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
+                    <span style={{ fontWeight: 800, fontSize: 15, fontFamily: FONT_MONO, color: C.text }}>{s.name}</span>
+                  </div>
+                  <div style={{ color: C.muted, fontSize: 11, marginBottom: 6 }}>{s.ticker} · {s.sector}</div>
+                  <div style={{ fontWeight: 800, fontSize: 20, fontFamily: FONT_MONO, color: C.text }}>{s.priceFormatted}</div>
+                  <div style={{ color: s.direction === 'up' ? C.up : C.down, fontWeight: 700, fontSize: 13, fontFamily: FONT_MONO, marginTop: 2 }}>{s.change1d}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* AI setups */}
         {d.europeanSetups?.length > 0 && (
           <div style={card()}>
-            <div style={{ ...LBL, marginBottom: 14 }}>EUROPEAN SETUPS</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
+            <div style={{ ...LBL, marginBottom: 14 }}>📋 SETUPS TO WATCH</div>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
               {d.europeanSetups.map((s, i) => (
-                <div key={i} style={{ ...card({ padding: 14 }), borderTop: `3px solid ${C.accent}` }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                    <span style={{ fontWeight: 800, fontSize: 18, fontFamily: FONT_MONO }}>{s.ticker}</span>
+                <div key={i} style={{ background: C.bg, borderRadius: 12, padding: 16, border: `1px solid ${C.border}`, borderTop: `3px solid ${C.accent}` }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                    <div>
+                      <div style={{ fontWeight: 800, fontSize: 17, color: C.text }}>{s.company || s.ticker}</div>
+                      <div style={{ color: C.muted, fontSize: 12, marginTop: 2 }}>{s.ticker} · {s.sector}</div>
+                    </div>
                     <ActionBadge action={s.action} />
                   </div>
-                  <div style={{ color: C.muted, fontSize: 13 }}>{s.company}</div>
-                  <div style={{ color: C.textSub, fontSize: 14, marginTop: 8 }}>{s.catalyst}</div>
-                  {s.catalystDate && <div style={{ color: C.amber, fontSize: 12, fontWeight: 600, marginTop: 4 }}>{s.catalystDate}</div>}
+                  {(s.price || s.change) && (
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', marginBottom: 8 }}>
+                      {s.price && <span style={{ fontWeight: 800, fontSize: 20, fontFamily: FONT_MONO, color: C.text }}>{s.price}</span>}
+                      {s.change && <span style={{ color: s.change?.startsWith('+') ? C.up : C.down, fontWeight: 700, fontFamily: FONT_MONO, fontSize: 13 }}>{s.change}</span>}
+                    </div>
+                  )}
+                  <div style={{ color: C.textSub, fontSize: 14, lineHeight: 1.5, marginBottom: 8 }}>{s.catalyst}</div>
+                  {s.catalystDate && (
+                    <Pill tone="amber" size="sm">📅 {s.catalystDate}</Pill>
+                  )}
                 </div>
               ))}
             </div>
