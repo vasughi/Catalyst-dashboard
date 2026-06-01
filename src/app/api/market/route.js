@@ -262,38 +262,81 @@ export async function GET(request) {
     if (type === 'us') {
       const meta = baseMeta(type)
 
+      // Full watchlist universe with company names
       const UNIVERSE = [
-        'NVDA','AMD','AVGO','TSM','MRVL','ARM',
-        'MSFT','GOOGL','META','PLTR',
-        'DELL','SMCI','CRWD','PANW','ZS',
-        'LMT','RTX','NOC','AXON',
-        'VRT','ETN','CEG','FSLR','ANET','RKLB',
+        { sym: 'NVDA',  name: 'NVIDIA' },
+        { sym: 'AMD',   name: 'AMD' },
+        { sym: 'AVGO',  name: 'Broadcom' },
+        { sym: 'TSM',   name: 'TSMC' },
+        { sym: 'MRVL',  name: 'Marvell' },
+        { sym: 'ARM',   name: 'Arm Holdings' },
+        { sym: 'MSFT',  name: 'Microsoft' },
+        { sym: 'GOOGL', name: 'Alphabet' },
+        { sym: 'META',  name: 'Meta' },
+        { sym: 'PLTR',  name: 'Palantir' },
+        { sym: 'DELL',  name: 'Dell' },
+        { sym: 'SMCI',  name: 'Super Micro' },
+        { sym: 'CRWD',  name: 'CrowdStrike' },
+        { sym: 'PANW',  name: 'Palo Alto' },
+        { sym: 'ZS',    name: 'Zscaler' },
+        { sym: 'LMT',   name: 'Lockheed Martin' },
+        { sym: 'RTX',   name: 'RTX Corp' },
+        { sym: 'NOC',   name: 'Northrop Grumman' },
+        { sym: 'AXON',  name: 'Axon Enterprise' },
+        { sym: 'VRT',   name: 'Vertiv' },
+        { sym: 'ETN',   name: 'Eaton' },
+        { sym: 'CEG',   name: 'Constellation Energy' },
+        { sym: 'FSLR',  name: 'First Solar' },
+        { sym: 'ANET',  name: 'Arista Networks' },
+        { sym: 'RKLB',  name: 'Rocket Lab' },
       ]
 
-      const [futureQ, universeQ] = await Promise.all([
+      const syms = UNIVERSE.map(u => u.sym)
+      const nameMap = Object.fromEntries(UNIVERSE.map(u => [u.sym, u.name]))
+
+      // Sector ETFs for health snapshot
+      const [futureQ, universeQ, sectorQ, vixQ] = await Promise.all([
         quotes(['SPY','QQQ','DIA','IWM']),
-        quotes(UNIVERSE),
+        quotes(syms),
+        quotes(['XLK','ITA','XSD','CIBR','XLE']),
+        quote('VIXY'),
       ])
 
       const sorted = Object.values(universeQ).sort((a, b) => b.changePct - a.changePct)
 
+      // Sector health
+      const sectorHealth = {
+        'Technology (XLK)':     sectorQ['XLK']  ? `${sectorQ['XLK'].changePct  >= 0 ? '+' : ''}${sectorQ['XLK'].changePct.toFixed(2)}%`  : 'N/A',
+        'Defence (ITA)':        sectorQ['ITA']  ? `${sectorQ['ITA'].changePct  >= 0 ? '+' : ''}${sectorQ['ITA'].changePct.toFixed(2)}%`  : 'N/A',
+        'Semis (XSD)':          sectorQ['XSD']  ? `${sectorQ['XSD'].changePct  >= 0 ? '+' : ''}${sectorQ['XSD'].changePct.toFixed(2)}%`  : 'N/A',
+        'Cybersecurity (CIBR)': sectorQ['CIBR'] ? `${sectorQ['CIBR'].changePct >= 0 ? '+' : ''}${sectorQ['CIBR'].changePct.toFixed(2)}%` : 'N/A',
+        'Energy (XLE)':         sectorQ['XLE']  ? `${sectorQ['XLE'].changePct  >= 0 ? '+' : ''}${sectorQ['XLE'].changePct.toFixed(2)}%`  : 'N/A',
+      }
+
+      const vix = vixQ ? parseFloat(vixQ.price.toFixed(2)) : null
+
       return resp({
         meta,
+        vix,
+        vixRegime: vix ? (vix > 25 ? 'HIGH_FEAR' : vix > 18 ? 'ELEVATED' : 'CALM') : null,
+        sectorHealth,
         futures: [
-          { index: 'S&P 500 (SPY)',      ...futureQ['SPY'] },
-          { index: 'NASDAQ (QQQ)',        ...futureQ['QQQ'] },
-          { index: 'Dow Jones (DIA)',     ...futureQ['DIA'] },
-          { index: 'Russell 2000 (IWM)', ...futureQ['IWM'] },
+          { index: 'S&P 500',       etf: 'SPY', ...futureQ['SPY'] },
+          { index: 'NASDAQ 100',    etf: 'QQQ', ...futureQ['QQQ'] },
+          { index: 'Dow Jones',     etf: 'DIA', ...futureQ['DIA'] },
+          { index: 'Russell 2000',  etf: 'IWM', ...futureQ['IWM'] },
         ].filter(f => f.price).map(f => ({
           index: f.index,
+          etf: f.etf,
           value: f.price?.toLocaleString('en-US', { maximumFractionDigits: 2 }),
           change: `${(f.changePct??0) >= 0 ? '+' : ''}${(f.changePct??0).toFixed(2)}%`,
           direction: (f.changePct??0) >= 0 ? 'up' : 'down',
           provider: 'finnhub',
         })),
+        // Top movers from your watchlist universe with company names
         gainers: sorted.slice(0, 5).map(q => ({
           ticker: q.symbol,
-          company: q.symbol,
+          company: nameMap[q.symbol] || q.symbol,
           price: `$${q.price.toFixed(2)}`,
           change: `+${q.changePct.toFixed(2)}%`,
           direction: 'up',
@@ -301,11 +344,19 @@ export async function GET(request) {
         })),
         losers: sorted.slice(-5).reverse().map(q => ({
           ticker: q.symbol,
-          company: q.symbol,
+          company: nameMap[q.symbol] || q.symbol,
           price: `$${q.price.toFixed(2)}`,
           change: `${q.changePct.toFixed(2)}%`,
           direction: 'down',
           provider: 'finnhub',
+        })),
+        // Full universe snapshot for context
+        universe: sorted.map(q => ({
+          ticker: q.symbol,
+          company: nameMap[q.symbol] || q.symbol,
+          price: `$${q.price.toFixed(2)}`,
+          change: `${q.changePct >= 0 ? '+' : ''}${q.changePct.toFixed(2)}%`,
+          direction: q.changePct >= 0 ? 'up' : 'down',
         })),
       })
     }
