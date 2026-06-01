@@ -535,82 +535,22 @@ export default function Dashboard() {
         `${e.ticker} reports ${e.date} (${e.tradingDaysAway} trading days) EPS_est=${e.epsEstimate || 'N/A'}`
       ).join('\n')
 
-      const prompt = `
-TODAY: ${new Date().toDateString()}
-VIX PROXY (VIXY): ${vix || 'N/A'} — REGIME: ${vixRegime || 'UNKNOWN'}
-SECTOR HEALTH: ${JSON.stringify(sectorHealth)}
+      const prompt = `TODAY: ${new Date().toDateString()}
+VIX: ${vix || 'N/A'} (${vixRegime || 'UNKNOWN'})
+SECTORS: ${JSON.stringify(sectorHealth)}
 
-LIVE PRICES FROM FINNHUB (verified):
+LIVE PRICES:
 ${stockLines}
 
-VERIFIED EARNINGS CALENDAR (next 60 days, source: Finnhub):
-${calendarLines || 'None found'}
+EARNINGS CALENDAR (verified, Finnhub):
+${calendarLines || 'None'}
 
-EARNINGS HISTORY (hardcoded, update periodically):
-${Object.entries(EARNINGS_HISTORY).map(([k,v]) => `${k}: ${v.label}`).join(', ')}
+EARNINGS HISTORY: ${Object.entries(EARNINGS_HISTORY).map(([k,v]) => `${k}:${v.label}`).join(' | ')}
 
-RULES YOU MUST FOLLOW:
-1. Only use earnings dates from VERIFIED_EARNINGS_DATE above — never invent dates.
-2. Apply GAP-UP PENALTY: if a stock is up >8% today → max rating = WATCH unless second catalyst exists.
-3. Apply POST-CATALYST CHASE RULE: catalyst already occurred + stock up >15% → max rating = WATCH.
-4. Apply RETURN GATE: prove credible 15%+ path. Use earnings history if available.
-5. Apply CASH CHALLENGE: beats holding cash? If no → max rating = WATCH.
-6. Stocks with earnings in 0-3 trading days are highest priority for BUY candidates.
-7. Stocks with no verified catalyst within 40 trading days → max rating = WATCH.
-8. Producing zero BUY recommendations is valid and correct if nothing qualifies.
+RULES: Use VERIFIED_EARNINGS_DATE only. GAP-UP>8%=WATCH. No catalyst within 40d=WATCH. Zero BUYs is valid.
 
-Return JSON only:
-{
-  "marketCondition": "BUY AGGRESSIVELY|BUY SELECTIVELY|WAIT|HOLD CASH",
-  "cashRecommendation": "one sentence explaining cash level",
-  "cashPct": 30,
-  "cio": {
-    "bestTradeToday": "TICKER or NONE",
-    "bestRiskReward": "TICKER or NONE",
-    "bestNewOpportunity": "TICKER or NONE",
-    "bestSpeculative": "TICKER or NONE",
-    "cashRecommendation": "e.g. Hold 30% cash",
-    "finalMarketDecision": "BUY AGGRESSIVELY|BUY SELECTIVELY|WAIT|HOLD CASH",
-    "watchList": [{"ticker":"","reason":""}],
-    "avoidList": [{"ticker":"","reason":""}]
-  },
-  "opportunities": [
-    {
-      "ticker": "",
-      "company": "",
-      "action": "STRONG BUY|BUY|WATCH|AVOID",
-      "currentPrice": "use verified price above",
-      "entryZone": "$X-$Y",
-      "stopLoss": "$X — reason in one line",
-      "takeProfit": "$X (N%)",
-      "expectedGain": "15-20%",
-      "confidence": 8,
-      "riskLevel": "LOW|MEDIUM|HIGH",
-      "catalyst": "specific named catalyst — NO invented catalysts",
-      "catalystDate": "use VERIFIED date only, else UNVERIFIED",
-      "riskReward": "3:1",
-      "allocation": "10%",
-      "buyNow": "YES|NO|WAIT",
-      "thesis": "2 sentences max, specific, no fluff",
-      "invalidation": "specific conditions that break the thesis",
-      "returnGate": "PASS|CONDITIONAL PASS|FAIL|INSUFFICIENT EVIDENCE",
-      "returnGatePathway": "which of the 6 pathways used",
-      "cashChallenge": "PASS|FAIL",
-      "priceStatus": "LIVE PRICE VERIFIED",
-      "opportunityScore": 75,
-      "scoreBreakdown": {
-        "catalystTiming": 20,
-        "catalystStrength": 16,
-        "probability": 15,
-        "evidenceQuality": 12,
-        "riskReward": 7,
-        "entryQuality": 3,
-        "analystSupport": 2
-      }
-    }
-  ]
-}
-`
+Return ONLY this JSON (max 5 opportunities, keep all strings SHORT):
+{"marketCondition":"BUY AGGRESSIVELY|BUY SELECTIVELY|WAIT|HOLD CASH","cashRecommendation":"one sentence","cashPct":30,"cio":{"bestTradeToday":"TICKER or NONE","bestRiskReward":"TICKER or NONE","finalMarketDecision":"BUY AGGRESSIVELY|BUY SELECTIVELY|WAIT|HOLD CASH","watchList":[{"ticker":"","reason":""}],"avoidList":[{"ticker":"","reason":""}]},"opportunities":[{"ticker":"","action":"STRONG BUY|BUY|WATCH|AVOID","currentPrice":"","entryZone":"$X-$Y","stopLoss":"$X","takeProfit":"$X","expectedGain":"15-20%","riskReward":"3:1","allocation":"10%","buyNow":"YES|NO|WAIT","catalyst":"specific catalyst","catalystDate":"VERIFIED date or UNVERIFIED","thesis":"one sentence","invalidation":"one sentence","returnGate":"PASS|FAIL","cashChallenge":"PASS|FAIL","opportunityScore":75}]}`
       const aiText = await callClaude(prompt, 'cio')
       const ai     = repairJSON(aiText)
 
