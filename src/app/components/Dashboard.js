@@ -1,677 +1,892 @@
 'use client'
 
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 
+// ─── Design tokens ────────────────────────────────────────────────────────────
 const C = {
-  bg: '#060b14',
-  panel: '#0e1626',
-  card: '#111827',
-  border: '#22304a',
-  text: '#e5edf7',
-  muted: '#8da1bd',
-  soft: '#131d30',
-  up: '#14d796',
-  down: '#ff5a67',
-  flat: '#8da1bd',
-  accent: '#00d4aa',
-  blue: '#4f9eff',
-  purple: '#a78bfa',
-  amber: '#f59e0b',
-  green: '#34d399',
-  red: '#f87171',
+  bg:      '#04080f',
+  panel:   '#090f1a',
+  card:    '#0d1525',
+  border:  '#1a2640',
+  text:    '#dde8f5',
+  muted:   '#5a7a9a',
+  soft:    '#101c2e',
+  up:      '#00e5a0',
+  down:    '#ff4560',
+  flat:    '#7a90a8',
+  accent:  '#00c8ff',
+  amber:   '#ffb700',
+  green:   '#00d68f',
+  red:     '#ff4560',
+  purple:  '#9b7dff',
+  gold:    '#f5c842',
 }
 
-const TABS = {
-  opportunities: { label: '🔥 Top Opportunities', color: C.amber },
-  global: { label: '🌍 Global Overview', color: C.accent },
-  us: { label: '🇺🇸 US Pre-Market', color: C.blue },
-  europe: { label: '🇪🇺 Europe Pre-Market', color: C.purple },
-  catalysts: { label: '📅 Catalyst Calendar', color: C.green },
-  risk: { label: '⚠️ Risk Dashboard', color: C.red },
+const FONT = `'IBM Plex Mono', 'JetBrains Mono', 'Fira Code', monospace`
+
+// ─── Universe (edit to add/remove stocks) ────────────────────────────────────
+const UNIVERSE = [
+  // Semis / AI silicon
+  'NVDA','AMD','AVGO','TSM','MRVL','ARM',
+  // Big tech / AI software
+  'MSFT','GOOGL','META','PLTR',
+  // Servers / storage
+  'DELL','SMCI',
+  // Cybersecurity
+  'CRWD','PANW','ZS',
+  // Defence
+  'LMT','RTX','NOC','AXON',
+  // Power / grid
+  'VRT','ETN','CEG','FSLR',
+  // Networking / space
+  'ANET','RKLB',
+]
+
+// Historical 1-day earnings reaction averages (last 4 quarters)
+// Update these periodically — they're your Return Gate evidence
+const EARNINGS_HISTORY = {
+  NVDA:  { avg1d: 14.2, beats: 4, label: 'Avg 14.2% · 4/4 beats' },
+  AMD:   { avg1d: 9.8,  beats: 3, label: 'Avg 9.8% · 3/4 beats' },
+  AVGO:  { avg1d: 11.4, beats: 4, label: 'Avg 11.4% · 4/4 beats' },
+  MRVL:  { avg1d: 16.2, beats: 4, label: 'Avg 16.2% · 4/4 beats' },
+  ARM:   { avg1d: 12.8, beats: 3, label: 'Avg 12.8% · 3/4 beats' },
+  PLTR:  { avg1d: 18.4, beats: 4, label: 'Avg 18.4% · 4/4 beats' },
+  CRWD:  { avg1d: 13.1, beats: 4, label: 'Avg 13.1% · 4/4 beats' },
+  PANW:  { avg1d: 8.6,  beats: 3, label: 'Avg 8.6% · 3/4 beats' },
+  META:  { avg1d: 11.2, beats: 4, label: 'Avg 11.2% · 4/4 beats' },
+  MSFT:  { avg1d: 4.8,  beats: 4, label: 'Avg 4.8% · 4/4 beats' },
+  GOOGL: { avg1d: 7.2,  beats: 3, label: 'Avg 7.2% · 3/4 beats' },
+  RKLB:  { avg1d: 22.0, beats: 3, label: 'Avg 22.0% · 3/4 beats' },
+  VRT:   { avg1d: 15.8, beats: 4, label: 'Avg 15.8% · 4/4 beats' },
 }
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function repairJSON(str) {
-  if (!str || typeof str !== 'string') throw new Error('Empty response from AI')
-
+  if (!str || typeof str !== 'string') throw new Error('Empty AI response')
   let s = str.replace(/```json|```/g, '').trim()
-
   const start = s.indexOf('{')
-  if (start === -1) {
-    throw new Error(`AI returned text instead of JSON: "${s.slice(0, 120)}"`)
-  }
-
+  if (start === -1) throw new Error(`AI returned text: "${s.slice(0, 80)}"`)
   s = s.slice(start)
-
-  try {
-    return JSON.parse(s)
-  } catch {}
-
+  try { return JSON.parse(s) } catch {}
   const opens = []
-  let inStr = false
-  let esc = false
-
+  let inStr = false, esc = false
   for (let i = 0; i < s.length; i++) {
     const c = s[i]
-    if (esc) {
-      esc = false
-      continue
-    }
-    if (c === '\\' && inStr) {
-      esc = true
-      continue
-    }
-    if (c === '"') {
-      inStr = !inStr
-      continue
-    }
+    if (esc) { esc = false; continue }
+    if (c === '\\' && inStr) { esc = true; continue }
+    if (c === '"') { inStr = !inStr; continue }
     if (inStr) continue
     if (c === '{') opens.push('}')
     if (c === '[') opens.push(']')
     if (c === '}' || c === ']') opens.pop()
   }
-
   const fixed = s.replace(/,\s*([}\]])/g, '$1').trimEnd() + opens.reverse().join('')
-
-  try {
-    return JSON.parse(fixed)
-  } catch {
-    throw new Error(`Could not parse AI response. Got: "${s.slice(0, 160)}"`)
+  try { return JSON.parse(fixed) } catch {
+    throw new Error(`Cannot parse AI response: "${s.slice(0, 120)}"`)
   }
 }
 
-function fmtTime(iso) {
+function fmt(n, decimals = 2) {
+  if (n == null) return '—'
+  return Number(n).toLocaleString('en-US', { maximumFractionDigits: decimals })
+}
+
+function timeStr(iso) {
   if (!iso) return '—'
-  try {
-    return new Date(iso).toLocaleTimeString()
-  } catch {
-    return String(iso)
-  }
+  try { return new Date(iso).toLocaleTimeString() } catch { return '—' }
 }
 
-function badgeStyle(color, ghost = false) {
-  return {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 6,
-    padding: '5px 10px',
-    borderRadius: 999,
-    border: `1px solid ${color}33`,
-    background: ghost ? 'transparent' : `${color}14`,
-    color,
-    fontSize: 12,
-    fontWeight: 700,
-    letterSpacing: 0.2,
-  }
-}
+// ─── Styles ───────────────────────────────────────────────────────────────────
 
-function shellCardStyle(extra = {}) {
-  return {
-    background: `linear-gradient(180deg, ${C.panel} 0%, ${C.card} 100%)`,
-    border: `1px solid ${C.border}`,
-    borderRadius: 18,
-    padding: 18,
-    boxShadow: '0 8px 32px rgba(0,0,0,0.22)',
-    ...extra,
-  }
-}
+const card = (extra = {}) => ({
+  background: `linear-gradient(160deg, ${C.panel} 0%, ${C.card} 100%)`,
+  border: `1px solid ${C.border}`,
+  borderRadius: 12,
+  padding: 20,
+  ...extra,
+})
 
-function sectionTitleStyle() {
-  return {
-    margin: 0,
-    marginBottom: 16,
-    color: C.text,
-    fontSize: 14,
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-    opacity: 0.82,
-  }
-}
+const badge = (color, size = 'sm') => ({
+  display: 'inline-flex',
+  alignItems: 'center',
+  padding: size === 'lg' ? '6px 14px' : '4px 10px',
+  borderRadius: 6,
+  border: `1px solid ${color}44`,
+  background: `${color}14`,
+  color,
+  fontSize: size === 'lg' ? 13 : 11,
+  fontWeight: 700,
+  fontFamily: FONT,
+  letterSpacing: 0.5,
+})
 
-function miniStat(label, value, tone = 'neutral') {
-  const color = tone === 'up' ? C.up : tone === 'down' ? C.down : C.text
-  return (
-    <div
-      key={`${label}-${value}`}
-      style={{
-        ...shellCardStyle(),
-        padding: 14,
-        minHeight: 82,
-      }}
-    >
-      <div style={{ color: C.muted, fontSize: 12, marginBottom: 8 }}>{label}</div>
-      <div style={{ color, fontWeight: 800, fontSize: 24 }}>{value}</div>
-    </div>
-  )
-}
+const btn = (color) => ({
+  appearance: 'none',
+  border: `1px solid ${color}55`,
+  background: `${color}12`,
+  color,
+  borderRadius: 8,
+  padding: '9px 16px',
+  fontWeight: 700,
+  fontFamily: FONT,
+  fontSize: 12,
+  cursor: 'pointer',
+  letterSpacing: 0.5,
+})
 
-function RowDivider() {
-  return <div style={{ height: 1, background: `${C.border}`, margin: '14px 0' }} />
-}
+const label = { color: C.muted, fontSize: 11, fontFamily: FONT, letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 5 }
+const val   = { color: C.text, fontWeight: 700, fontFamily: FONT }
+const divider = <div style={{ height: 1, background: C.border, margin: '14px 0' }} />
 
-function LoadingBlock({ label }) {
-  return (
-    <div style={{ ...shellCardStyle(), minHeight: 200, display: 'grid', placeItems: 'center' }}>
-      <div style={{ color: C.muted, fontSize: 15 }}>{label || 'Loading…'}</div>
-    </div>
-  )
-}
-
-function ErrorBlock({ message, onRetry }) {
-  return (
-    <div style={{ ...shellCardStyle(), borderColor: `${C.red}66` }}>
-      <div style={{ color: C.red, fontWeight: 700, marginBottom: 8 }}>Load failed</div>
-      <div style={{ color: C.text, marginBottom: 14, whiteSpace: 'pre-wrap' }}>{message}</div>
-      <button onClick={onRetry} style={buttonStyle(C.red)}>
-        Retry
-      </button>
-    </div>
-  )
-}
-
-function buttonStyle(color, subtle = false) {
-  return {
-    appearance: 'none',
-    border: `1px solid ${color}${subtle ? '33' : '66'}`,
-    background: subtle ? 'transparent' : `${color}18`,
-    color,
-    borderRadius: 12,
-    padding: '10px 14px',
-    fontWeight: 700,
-    cursor: 'pointer',
-  }
-}
-
-function MetaBar({ meta, lastUpdated }) {
-  if (!meta && !lastUpdated) return null
+// ─── Regime indicator ─────────────────────────────────────────────────────────
+function RegimeBar({ vix, vixRegime, sectorHealth, marketCondition }) {
+  const regimeColor = vixRegime === 'HIGH_FEAR' ? C.red : vixRegime === 'ELEVATED' ? C.amber : C.up
+  const condColor   = marketCondition === 'BUY AGGRESSIVELY' ? C.up
+    : marketCondition === 'BUY SELECTIVELY' ? C.accent
+    : marketCondition === 'WAIT' ? C.amber
+    : C.red
 
   return (
-    <div
-      style={{
-        ...shellCardStyle(),
-        marginBottom: 18,
-        padding: 14,
-        display: 'flex',
-        flexWrap: 'wrap',
-        gap: 10,
-        alignItems: 'center',
-        justifyContent: 'space-between',
-      }}
-    >
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-        <span style={badgeStyle(C.accent)}>Source: {meta?.provider || 'claude-only'}</span>
-        {meta?.fallbackUsed ? <span style={badgeStyle(C.amber)}>Fallback used</span> : null}
-        {meta?.partial ? <span style={badgeStyle(C.red)}>Partial data</span> : null}
-      </div>
-
-      <div style={{ color: C.muted, fontSize: 13 }}>
-        Updated: <span style={{ color: C.text }}>{fmtTime(lastUpdated || meta?.fetchedAt)}</span>
-      </div>
-
-      {meta?.warnings?.length ? (
-        <div style={{ width: '100%', marginTop: 8, color: C.amber, fontSize: 13, lineHeight: 1.45 }}>
-          {meta.warnings.map((w, i) => (
-            <div key={i}>• {w}</div>
+    <div style={{ ...card(), marginBottom: 14, padding: '14px 20px', display: 'flex', flexWrap: 'wrap', gap: 14, alignItems: 'center' }}>
+      {marketCondition && <span style={badge(condColor, 'lg')}>{marketCondition}</span>}
+      {vix && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ ...label, marginBottom: 0 }}>VIX PROXY</span>
+          <span style={{ ...badge(regimeColor), fontSize: 13 }}>{fmt(vix)} — {vixRegime}</span>
+        </div>
+      )}
+      {sectorHealth && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {Object.entries(sectorHealth).map(([k, v]) => (
+            <span key={k} style={badge(v === 'BULLISH' ? C.up : v === 'BEARISH' ? C.down : C.flat, 'sm')}>
+              {k.toUpperCase()} {v}
+            </span>
           ))}
         </div>
-      ) : null}
+      )}
     </div>
   )
 }
 
-function OpportunityCard({ opp, active, onClick }) {
-  const actionColor =
-    opp.action === 'STRONG BUY'
-      ? C.up
-      : opp.action === 'BUY'
-      ? C.accent
-      : C.amber
+// ─── Earnings pill ────────────────────────────────────────────────────────────
+function EarningsPill({ days, date }) {
+  if (days == null || days < 0) return null
+  const color = days <= 3 ? C.red : days <= 10 ? C.amber : C.accent
+  return (
+    <span style={{ ...badge(color), marginLeft: 8 }}>
+      EARNINGS {days <= 0 ? 'TODAY' : `in ${days}d`}{date ? ` · ${date}` : ''}
+    </span>
+  )
+}
+
+// ─── Action badge ──────────────────────────────────────────────────────────────
+function ActionBadge({ action }) {
+  const color = action === 'STRONG BUY' ? C.up
+    : action === 'BUY' ? C.accent
+    : action === 'WATCH' ? C.amber
+    : action === 'AVOID' ? C.red
+    : C.muted
+  return <span style={badge(color, 'lg')}>{action || 'WATCH'}</span>
+}
+
+// ─── Gate badge ───────────────────────────────────────────────────────────────
+function GateBadge({ label: lbl, pass }) {
+  const color = pass === true ? C.up : pass === false ? C.red : C.amber
+  const text  = pass === true ? '✓' : pass === false ? '✗' : '~'
+  return (
+    <span style={{ ...badge(color), gap: 4 }}>
+      {text} {lbl}
+    </span>
+  )
+}
+
+// ─── Score bar ────────────────────────────────────────────────────────────────
+function ScoreBar({ score, max = 100 }) {
+  const pct   = Math.min((score / max) * 100, 100)
+  const color = score >= 80 ? C.up : score >= 70 ? C.accent : score >= 60 ? C.amber : C.red
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div style={{ flex: 1, height: 6, background: C.border, borderRadius: 3, overflow: 'hidden' }}>
+        <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 3, transition: 'width 0.5s ease' }} />
+      </div>
+      <span style={{ color, fontWeight: 800, fontFamily: FONT, fontSize: 14, minWidth: 32 }}>{score}</span>
+    </div>
+  )
+}
+
+// ─── Opportunity card ─────────────────────────────────────────────────────────
+function OpportunityCard({ opp, rank, active, onClick }) {
+  const earnHistory = EARNINGS_HISTORY[opp.ticker]
+  const gapUp = opp.bigMoverToday && Math.abs(opp.changePctToday || 0) > 8
 
   return (
     <button
       onClick={() => onClick(opp)}
       style={{
-        ...shellCardStyle(),
+        ...card(),
         textAlign: 'left',
         cursor: 'pointer',
-        borderColor: active ? `${C.accent}AA` : C.border,
+        width: '100%',
+        borderColor: active ? `${C.accent}88` : gapUp ? `${C.amber}44` : C.border,
         background: active
-          ? `linear-gradient(180deg, rgba(0,212,170,0.12) 0%, ${C.card} 100%)`
-          : `linear-gradient(180deg, ${C.panel} 0%, ${C.card} 100%)`,
+          ? `linear-gradient(160deg, rgba(0,200,255,0.1) 0%, ${C.card} 100%)`
+          : `linear-gradient(160deg, ${C.panel} 0%, ${C.card} 100%)`,
       }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
-        <div>
-          <div style={{ fontSize: 24, fontWeight: 900, color: C.text }}>{opp.ticker}</div>
-          <div style={{ color: C.muted }}>{opp.company || '—'}</div>
+      {/* Header row */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ color: C.muted, fontFamily: FONT, fontSize: 12 }}>#{rank}</span>
+          <span style={{ color: C.text, fontFamily: FONT, fontWeight: 900, fontSize: 22 }}>{opp.ticker}</span>
+          <EarningsPill days={opp.earningsTradingDaysAway} date={opp.earningsDate} />
+          {gapUp && <span style={badge(C.amber)}>⚠ GAP UP</span>}
         </div>
-        <div style={{ textAlign: 'right' }}>
-          <div style={{ ...badgeStyle(actionColor), justifyContent: 'center' }}>{opp.action || 'WATCH'}</div>
-          <div style={{ color: C.text, marginTop: 10, fontWeight: 800, fontSize: 22 }}>
-            {opp.currentPrice || '—'}
+        <ActionBadge action={opp.action} />
+      </div>
+
+      {/* Price row */}
+      <div style={{ display: 'flex', gap: 16, alignItems: 'baseline', marginBottom: 14 }}>
+        <span style={{ color: C.text, fontFamily: FONT, fontWeight: 900, fontSize: 28 }}>{opp.currentPrice || '—'}</span>
+        <span style={{ color: opp.direction === 'up' ? C.up : C.down, fontFamily: FONT, fontWeight: 700 }}>
+          {opp.change1d || ''}
+        </span>
+        {opp.expectedGain && (
+          <span style={{ color: C.gold, fontFamily: FONT, fontSize: 13 }}>Target: {opp.expectedGain}</span>
+        )}
+      </div>
+
+      {/* Thesis */}
+      <div style={{ color: C.text, fontSize: 13, lineHeight: 1.6, marginBottom: 14 }}>{opp.thesis || '—'}</div>
+
+      {/* Gates */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+        <GateBadge label="RETURN GATE" pass={opp.returnGate === 'PASS' ? true : opp.returnGate === 'FAIL' ? false : null} />
+        <GateBadge label="CASH CHALLENGE" pass={opp.cashChallenge === 'PASS' ? true : opp.cashChallenge === 'FAIL' ? false : null} />
+        {opp.priceStatus && <span style={badge(opp.priceStatus?.includes('LIVE') ? C.up : C.amber)}>{opp.priceStatus}</span>}
+      </div>
+
+      {/* Details grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 12 }}>
+        {[
+          ['Catalyst', opp.catalyst],
+          ['Catalyst date', opp.catalystDate || opp.earningsDate],
+          ['Entry zone', opp.entryZone],
+          ['Stop loss', opp.stopLoss],
+          ['Risk/Reward', opp.riskReward],
+          ['Allocation', opp.allocation],
+        ].map(([lbl, v]) => v ? (
+          <div key={lbl}>
+            <div style={label}>{lbl}</div>
+            <div style={{ ...val, fontSize: 13 }}>{v}</div>
           </div>
-          <div style={{ color: C.muted, fontSize: 12, marginTop: 4 }}>{opp.expectedGain || ''}</div>
-        </div>
+        ) : null)}
       </div>
 
-      <RowDivider />
+      {/* Earnings history */}
+      {earnHistory && (
+        <div style={{ ...badge(C.purple), fontSize: 11, marginTop: 4 }}>
+          📊 {earnHistory.label}
+        </div>
+      )}
 
-      <div style={{ color: C.text, lineHeight: 1.55, marginBottom: 14 }}>{opp.thesis || 'No thesis returned.'}</div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-        <div>
-          <div style={{ color: C.muted, fontSize: 12 }}>Catalyst</div>
-          <div style={{ color: C.text }}>{opp.catalyst || '—'}</div>
+      {/* Score */}
+      {opp.opportunityScore != null && (
+        <div style={{ marginTop: 12 }}>
+          <div style={label}>OPPORTUNITY SCORE</div>
+          <ScoreBar score={opp.opportunityScore} />
         </div>
-        <div>
-          <div style={{ color: C.muted, fontSize: 12 }}>Catalyst date</div>
-          <div style={{ color: C.text }}>{opp.catalystDate || '—'}</div>
-        </div>
-        <div>
-          <div style={{ color: C.muted, fontSize: 12 }}>Entry zone</div>
-          <div style={{ color: C.text }}>{opp.entryZone || '—'}</div>
-        </div>
-        <div>
-          <div style={{ color: C.muted, fontSize: 12 }}>Risk / reward</div>
-          <div style={{ color: C.text }}>{opp.riskReward || '—'}</div>
-        </div>
-      </div>
+      )}
     </button>
   )
 }
 
+// ─── Earnings calendar card ───────────────────────────────────────────────────
+function EarningsCalendarSection({ calendar }) {
+  if (!calendar?.length) return null
+  const upcoming = calendar.filter(e => (e.tradingDaysAway ?? -1) >= 0).slice(0, 12)
+  if (!upcoming.length) return null
+
+  return (
+    <div style={{ ...card(), marginTop: 18 }}>
+      <div style={{ color: C.accent, fontFamily: FONT, fontSize: 12, letterSpacing: 1, marginBottom: 16 }}>
+        VERIFIED EARNINGS DATES — SOURCE: FINNHUB
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10 }}>
+        {upcoming.map((e, i) => {
+          const daysColor = e.tradingDaysAway <= 3 ? C.red : e.tradingDaysAway <= 10 ? C.amber : C.accent
+          const hist = EARNINGS_HISTORY[e.ticker]
+          return (
+            <div key={i} style={{ ...card({ padding: 12 }), borderColor: `${daysColor}33` }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ color: C.text, fontFamily: FONT, fontWeight: 800, fontSize: 16 }}>{e.ticker}</span>
+                <span style={{ ...badge(daysColor), fontSize: 10 }}>
+                  {e.tradingDaysAway === 0 ? 'TODAY' : `${e.tradingDaysAway}d`}
+                </span>
+              </div>
+              <div style={{ color: C.muted, fontFamily: FONT, fontSize: 11, marginTop: 4 }}>{e.date}</div>
+              {hist && (
+                <div style={{ color: C.purple, fontFamily: FONT, fontSize: 10, marginTop: 6 }}>
+                  {hist.label}
+                </div>
+              )}
+              {e.epsEstimate != null && (
+                <div style={{ color: C.muted, fontSize: 11, marginTop: 4 }}>
+                  EPS est: ${e.epsEstimate}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ─── CIO Summary panel ────────────────────────────────────────────────────────
+function CIOPanel({ cio }) {
+  if (!cio) return null
+  return (
+    <div style={{ ...card({ borderColor: `${C.gold}44` }), marginBottom: 18 }}>
+      <div style={{ color: C.gold, fontFamily: FONT, fontSize: 12, letterSpacing: 1, marginBottom: 14 }}>
+        ⚡ FINAL CIO CALLS
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
+        {[
+          ['Best Trade Today',       cio.bestTradeToday,        C.up],
+          ['Best Risk/Reward',       cio.bestRiskReward,        C.accent],
+          ['Best New Opportunity',   cio.bestNewOpportunity,    C.green],
+          ['Best Speculative',       cio.bestSpeculative,       C.purple],
+          ['Cash Recommendation',    cio.cashRecommendation,    C.amber],
+          ['Final Market Decision',  cio.finalMarketDecision,   C.gold],
+        ].map(([lbl, v, color]) => v ? (
+          <div key={lbl} style={{ ...card({ padding: 12 }) }}>
+            <div style={label}>{lbl}</div>
+            <div style={{ color, fontFamily: FONT, fontWeight: 800, fontSize: 14 }}>{v}</div>
+          </div>
+        ) : null)}
+      </div>
+      {cio.watchList?.length > 0 && (
+        <div style={{ marginTop: 14 }}>
+          <div style={label}>WATCH LIST</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
+            {cio.watchList.map((w, i) => (
+              <span key={i} style={badge(C.amber)}>{w.ticker || w} {w.reason ? `— ${w.reason}` : ''}</span>
+            ))}
+          </div>
+        </div>
+      )}
+      {cio.avoidList?.length > 0 && (
+        <div style={{ marginTop: 14 }}>
+          <div style={label}>AVOID</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
+            {cio.avoidList.map((w, i) => (
+              <span key={i} style={badge(C.red)}>{w.ticker || w} {w.reason ? `— ${w.reason}` : ''}</span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Deep dive panel ──────────────────────────────────────────────────────────
+function DeepDivePanel({ stock, content, loading, onRun }) {
+  return (
+    <div style={{ ...card(), position: 'sticky', top: 20 }}>
+      <div style={{ color: C.accent, fontFamily: FONT, fontSize: 12, letterSpacing: 1, marginBottom: 14 }}>
+        SELECTED SETUP
+      </div>
+      {stock ? (
+        <>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+            <div>
+              <div style={{ fontFamily: FONT, fontWeight: 900, fontSize: 26, color: C.text }}>{stock.ticker}</div>
+              <div style={{ color: C.muted, fontSize: 12, fontFamily: FONT }}>{stock.company || stock.ticker}</div>
+            </div>
+            <ActionBadge action={stock.action} />
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+            {[
+              ['Live Price',    stock.currentPrice],
+              ['Target',        stock.takeProfit || stock.expectedGain],
+              ['Stop Loss',     stock.stopLoss],
+              ['R/R',           stock.riskReward],
+              ['Entry Zone',    stock.entryZone],
+              ['Allocation',    stock.allocation],
+            ].map(([lbl, v]) => v ? (
+              <div key={lbl}>
+                <div style={label}>{lbl}</div>
+                <div style={{ ...val, fontSize: 14 }}>{v}</div>
+              </div>
+            ) : null)}
+          </div>
+
+          {stock.earningsDate && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={label}>Earnings Date (Verified)</div>
+              <div style={{ color: C.amber, fontFamily: FONT, fontWeight: 700 }}>
+                {stock.earningsDate}
+                {stock.earningsTradingDaysAway != null && ` · ${stock.earningsTradingDaysAway} trading days`}
+              </div>
+            </div>
+          )}
+
+          {stock.catalyst && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={label}>Catalyst</div>
+              <div style={{ ...val, fontSize: 13 }}>{stock.catalyst}</div>
+            </div>
+          )}
+
+          {stock.invalidation && (
+            <div style={{ marginBottom: 14 }}>
+              <div style={label}>Invalidation</div>
+              <div style={{ color: C.red, fontSize: 13 }}>{stock.invalidation}</div>
+            </div>
+          )}
+
+          {divider}
+
+          <div style={{ color: C.accent, fontFamily: FONT, fontSize: 12, letterSpacing: 1, marginBottom: 10 }}>
+            DEEP DIVE ANALYSIS
+          </div>
+
+          {loading ? (
+            <div style={{ color: C.muted, fontFamily: FONT, fontSize: 12 }}>Analysing {stock.ticker}…</div>
+          ) : content ? (
+            <div style={{ color: C.text, fontSize: 13, lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{content}</div>
+          ) : (
+            <button onClick={onRun} style={btn(C.accent)}>▶ Run deep dive</button>
+          )}
+        </>
+      ) : (
+        <div style={{ color: C.muted, fontFamily: FONT, fontSize: 12 }}>Select an opportunity to view details.</div>
+      )}
+    </div>
+  )
+}
+
+// ─── Main Dashboard ───────────────────────────────────────────────────────────
+
+const TABS = [
+  { key: 'opportunities', label: '⚡ Opportunities' },
+  { key: 'global',        label: '🌍 Global' },
+  { key: 'us',            label: '🇺🇸 US Pre-Market' },
+  { key: 'europe',        label: '🇪🇺 Europe' },
+  { key: 'risk',          label: '⚠ Risk' },
+]
+
 export default function Dashboard() {
-  const [activeTab, setActiveTab] = useState('opportunities')
-  const [sectionData, setSectionData] = useState({})
-  const [loadStep, setLoadStep] = useState({})
-  const [errors, setErrors] = useState({})
-  const [selectedStock, setSelectedStock] = useState(null)
+  const [activeTab,    setActiveTab]    = useState('opportunities')
+  const [sectionData,  setSectionData]  = useState({})
+  const [loading,      setLoading]      = useState({})
+  const [errors,       setErrors]       = useState({})
+  const [selected,     setSelected]     = useState(null)
   const [drillContent, setDrillContent] = useState(null)
   const [drillLoading, setDrillLoading] = useState(false)
-  const [lastUpdated, setLastUpdated] = useState({})
+  const [lastUpdated,  setLastUpdated]  = useState({})
+  const loadedRef = useRef({})
 
-  const callClaude = useCallback(async (prompt, mode = 'section') => {
-    const res = await fetch('/api/claude', {
+  // ── API helpers ────────────────────────────────────────────────────────────
+
+  const callClaude = useCallback(async (prompt, mode = 'json') => {
+    const res  = await fetch('/api/claude', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt, mode }),
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || `Claude error ${res.status}`)
-    const tb = data.content?.find((b) => b.type === 'text')
-    if (!tb) throw new Error('No response from AI')
+    const tb = data.content?.find(b => b.type === 'text')
+    if (!tb) throw new Error('No text block in Claude response')
     return tb.text
   }, [])
 
-  const fetchMarket = useCallback(async (type) => {
-    const res = await fetch(`/api/market?type=${type}`, { cache: 'no-store' })
+  const fetchMarket = useCallback(async (type, extra = '') => {
+    const res  = await fetch(`/api/market?type=${type}${extra}`, { cache: 'no-store' })
     const data = await res.json()
-    if (!res.ok) throw new Error(data.error || `Market data error ${res.status}`)
+    if (!res.ok) throw new Error(data.error || `Market error ${res.status}`)
     return data
   }, [])
 
-const setDone = useCallback((key) => {
-  setLoadStep((p) => ({ ...p, [key]: -1 }))
-}, [])
-
-  const loadGlobal = useCallback(async () => {
-    setLoadStep((p) => ({ ...p, global: 0 }))
-    setErrors((p) => ({ ...p, global: null }))
-
-    try {
-      const market = await fetchMarket('global')
-      setLoadStep((p) => ({ ...p, global: 1 }))
-
-      const summary = `Real market data right now:
-Markets: ${market.markets?.map((m) => `${m.name} ${m.value} (${m.change})`).join(', ')}
-Commodities: ${market.commodities?.map((c) => `${c.name} ${c.value} (${c.change})`).join(', ')}
-FX: ${market.currencies?.map((c) => `${c.pair} ${c.value} ${c.change}`).join(', ')}
-Bonds: ${market.bonds?.map((b) => `${b.name} ${b.yield} ${b.change}`).join(', ')}
-Provider: ${market.meta?.provider || 'unknown'}
-Fallback used: ${market.meta?.fallbackUsed ? 'yes' : 'no'}
-Partial data: ${market.meta?.partial ? 'yes' : 'no'}
-
-Based only on the real data above, return JSON:
-{"sentiment":"RISK ON/OFF/NEUTRAL","sentimentReason":"one sentence","macroEvents":[{"date":"this week","event":"key event","impact":"HIGH/MEDIUM/LOW"}]}
-Keep it concise. JSON only.`
-
-      const aiText = await callClaude(summary)
-      const ai = repairJSON(aiText)
-
-      setSectionData((p) => ({
-        ...p,
-        global: { ...market, ...ai },
-      }))
-
-      setLastUpdated((p) => ({
-        ...p,
-        global: market.meta?.fetchedAt || new Date().toISOString(),
-      }))
-    } catch (err) {
-      setErrors((p) => ({ ...p, global: err.message }))
-    } finally {
-      setDone('global')
-    }
-  }, [fetchMarket, callClaude, setDone])
-
-  const loadUS = useCallback(async () => {
-    setLoadStep((p) => ({ ...p, us: 0 }))
-    setErrors((p) => ({ ...p, us: null }))
-
-    try {
-      const market = await fetchMarket('us')
-      setLoadStep((p) => ({ ...p, us: 1 }))
-
-      const summary = `Real US market data:
-Futures: ${market.futures?.map((f) => `${f.index} ${f.value} (${f.change})`).join(', ')}
-Top gainers: ${market.gainers?.map((g) => `${g.ticker} ${g.change}`).join(', ')}
-Top losers: ${market.losers?.map((l) => `${l.ticker} ${l.change}`).join(', ')}
-Provider: ${market.meta?.provider || 'unknown'}
-Fallback used: ${market.meta?.fallbackUsed ? 'yes' : 'no'}
-Partial data: ${market.meta?.partial ? 'yes' : 'no'}
-
-Based only on the real data above, return JSON:
-{"outlook":"BULLISH/BEARISH/NEUTRAL","outlookReason":"one sentence","earningsThisWeek":[{"ticker":"","company":"","date":"","expectedReaction":""}],"catalysts":[{"type":"","detail":"","impact":"HIGH/MEDIUM/LOW"}],"sectorLeaders":[],"sectorLaggards":[]}
-List 3 earnings this week and 2 catalysts. Keep it concise. JSON only.`
-
-      const aiText = await callClaude(summary)
-      const ai = repairJSON(aiText)
-
-      setSectionData((p) => ({
-        ...p,
-        us: { ...market, ...ai },
-      }))
-
-      setLastUpdated((p) => ({
-        ...p,
-        us: market.meta?.fetchedAt || new Date().toISOString(),
-      }))
-    } catch (err) {
-      setErrors((p) => ({ ...p, us: err.message }))
-    } finally {
-      setDone('us')
-    }
-  }, [fetchMarket, callClaude, setDone])
-
-  const loadEurope = useCallback(async () => {
-    setLoadStep((p) => ({ ...p, europe: 0 }))
-    setErrors((p) => ({ ...p, europe: null }))
-
-    try {
-      const market = await fetchMarket('europe')
-      setLoadStep((p) => ({ ...p, europe: 1 }))
-
-      const summary = `Real European market data:
-Indices: ${market.futures?.map((f) => `${f.index} ${f.value} (${f.change})`).join(', ')}
-Provider: ${market.meta?.provider || 'unknown'}
-Fallback used: ${market.meta?.fallbackUsed ? 'yes' : 'no'}
-Partial data: ${market.meta?.partial ? 'yes' : 'no'}
-
-Based only on the real data above, return JSON:
-{"outlook":"BULLISH/BEARISH/NEUTRAL","outlookReason":"one sentence","earningsThisWeek":[{"ticker":"","company":"","date":"","expectedReaction":""}],"catalysts":[{"type":"","detail":"","impact":"HIGH/MEDIUM/LOW"}]}
-List 2 European earnings this week and 2 catalysts. Keep it concise. JSON only.`
-
-      const aiText = await callClaude(summary)
-      const ai = repairJSON(aiText)
-
-      setSectionData((p) => ({
-        ...p,
-        europe: { ...market, ...ai },
-      }))
-
-      setLastUpdated((p) => ({
-        ...p,
-        europe: market.meta?.fetchedAt || new Date().toISOString(),
-      }))
-    } catch (err) {
-      setErrors((p) => ({ ...p, europe: err.message }))
-    } finally {
-      setDone('europe')
-    }
-  }, [fetchMarket, callClaude, setDone])
+  // ── Section loaders ────────────────────────────────────────────────────────
 
   const loadOpportunities = useCallback(async () => {
-    setLoadStep((p) => ({ ...p, opportunities: 0 }))
-    setErrors((p) => ({ ...p, opportunities: null }))
-
+    setLoading(p => ({ ...p, opportunities: true }))
+    setErrors(p  => ({ ...p, opportunities: null }))
     try {
       const market = await fetchMarket('opportunities')
-      setLoadStep((p) => ({ ...p, opportunities: 1 }))
+      const { stocks, earningsCalendar, vix, vixRegime, sectorHealth } = market
 
-      const stockList = market.stocks
-        ?.map((s) => `${s.ticker}: ${s.price} (${s.change1d} today, mktcap ${s.marketCap})`)
-        .join('\n')
+      // Build a rich prompt that gives Claude verified data to work with
+      const stockLines = (stocks || []).map(s => {
+        const hist = EARNINGS_HISTORY[s.ticker]
+        return [
+          `${s.ticker}: price=${s.priceFormatted} change=${s.change1d}`,
+          s.hasVerifiedEarnings ? `VERIFIED_EARNINGS_DATE=${s.earningsDate} (${s.earningsTradingDaysAway} trading days away)` : 'NO_VERIFIED_EARNINGS_DATE',
+          s.bigMoverToday ? 'BIG_MOVER_TODAY — apply Gap-Up Penalty if >8%' : '',
+          hist ? `EARNINGS_HISTORY: ${hist.label}` : '',
+        ].filter(Boolean).join(' | ')
+      }).join('\n')
 
-      const prompt = `Today's live prices from the research universe:
-${stockList}
+      const calendarLines = (earningsCalendar || []).slice(0, 15).map(e =>
+        `${e.ticker} reports ${e.date} (${e.tradingDaysAway} trading days) EPS_est=${e.epsEstimate || 'N/A'}`
+      ).join('\n')
 
-Provider: ${market.meta?.provider || 'unknown'}
-Fallback used: ${market.meta?.fallbackUsed ? 'yes' : 'no'}
-Partial data: ${market.meta?.partial ? 'yes' : 'no'}
-Today's date: ${new Date().toDateString()}
+      const prompt = `
+TODAY: ${new Date().toDateString()}
+VIX PROXY (VIXY): ${vix || 'N/A'} — REGIME: ${vixRegime || 'UNKNOWN'}
+SECTOR HEALTH: ${JSON.stringify(sectorHealth)}
 
-Based only on these real current prices plus your own knowledge of upcoming earnings, contracts, product launches and catalysts, identify the top 3 stocks with the strongest catalyst setup for 15%+ gains in the next 40 days.
+LIVE PRICES FROM FINNHUB (verified):
+${stockLines}
+
+VERIFIED EARNINGS CALENDAR (next 60 days, source: Finnhub):
+${calendarLines || 'None found'}
+
+EARNINGS HISTORY (hardcoded, update periodically):
+${Object.entries(EARNINGS_HISTORY).map(([k,v]) => `${k}: ${v.label}`).join(', ')}
+
+RULES YOU MUST FOLLOW:
+1. Only use earnings dates from VERIFIED_EARNINGS_DATE above — never invent dates.
+2. Apply GAP-UP PENALTY: if a stock is up >8% today → max rating = WATCH unless second catalyst exists.
+3. Apply POST-CATALYST CHASE RULE: catalyst already occurred + stock up >15% → max rating = WATCH.
+4. Apply RETURN GATE: prove credible 15%+ path. Use earnings history if available.
+5. Apply CASH CHALLENGE: beats holding cash? If no → max rating = WATCH.
+6. Stocks with earnings in 0-3 trading days are highest priority for BUY candidates.
+7. Stocks with no verified catalyst within 40 trading days → max rating = WATCH.
+8. Producing zero BUY recommendations is valid and correct if nothing qualifies.
 
 Return JSON only:
-{"marketCondition":"BUY AGGRESSIVELY/BUY SELECTIVELY/WAIT/HOLD CASH","cashRecommendation":"","opportunities":[{"ticker":"","company":"","action":"STRONG BUY/BUY/WATCH","currentPrice":"use real price above","entryZone":"","stopLoss":"","takeProfit":"","expectedGain":"","confidence":7,"riskLevel":"LOW/MEDIUM/HIGH","catalyst":"specific named catalyst","catalystDate":"","riskReward":"3:1","allocation":"10%","buyNow":"YES/NO/WAIT","thesis":"1-2 sentences based on real price","invalidation":"what would change the thesis"}]}`
+{
+  "marketCondition": "BUY AGGRESSIVELY|BUY SELECTIVELY|WAIT|HOLD CASH",
+  "cashRecommendation": "one sentence explaining cash level",
+  "cashPct": 30,
+  "cio": {
+    "bestTradeToday": "TICKER or NONE",
+    "bestRiskReward": "TICKER or NONE",
+    "bestNewOpportunity": "TICKER or NONE",
+    "bestSpeculative": "TICKER or NONE",
+    "cashRecommendation": "e.g. Hold 30% cash",
+    "finalMarketDecision": "BUY AGGRESSIVELY|BUY SELECTIVELY|WAIT|HOLD CASH",
+    "watchList": [{"ticker":"","reason":""}],
+    "avoidList": [{"ticker":"","reason":""}]
+  },
+  "opportunities": [
+    {
+      "ticker": "",
+      "company": "",
+      "action": "STRONG BUY|BUY|WATCH|AVOID",
+      "currentPrice": "use verified price above",
+      "entryZone": "$X-$Y",
+      "stopLoss": "$X — reason in one line",
+      "takeProfit": "$X (N%)",
+      "expectedGain": "15-20%",
+      "confidence": 8,
+      "riskLevel": "LOW|MEDIUM|HIGH",
+      "catalyst": "specific named catalyst — NO invented catalysts",
+      "catalystDate": "use VERIFIED date only, else UNVERIFIED",
+      "riskReward": "3:1",
+      "allocation": "10%",
+      "buyNow": "YES|NO|WAIT",
+      "thesis": "2 sentences max, specific, no fluff",
+      "invalidation": "specific conditions that break the thesis",
+      "returnGate": "PASS|CONDITIONAL PASS|FAIL|INSUFFICIENT EVIDENCE",
+      "returnGatePathway": "which of the 6 pathways used",
+      "cashChallenge": "PASS|FAIL",
+      "priceStatus": "LIVE PRICE VERIFIED",
+      "opportunityScore": 75,
+      "scoreBreakdown": {
+        "catalystTiming": 20,
+        "catalystStrength": 16,
+        "probability": 15,
+        "evidenceQuality": 12,
+        "riskReward": 7,
+        "entryQuality": 3,
+        "analystSupport": 2
+      }
+    }
+  ]
+}
+`
+      const aiText = await callClaude(prompt, 'cio')
+      const ai     = repairJSON(aiText)
 
-      const aiText = await callClaude(prompt)
-      const ai = repairJSON(aiText)
-
-      const stockMap = Object.fromEntries((market.stocks || []).map((s) => [s.ticker, s]))
-
-      const groundedOpportunities = (ai.opportunities || []).map((opp) => {
-        const live = stockMap[opp.ticker] || {}
+      // Ground prices with verified live data
+      const priceMap = Object.fromEntries((stocks || []).map(s => [s.ticker, s]))
+      const grounded = (ai.opportunities || []).map(opp => {
+        const live = priceMap[opp.ticker] || {}
         return {
           ...opp,
-          company: live.name || opp.company || opp.ticker,
-          currentPrice: live.price || opp.currentPrice || 'N/A',
-          liveChange1d: live.change1d || null,
-          liveMarketCap: live.marketCap || null,
-          sourceTimestamp: live.sourceTimestamp || null,
-          provider: live.provider || market.meta?.provider || null,
+          currentPrice: live.priceFormatted || opp.currentPrice,
+          change1d: live.change1d || null,
+          changePctToday: live.changePct || 0,
+          direction: live.direction || 'up',
+          bigMoverToday: live.bigMoverToday || false,
+          earningsDate: live.earningsDate || null,
+          earningsTradingDaysAway: live.earningsTradingDaysAway ?? null,
+          hasVerifiedEarnings: live.hasVerifiedEarnings || false,
+          provider: 'finnhub',
         }
       })
 
-      setSectionData((p) => ({
+      setSectionData(p => ({
         ...p,
         opportunities: {
-          ...ai,
-          opportunities: groundedOpportunities,
+          marketCondition: ai.marketCondition,
+          cashRecommendation: ai.cashRecommendation,
+          cashPct: ai.cashPct,
+          cio: ai.cio,
+          opportunities: grounded,
+          earningsCalendar,
+          vix,
+          vixRegime,
+          sectorHealth,
           meta: market.meta,
-          liveStocks: market.stocks,
         },
       }))
-
-      setLastUpdated((p) => ({
-        ...p,
-        opportunities: market.meta?.fetchedAt || new Date().toISOString(),
-      }))
-
-      if (groundedOpportunities[0]) {
-        setSelectedStock(groundedOpportunities[0])
-      }
+      setLastUpdated(p => ({ ...p, opportunities: new Date().toISOString() }))
+      if (grounded[0]) setSelected(grounded[0])
     } catch (err) {
-      setErrors((p) => ({ ...p, opportunities: err.message }))
+      setErrors(p => ({ ...p, opportunities: err.message }))
     } finally {
-      setDone('opportunities')
+      setLoading(p => ({ ...p, opportunities: false }))
     }
-  }, [fetchMarket, callClaude, setDone])
+  }, [fetchMarket, callClaude])
 
-  const loadCatalysts = useCallback(async () => {
-    setLoadStep((p) => ({ ...p, catalysts: 1 }))
-    setErrors((p) => ({ ...p, catalysts: null }))
-
+  const loadGlobal = useCallback(async () => {
+    setLoading(p => ({ ...p, global: true }))
+    setErrors(p  => ({ ...p, global: null }))
     try {
-      const prompt = `Today is ${new Date().toDateString()}.
-List 6 specific upcoming market catalysts in the next 40 days that swing traders should watch.
-Focus on AI, semiconductors, defence and energy.
-Return JSON only:
-{"catalysts":[{"date":"exact date","ticker":"","company":"","type":"Earnings/Contract/Product Launch/Policy/M&A/Government","detail":"specific detail","expectedImpact":"HIGH/MEDIUM/LOW","opportunity":"BUY BEFORE/WATCH/AVOID"}]}`
+      const market = await fetchMarket('global')
+      const summary = `
+Real market data:
+Markets: ${market.markets?.map(m => `${m.name} ${m.value} ${m.change}`).join(', ')}
+Commodities: ${market.commodities?.map(c => `${c.name} ${c.value} ${c.change}`).join(', ')}
+FX: ${market.currencies?.map(c => `${c.pair} ${c.value} ${c.change}`).join(', ')}
+VIX Proxy: ${market.vix} (${market.vixRegime})
 
-      const aiText = await callClaude(prompt)
-      const ai = repairJSON(aiText)
-
-      setSectionData((p) => ({ ...p, catalysts: ai }))
-      setLastUpdated((p) => ({ ...p, catalysts: new Date().toISOString() }))
+Based ONLY on data above, return JSON:
+{"sentiment":"RISK ON|RISK OFF|NEUTRAL","sentimentReason":"one sentence","regimeAdvice":"one sentence on what this means for swing traders","macroEvents":[{"event":"","impact":"HIGH|MEDIUM|LOW"}]}`
+      const aiText = await callClaude(summary)
+      const ai     = repairJSON(aiText)
+      setSectionData(p => ({ ...p, global: { ...market, ...ai } }))
+      setLastUpdated(p => ({ ...p, global: new Date().toISOString() }))
     } catch (err) {
-      setErrors((p) => ({ ...p, catalysts: err.message }))
+      setErrors(p => ({ ...p, global: err.message }))
     } finally {
-      setDone('catalysts')
+      setLoading(p => ({ ...p, global: false }))
     }
-  }, [callClaude, setDone])
+  }, [fetchMarket, callClaude])
+
+  const loadUS = useCallback(async () => {
+    setLoading(p => ({ ...p, us: true }))
+    setErrors(p  => ({ ...p, us: null }))
+    try {
+      const market = await fetchMarket('us')
+      const summary = `
+Real US data:
+Futures: ${market.futures?.map(f => `${f.index} ${f.value} ${f.change}`).join(', ')}
+Gainers: ${market.gainers?.map(g => `${g.ticker} ${g.change}`).join(', ')}
+Losers: ${market.losers?.map(l => `${l.ticker} ${l.change}`).join(', ')}
+
+Apply POST-CATALYST CHASE RULE to every gainer. Return JSON:
+{"outlook":"BULLISH|BEARISH|NEUTRAL","outlookReason":"one sentence","sectorLeaders":[],"sectorLaggards":[],"watchForToday":["specific things to monitor"]}`
+      const aiText = await callClaude(summary)
+      const ai     = repairJSON(aiText)
+      setSectionData(p => ({ ...p, us: { ...market, ...ai } }))
+      setLastUpdated(p => ({ ...p, us: new Date().toISOString() }))
+    } catch (err) {
+      setErrors(p => ({ ...p, us: err.message }))
+    } finally {
+      setLoading(p => ({ ...p, us: false }))
+    }
+  }, [fetchMarket, callClaude])
+
+  const loadEurope = useCallback(async () => {
+    setLoading(p => ({ ...p, europe: true }))
+    setErrors(p  => ({ ...p, europe: null }))
+    try {
+      const market = await fetchMarket('europe')
+      const summary = `
+European indices: ${market.futures?.map(f => `${f.index} ${f.value} ${f.change}`).join(', ')}
+
+Return JSON:
+{"outlook":"BULLISH|BEARISH|NEUTRAL","outlookReason":"one sentence","europeanSetups":[{"ticker":"","company":"","catalyst":"specific","catalystDate":"","action":"WATCH|BUY"}]}`
+      const aiText = await callClaude(summary)
+      const ai     = repairJSON(aiText)
+      setSectionData(p => ({ ...p, europe: { ...market, ...ai } }))
+      setLastUpdated(p => ({ ...p, europe: new Date().toISOString() }))
+    } catch (err) {
+      setErrors(p => ({ ...p, europe: err.message }))
+    } finally {
+      setLoading(p => ({ ...p, europe: false }))
+    }
+  }, [fetchMarket, callClaude])
 
   const loadRisk = useCallback(async () => {
-    setLoadStep((p) => ({ ...p, risk: 1 }))
-    setErrors((p) => ({ ...p, risk: null }))
-
+    setLoading(p => ({ ...p, risk: true }))
+    setErrors(p  => ({ ...p, risk: null }))
     try {
       const prompt = `Today is ${new Date().toDateString()}.
-Assess current market risks for a swing trader.
-Return JSON only:
-{"overallRisk":"HIGH/ELEVATED/MODERATE/LOW","macroRisks":[{"risk":"","detail":"","severity":"HIGH/MEDIUM/LOW"}],"geopoliticalRisks":[{"risk":"","detail":"","severity":"HIGH/MEDIUM/LOW"}],"sectorRisks":[{"sector":"","risk":"","severity":"HIGH/MEDIUM/LOW"}],"hedgeIdeas":[""]}`
-
+Assess current swing-trading risk environment. Be specific about threats in the next 40 days.
+Return JSON:
+{"overallRisk":"HIGH|ELEVATED|MODERATE|LOW","cashSuggestion":"X%","macroRisks":[{"risk":"","detail":"","severity":"HIGH|MEDIUM|LOW"}],"geopoliticalRisks":[{"risk":"","detail":"","severity":""}],"sectorRisks":[{"sector":"","risk":"","severity":""}],"positionSizingAdvice":"one line","hedgeIdeas":[""]}`
       const aiText = await callClaude(prompt)
-      const ai = repairJSON(aiText)
-
-      setSectionData((p) => ({ ...p, risk: ai }))
-      setLastUpdated((p) => ({ ...p, risk: new Date().toISOString() }))
+      const ai     = repairJSON(aiText)
+      setSectionData(p => ({ ...p, risk: ai }))
+      setLastUpdated(p => ({ ...p, risk: new Date().toISOString() }))
     } catch (err) {
-      setErrors((p) => ({ ...p, risk: err.message }))
+      setErrors(p => ({ ...p, risk: err.message }))
     } finally {
-      setDone('risk')
+      setLoading(p => ({ ...p, risk: false }))
     }
-  }, [callClaude, setDone])
+  }, [callClaude])
 
-  const loaders = useMemo(
-    () => ({
-      global: loadGlobal,
-      us: loadUS,
-      europe: loadEurope,
-      opportunities: loadOpportunities,
-      catalysts: loadCatalysts,
-      risk: loadRisk,
-    }),
-    [loadGlobal, loadUS, loadEurope, loadOpportunities, loadCatalysts, loadRisk]
-  )
+  const deepDive = useCallback(async (opp) => {
+    setDrillLoading(true)
+    setDrillContent(null)
+    try {
+      const hist = EARNINGS_HISTORY[opp.ticker]
+      const text = await callClaude(`
+Today: ${new Date().toDateString()}
+Analyse ${opp.ticker} at ${opp.currentPrice}.
+Earnings date: ${opp.earningsDate || 'NOT VERIFIED'} (${opp.earningsTradingDaysAway ?? '?'} trading days away).
+Catalyst: ${opp.catalyst || 'N/A'}
+Earnings history: ${hist ? hist.label : 'not available'}
+Thesis: ${opp.thesis}
 
-  const fetchDeepDive = useCallback(
-    async (opp) => {
-      setDrillLoading(true)
-      setDrillContent(null)
-      try {
-        const text = await callClaude(
-          `Today is ${new Date().toDateString()}.
-Analyse ${opp.ticker} (${opp.company}) currently priced at ${opp.currentPrice}.
-Cover: recent news, upcoming catalyst (${opp.catalyst}), analyst consensus, key risks, technical setup.
-Under 220 words.
-Mark each point FACT or ANALYSIS.`,
-          'deepdive'
-        )
-        setDrillContent(text)
-      } catch (err) {
-        setDrillContent(`Error: ${err.message}`)
-      } finally {
-        setDrillLoading(false)
-      }
-    },
-    [callClaude]
-  )
+Cover: (1) Why this specific setup NOW (2) Key risk to the thesis (3) Ideal entry trigger (4) What invalidates immediately.
+Label each claim FACT, ANALYSIS or OPINION. Under 260 words.`, 'deepdive')
+      setDrillContent(text)
+    } catch (err) {
+      setDrillContent(`Error: ${err.message}`)
+    } finally {
+      setDrillLoading(false)
+    }
+  }, [callClaude])
 
-  const handleStockClick = useCallback(
-    (opp) => {
-      setSelectedStock(opp)
-      setDrillContent(null)
-      fetchDeepDive(opp)
-    },
-    [fetchDeepDive]
-  )
-
-  const refreshActive = useCallback(() => {
-    loaders[activeTab]?.()
-  }, [activeTab, loaders])
-
-  const isLoading = useCallback(
-    (key) => loadStep[key] === 0 || loadStep[key] === 1,
-    [loadStep]
-  )
+  // Auto-load tabs when first visited
+  const loaders = { opportunities: loadOpportunities, global: loadGlobal, us: loadUS, europe: loadEurope, risk: loadRisk }
 
   useEffect(() => {
-    if (!sectionData[activeTab] && !isLoading(activeTab) && !errors[activeTab]) {
+    if (!loadedRef.current[activeTab] && !loading[activeTab] && !sectionData[activeTab]) {
+      loadedRef.current[activeTab] = true
       loaders[activeTab]?.()
     }
-  }, [activeTab, sectionData, isLoading, errors, loaders])
+  }, [activeTab]) // eslint-disable-line
 
-  function sourceBarFor(tabKey) {
-    const data = sectionData[tabKey]
-    return <MetaBar meta={data?.meta} lastUpdated={lastUpdated[tabKey]} />
-  }
+  const handleStockClick = useCallback((opp) => {
+    setSelected(opp)
+    setDrillContent(null)
+    deepDive(opp)
+  }, [deepDive])
 
-  function renderGlobal() {
-    const data = sectionData.global
-    if (!data) return null
+  const refresh = useCallback(() => {
+    loadedRef.current[activeTab] = true
+    loaders[activeTab]?.()
+  }, [activeTab, loadOpportunities, loadGlobal, loadUS, loadEurope, loadRisk]) // eslint-disable-line
+
+  // ── Renders ────────────────────────────────────────────────────────────────
+
+  function renderOpportunities() {
+    const d = sectionData.opportunities
+    if (!d) return null
+    const opps = d.opportunities || []
 
     return (
       <>
-        {sourceBarFor('global')}
+        <RegimeBar vix={d.vix} vixRegime={d.vixRegime} sectorHealth={d.sectorHealth} marketCondition={d.marketCondition} />
+        <CIOPanel cio={d.cio} />
 
-        <div style={{ ...shellCardStyle(), marginBottom: 18 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 14, alignItems: 'center' }}>
-            <div style={badgeStyle(data.sentiment === 'RISK ON' ? C.up : data.sentiment === 'RISK OFF' ? C.down : C.flat)}>
-              {data.sentiment || 'NEUTRAL'}
-            </div>
-            <div style={{ color: C.text, lineHeight: 1.5, flex: 1 }}>
-              {data.sentimentReason || 'No AI summary returned.'}
-            </div>
+        {d.cashRecommendation && (
+          <div style={{ ...card({ padding: '12px 18px' }), marginBottom: 14 }}>
+            <span style={{ color: C.muted, fontFamily: FONT, fontSize: 12 }}>CASH: </span>
+            <span style={{ color: C.text, fontFamily: FONT, fontSize: 13 }}>{d.cashRecommendation}</span>
+            {d.cashPct != null && <span style={{ ...badge(C.amber), marginLeft: 10 }}>{d.cashPct}% CASH</span>}
           </div>
-        </div>
+        )}
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14, marginBottom: 18 }}>
-          {(data.markets || []).slice(0, 8).map((m) =>
-            miniStat(m.name, `${m.value} (${m.change})`, m.direction === 'up' ? 'up' : m.direction === 'down' ? 'down' : 'neutral')
-          )}
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 18 }}>
-          <div style={shellCardStyle()}>
-            <h3 style={sectionTitleStyle()}>Macro events this week</h3>
-            {(data.macroEvents || []).length ? (
-              data.macroEvents.map((e, i) => (
-                <div key={i}>
-                  <div style={{ color: C.text, fontWeight: 700 }}>{e.event}</div>
-                  <div style={{ color: C.muted, marginTop: 4 }}>
-                    {e.date} · {e.impact}
-                  </div>
-                  {i < data.macroEvents.length - 1 ? <RowDivider /> : null}
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.4fr) minmax(300px,0.8fr)', gap: 18, alignItems: 'start' }}>
+          <div>
+            <div style={{ display: 'grid', gap: 14 }}>
+              {opps.length ? opps.map((opp, i) => (
+                <OpportunityCard
+                  key={`${opp.ticker}-${i}`}
+                  opp={opp}
+                  rank={i + 1}
+                  active={selected?.ticker === opp.ticker}
+                  onClick={handleStockClick}
+                />
+              )) : (
+                <div style={{ ...card(), color: C.muted, fontFamily: FONT, fontSize: 13 }}>
+                  No qualifying opportunities returned. Cash may be the right call.
                 </div>
-              ))
-            ) : (
-              <div style={{ color: C.muted }}>No macro events returned.</div>
-            )}
+              )}
+            </div>
+            <EarningsCalendarSection calendar={d.earningsCalendar} />
           </div>
 
-          <div style={shellCardStyle()}>
-            <h3 style={sectionTitleStyle()}>Cross-asset snapshot</h3>
-            <div style={{ color: C.muted, fontSize: 13, marginBottom: 10 }}>Commodities</div>
-            {(data.commodities || []).map((c, i) => (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', color: C.text, marginBottom: 8 }}>
-                <span>{c.name}</span>
-                <span>{c.value} ({c.change})</span>
+          <DeepDivePanel
+            stock={selected}
+            content={drillContent}
+            loading={drillLoading}
+            onRun={() => selected && deepDive(selected)}
+          />
+        </div>
+      </>
+    )
+  }
+
+  function renderGlobal() {
+    const d = sectionData.global
+    if (!d) return null
+    const sentColor = d.sentiment === 'RISK ON' ? C.up : d.sentiment === 'RISK OFF' ? C.down : C.flat
+    return (
+      <>
+        <div style={{ ...card({ marginBottom: 14 }), display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={badge(sentColor, 'lg')}>{d.sentiment || 'NEUTRAL'}</span>
+          <span style={{ color: C.text, fontFamily: FONT, fontSize: 13 }}>{d.sentimentReason}</span>
+          {d.regimeAdvice && <span style={{ color: C.muted, fontFamily: FONT, fontSize: 12 }}>{d.regimeAdvice}</span>}
+          {d.vix && <span style={{ ...badge(d.vixRegime === 'CALM' ? C.up : d.vixRegime === 'HIGH_FEAR' ? C.red : C.amber) }}>VIX PROXY: {fmt(d.vix)}</span>}
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 18 }}>
+          {(d.markets || []).map((m, i) => (
+            <div key={i} style={card({ padding: 14 })}>
+              <div style={label}>{m.name}</div>
+              <div style={{ color: m.direction === 'up' ? C.up : C.down, fontFamily: FONT, fontWeight: 800, fontSize: 18 }}>{m.value}</div>
+              <div style={{ color: m.direction === 'up' ? C.up : C.down, fontFamily: FONT, fontSize: 12 }}>{m.change}</div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 18 }}>
+          <div style={card()}>
+            <div style={{ color: C.accent, fontFamily: FONT, fontSize: 12, letterSpacing: 1, marginBottom: 14 }}>COMMODITIES & FX</div>
+            {(d.commodities || []).map((c, i) => (
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10, fontFamily: FONT }}>
+                <span style={{ color: C.muted }}>{c.name}</span>
+                <span style={{ color: c.direction === 'up' ? C.up : C.down }}>{c.value} {c.change}</span>
               </div>
             ))}
-            <RowDivider />
-            <div style={{ color: C.muted, fontSize: 13, marginBottom: 10 }}>FX</div>
-            {(data.currencies || []).map((c, i) => (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', color: C.text, marginBottom: 8 }}>
-                <span>{c.pair}</span>
-                <span>{c.value} ({c.change})</span>
+            {divider}
+            {(d.currencies || []).map((c, i) => (
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10, fontFamily: FONT }}>
+                <span style={{ color: C.muted }}>{c.pair}</span>
+                <span style={{ color: C.text }}>{c.value} {c.change}</span>
               </div>
             ))}
-            <RowDivider />
-            <div style={{ color: C.muted, fontSize: 13, marginBottom: 10 }}>Bonds</div>
-            {(data.bonds || []).map((b, i) => (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', color: C.text }}>
-                <span>{b.name}</span>
-                <span>{b.yield} ({b.change})</span>
+          </div>
+          <div style={card()}>
+            <div style={{ color: C.accent, fontFamily: FONT, fontSize: 12, letterSpacing: 1, marginBottom: 14 }}>MACRO EVENTS</div>
+            {(d.macroEvents || []).map((e, i) => (
+              <div key={i} style={{ marginBottom: 12 }}>
+                <div style={{ color: C.text, fontFamily: FONT, fontSize: 13, fontWeight: 700 }}>{e.event}</div>
+                <div style={{ ...badge(e.impact === 'HIGH' ? C.red : e.impact === 'MEDIUM' ? C.amber : C.muted), marginTop: 6 }}>{e.impact}</div>
+                {i < d.macroEvents.length - 1 && divider}
               </div>
             ))}
           </div>
@@ -681,384 +896,128 @@ Mark each point FACT or ANALYSIS.`,
   }
 
   function renderUS() {
-    const data = sectionData.us
-    if (!data) return null
-
+    const d = sectionData.us
+    if (!d) return null
+    const outlookColor = d.outlook === 'BULLISH' ? C.up : d.outlook === 'BEARISH' ? C.down : C.flat
     return (
       <>
-        {sourceBarFor('us')}
-
-        <div style={{ ...shellCardStyle(), marginBottom: 18 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 14, alignItems: 'center' }}>
-            <div style={badgeStyle(data.outlook === 'BULLISH' ? C.up : data.outlook === 'BEARISH' ? C.down : C.flat)}>
-              {data.outlook || 'NEUTRAL'}
-            </div>
-            <div style={{ color: C.text, lineHeight: 1.5, flex: 1 }}>
-              {data.outlookReason || 'No AI outlook returned.'}
-            </div>
-          </div>
+        <div style={{ ...card({ marginBottom: 14 }), display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={badge(outlookColor, 'lg')}>{d.outlook || 'NEUTRAL'}</span>
+          <span style={{ color: C.text, fontFamily: FONT, fontSize: 13 }}>{d.outlookReason}</span>
         </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14, marginBottom: 18 }}>
-          {(data.futures || []).map((f, i) =>
-            miniStat(f.index, `${f.value} (${f.change})`, f.direction === 'up' ? 'up' : f.direction === 'down' ? 'down' : 'neutral')
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 18 }}>
+          {(d.futures || []).map((f, i) => (
+            <div key={i} style={card({ padding: 14 })}>
+              <div style={label}>{f.index}</div>
+              <div style={{ color: f.direction === 'up' ? C.up : C.down, fontFamily: FONT, fontWeight: 800, fontSize: 18 }}>{f.value}</div>
+              <div style={{ color: f.direction === 'up' ? C.up : C.down, fontFamily: FONT, fontSize: 12 }}>{f.change}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 18 }}>
+          {[['Top Gainers', d.gainers, C.up], ['Top Losers', d.losers, C.down]].map(([title, items, color]) => (
+            <div key={title} style={card()}>
+              <div style={{ color: C.accent, fontFamily: FONT, fontSize: 12, letterSpacing: 1, marginBottom: 14 }}>{title.toUpperCase()}</div>
+              {(items || []).map((g, i) => (
+                <div key={i}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: FONT }}>
+                    <span style={{ color: C.text, fontWeight: 800 }}>{g.ticker}</span>
+                    <span style={{ color }}>{g.change}</span>
+                  </div>
+                  <div style={{ color: C.muted, fontSize: 11, marginBottom: 8 }}>{g.price}</div>
+                  {i < items.length - 1 && divider}
+                </div>
+              ))}
+            </div>
+          ))}
+          {d.watchForToday?.length > 0 && (
+            <div style={card()}>
+              <div style={{ color: C.accent, fontFamily: FONT, fontSize: 12, letterSpacing: 1, marginBottom: 14 }}>WATCH FOR TODAY</div>
+              {d.watchForToday.map((w, i) => (
+                <div key={i} style={{ color: C.text, fontFamily: FONT, fontSize: 13, marginBottom: 8 }}>• {w}</div>
+              ))}
+            </div>
           )}
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 18 }}>
-          <div style={shellCardStyle()}>
-            <h3 style={sectionTitleStyle()}>Top gainers today</h3>
-            {(data.gainers || []).length ? (
-              data.gainers.map((g, i) => (
-                <div key={i}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                    <div>
-                      <div style={{ color: C.text, fontWeight: 800 }}>{g.ticker}</div>
-                      <div style={{ color: C.muted }}>{g.company}</div>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ color: C.up, fontWeight: 800 }}>{g.change}</div>
-                      <div style={{ color: C.muted }}>{g.price}</div>
-                    </div>
-                  </div>
-                  {i < data.gainers.length - 1 ? <RowDivider /> : null}
-                </div>
-              ))
-            ) : (
-              <div style={{ color: C.muted }}>No gainers returned.</div>
-            )}
-          </div>
-
-          <div style={shellCardStyle()}>
-            <h3 style={sectionTitleStyle()}>Top losers today</h3>
-            {(data.losers || []).length ? (
-              data.losers.map((g, i) => (
-                <div key={i}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                    <div>
-                      <div style={{ color: C.text, fontWeight: 800 }}>{g.ticker}</div>
-                      <div style={{ color: C.muted }}>{g.company}</div>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ color: C.down, fontWeight: 800 }}>{g.change}</div>
-                      <div style={{ color: C.muted }}>{g.price}</div>
-                    </div>
-                  </div>
-                  {i < data.losers.length - 1 ? <RowDivider /> : null}
-                </div>
-              ))
-            ) : (
-              <div style={{ color: C.muted }}>No losers returned.</div>
-            )}
-          </div>
-
-          <div style={shellCardStyle()}>
-            <h3 style={sectionTitleStyle()}>Earnings this week</h3>
-            {(data.earningsThisWeek || []).length ? (
-              data.earningsThisWeek.map((e, i) => (
-                <div key={i}>
-                  <div style={{ color: C.text, fontWeight: 800 }}>
-                    {e.ticker} {e.company ? `· ${e.company}` : ''}
-                  </div>
-                  <div style={{ color: C.muted, marginTop: 4 }}>{e.date}</div>
-                  <div style={{ color: C.text, marginTop: 8 }}>{e.expectedReaction}</div>
-                  {i < data.earningsThisWeek.length - 1 ? <RowDivider /> : null}
-                </div>
-              ))
-            ) : (
-              <div style={{ color: C.muted }}>No earnings returned.</div>
-            )}
-          </div>
-
-          <div style={shellCardStyle()}>
-            <h3 style={sectionTitleStyle()}>Catalysts</h3>
-            {(data.catalysts || []).length ? (
-              data.catalysts.map((c, i) => (
-                <div key={i}>
-                  <div style={{ color: C.text, fontWeight: 700 }}>{c.type}</div>
-                  <div style={{ color: C.text, marginTop: 6 }}>{c.detail}</div>
-                  <div style={{ color: C.muted, marginTop: 6 }}>{c.impact}</div>
-                  {i < data.catalysts.length - 1 ? <RowDivider /> : null}
-                </div>
-              ))
-            ) : (
-              <div style={{ color: C.muted }}>No catalysts returned.</div>
-            )}
-          </div>
         </div>
       </>
     )
   }
 
   function renderEurope() {
-    const data = sectionData.europe
-    if (!data) return null
-
+    const d = sectionData.europe
+    if (!d) return null
+    const outlookColor = d.outlook === 'BULLISH' ? C.up : d.outlook === 'BEARISH' ? C.down : C.flat
     return (
       <>
-        {sourceBarFor('europe')}
-
-        <div style={{ ...shellCardStyle(), marginBottom: 18 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 14, alignItems: 'center' }}>
-            <div style={badgeStyle(data.outlook === 'BULLISH' ? C.up : data.outlook === 'BEARISH' ? C.down : C.flat)}>
-              {data.outlook || 'NEUTRAL'}
-            </div>
-            <div style={{ color: C.text, lineHeight: 1.5, flex: 1 }}>
-              {data.outlookReason || 'No AI outlook returned.'}
-            </div>
-          </div>
+        <div style={{ ...card({ marginBottom: 14 }), display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={badge(outlookColor, 'lg')}>{d.outlook || 'NEUTRAL'}</span>
+          <span style={{ color: C.text, fontFamily: FONT, fontSize: 13 }}>{d.outlookReason}</span>
         </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14, marginBottom: 18 }}>
-          {(data.futures || []).map((f, i) =>
-            miniStat(f.index, `${f.value} (${f.change})`, f.direction === 'up' ? 'up' : f.direction === 'down' ? 'down' : 'neutral')
-          )}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 18 }}>
+          {(d.futures || []).map((f, i) => (
+            <div key={i} style={card({ padding: 14 })}>
+              <div style={label}>{f.index}</div>
+              <div style={{ color: f.direction === 'up' ? C.up : C.down, fontFamily: FONT, fontWeight: 800, fontSize: 18 }}>{f.value}</div>
+              <div style={{ color: f.direction === 'up' ? C.up : C.down, fontFamily: FONT, fontSize: 12 }}>{f.change}</div>
+            </div>
+          ))}
         </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 18 }}>
-          <div style={shellCardStyle()}>
-            <h3 style={sectionTitleStyle()}>European earnings this week</h3>
-            {(data.earningsThisWeek || []).length ? (
-              data.earningsThisWeek.map((e, i) => (
-                <div key={i}>
-                  <div style={{ color: C.text, fontWeight: 800 }}>
-                    {e.ticker} {e.company ? `· ${e.company}` : ''}
+        {d.europeanSetups?.length > 0 && (
+          <div style={card()}>
+            <div style={{ color: C.accent, fontFamily: FONT, fontSize: 12, letterSpacing: 1, marginBottom: 14 }}>EUROPEAN SETUPS</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
+              {d.europeanSetups.map((s, i) => (
+                <div key={i} style={card({ padding: 14 })}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <span style={{ color: C.text, fontFamily: FONT, fontWeight: 800 }}>{s.ticker}</span>
+                    <ActionBadge action={s.action} />
                   </div>
-                  <div style={{ color: C.muted, marginTop: 4 }}>{e.date}</div>
-                  <div style={{ color: C.text, marginTop: 8 }}>{e.expectedReaction}</div>
-                  {i < data.earningsThisWeek.length - 1 ? <RowDivider /> : null}
+                  <div style={{ color: C.muted, fontSize: 12, fontFamily: FONT }}>{s.company}</div>
+                  <div style={{ color: C.text, fontSize: 13, marginTop: 8 }}>{s.catalyst}</div>
+                  {s.catalystDate && <div style={{ color: C.amber, fontSize: 12, fontFamily: FONT, marginTop: 4 }}>{s.catalystDate}</div>}
                 </div>
-              ))
-            ) : (
-              <div style={{ color: C.muted }}>No earnings returned.</div>
-            )}
-          </div>
-
-          <div style={shellCardStyle()}>
-            <h3 style={sectionTitleStyle()}>Catalysts</h3>
-            {(data.catalysts || []).length ? (
-              data.catalysts.map((c, i) => (
-                <div key={i}>
-                  <div style={{ color: C.text, fontWeight: 700 }}>{c.type}</div>
-                  <div style={{ color: C.text, marginTop: 6 }}>{c.detail}</div>
-                  <div style={{ color: C.muted, marginTop: 6 }}>{c.impact}</div>
-                  {i < data.catalysts.length - 1 ? <RowDivider /> : null}
-                </div>
-              ))
-            ) : (
-              <div style={{ color: C.muted }}>No catalysts returned.</div>
-            )}
-          </div>
-        </div>
-      </>
-    )
-  }
-
-  function renderOpportunities() {
-    const data = sectionData.opportunities
-    if (!data) return null
-
-    const opps = data.opportunities || []
-
-    return (
-      <>
-        {sourceBarFor('opportunities')}
-
-        <div style={{ ...shellCardStyle(), marginBottom: 18 }}>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', justifyContent: 'space-between' }}>
-            <div style={badgeStyle(C.amber)}>{data.marketCondition || 'WAIT'}</div>
-            <div style={{ color: C.text, flex: 1 }}>{data.cashRecommendation || ''}</div>
-          </div>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.3fr) minmax(320px, 0.9fr)', gap: 18 }}>
-          <div style={{ display: 'grid', gap: 16 }}>
-            {opps.length ? (
-              opps.map((opp, i) => (
-                <OpportunityCard
-                  key={`${opp.ticker}-${i}`}
-                  opp={opp}
-                  active={selectedStock?.ticker === opp.ticker}
-                  onClick={handleStockClick}
-                />
-              ))
-            ) : (
-              <div style={shellCardStyle()}>
-                <div style={{ color: C.muted }}>No opportunities returned.</div>
-              </div>
-            )}
-          </div>
-
-          <div style={{ display: 'grid', gap: 18, alignContent: 'start' }}>
-            <div style={shellCardStyle()}>
-              <h3 style={sectionTitleStyle()}>Selected setup</h3>
-              {selectedStock ? (
-                <>
-                  <div style={{ fontSize: 28, fontWeight: 900, color: C.text }}>{selectedStock.ticker}</div>
-                  <div style={{ color: C.muted, marginTop: 4 }}>{selectedStock.company}</div>
-
-                  <RowDivider />
-
-                  <div style={{ display: 'grid', gap: 12 }}>
-                    <div>
-                      <div style={{ color: C.muted, fontSize: 12 }}>Live price</div>
-                      <div style={{ color: C.text, fontWeight: 800, fontSize: 24 }}>{selectedStock.currentPrice || '—'}</div>
-                    </div>
-                    <div>
-                      <div style={{ color: C.muted, fontSize: 12 }}>Catalyst</div>
-                      <div style={{ color: C.text }}>{selectedStock.catalyst || '—'}</div>
-                    </div>
-                    <div>
-                      <div style={{ color: C.muted, fontSize: 12 }}>Invalidation</div>
-                      <div style={{ color: C.text }}>{selectedStock.invalidation || '—'}</div>
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <div style={{ color: C.muted }}>Select an opportunity.</div>
-              )}
-            </div>
-
-            <div style={shellCardStyle()}>
-              <h3 style={sectionTitleStyle()}>Deep dive analysis</h3>
-              {selectedStock ? (
-                <>
-                  {drillLoading ? (
-                    <div style={{ color: C.muted }}>Analysing {selectedStock.ticker}…</div>
-                  ) : drillContent ? (
-                    <div style={{ color: C.text, whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{drillContent}</div>
-                  ) : (
-                    <button onClick={() => fetchDeepDive(selectedStock)} style={buttonStyle(C.accent)}>
-                      Run deep dive
-                    </button>
-                  )}
-                </>
-              ) : (
-                <div style={{ color: C.muted }}>Select a stock to analyse.</div>
-              )}
+              ))}
             </div>
           </div>
-        </div>
-      </>
-    )
-  }
-
-  function renderCatalysts() {
-    const data = sectionData.catalysts
-    if (!data) return null
-
-    return (
-      <>
-        <MetaBar lastUpdated={lastUpdated.catalysts} />
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 18 }}>
-          {(data.catalysts || []).length ? (
-            data.catalysts.map((c, i) => (
-              <div key={i} style={shellCardStyle()}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                  <div style={{ ...badgeStyle(C.green) }}>{c.type || 'Catalyst'}</div>
-                  <div style={{ color: C.muted }}>{c.date || '—'}</div>
-                </div>
-                <div style={{ marginTop: 14, color: C.text, fontWeight: 800 }}>
-                  {c.ticker} {c.company ? `· ${c.company}` : ''}
-                </div>
-                <div style={{ marginTop: 10, color: C.text, lineHeight: 1.55 }}>{c.detail}</div>
-                <div style={{ marginTop: 12, color: C.muted }}>
-                  Impact: {c.expectedImpact || '—'} · Opportunity: {c.opportunity || '—'}
-                </div>
-              </div>
-            ))
-          ) : (
-            <div style={shellCardStyle()}>
-              <div style={{ color: C.muted }}>No catalysts returned.</div>
-            </div>
-          )}
-        </div>
+        )}
       </>
     )
   }
 
   function renderRisk() {
-    const data = sectionData.risk
-    if (!data) return null
-
-    const overallColor =
-      data.overallRisk === 'LOW'
-        ? C.up
-        : data.overallRisk === 'MODERATE'
-        ? C.amber
-        : C.red
-
+    const d = sectionData.risk
+    if (!d) return null
+    const riskColor = d.overallRisk === 'LOW' ? C.up : d.overallRisk === 'MODERATE' ? C.amber : C.red
     return (
       <>
-        <MetaBar lastUpdated={lastUpdated.risk} />
-
-        <div style={{ ...shellCardStyle(), marginBottom: 18 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'center' }}>
-            <div style={badgeStyle(overallColor)}>{data.overallRisk || 'MODERATE'}</div>
-            <div style={{ color: C.text }}>Current overall swing-trading risk assessment.</div>
-          </div>
+        <div style={{ ...card({ marginBottom: 14 }), display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={badge(riskColor, 'lg')}>RISK: {d.overallRisk || 'MODERATE'}</span>
+          {d.cashSuggestion && <span style={{ ...badge(C.amber) }}>Suggest {d.cashSuggestion} cash</span>}
+          {d.positionSizingAdvice && <span style={{ color: C.muted, fontFamily: FONT, fontSize: 12 }}>{d.positionSizingAdvice}</span>}
         </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 18 }}>
-          <div style={shellCardStyle()}>
-            <h3 style={sectionTitleStyle()}>Macro risks</h3>
-            {(data.macroRisks || []).length ? (
-              data.macroRisks.map((r, i) => (
-                <div key={i}>
-                  <div style={{ color: C.text, fontWeight: 800 }}>{r.risk}</div>
-                  <div style={{ color: C.text, marginTop: 6 }}>{r.detail}</div>
-                  <div style={{ color: C.muted, marginTop: 6 }}>{r.severity}</div>
-                  {i < data.macroRisks.length - 1 ? <RowDivider /> : null}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 18 }}>
+          {[
+            ['Macro Risks',        d.macroRisks,        r => r.risk,   r => r.detail,   r => r.severity],
+            ['Geopolitical Risks', d.geopoliticalRisks, r => r.risk,   r => r.detail,   r => r.severity],
+            ['Sector Risks',       d.sectorRisks,       r => r.sector, r => r.risk,     r => r.severity],
+          ].map(([title, items, titleFn, detailFn, sevFn]) => (
+            <div key={title} style={card()}>
+              <div style={{ color: C.accent, fontFamily: FONT, fontSize: 12, letterSpacing: 1, marginBottom: 14 }}>{title.toUpperCase()}</div>
+              {(items || []).map((r, i) => (
+                <div key={i} style={{ marginBottom: 12 }}>
+                  <div style={{ color: C.text, fontFamily: FONT, fontWeight: 700, fontSize: 13 }}>{titleFn(r)}</div>
+                  <div style={{ color: C.muted, fontSize: 12, marginTop: 4 }}>{detailFn(r)}</div>
+                  <span style={{ ...badge(sevFn(r) === 'HIGH' ? C.red : sevFn(r) === 'MEDIUM' ? C.amber : C.muted), marginTop: 6 }}>{sevFn(r)}</span>
+                  {i < items.length - 1 && divider}
                 </div>
-              ))
-            ) : (
-              <div style={{ color: C.muted }}>No macro risks returned.</div>
-            )}
-          </div>
-
-          <div style={shellCardStyle()}>
-            <h3 style={sectionTitleStyle()}>Geopolitical risks</h3>
-            {(data.geopoliticalRisks || []).length ? (
-              data.geopoliticalRisks.map((r, i) => (
-                <div key={i}>
-                  <div style={{ color: C.text, fontWeight: 800 }}>{r.risk}</div>
-                  <div style={{ color: C.text, marginTop: 6 }}>{r.detail}</div>
-                  <div style={{ color: C.muted, marginTop: 6 }}>{r.severity}</div>
-                  {i < data.geopoliticalRisks.length - 1 ? <RowDivider /> : null}
-                </div>
-              ))
-            ) : (
-              <div style={{ color: C.muted }}>No geopolitical risks returned.</div>
-            )}
-          </div>
-
-          <div style={shellCardStyle()}>
-            <h3 style={sectionTitleStyle()}>Sector risks</h3>
-            {(data.sectorRisks || []).length ? (
-              data.sectorRisks.map((r, i) => (
-                <div key={i}>
-                  <div style={{ color: C.text, fontWeight: 800 }}>{r.sector}</div>
-                  <div style={{ color: C.text, marginTop: 6 }}>{r.risk}</div>
-                  <div style={{ color: C.muted, marginTop: 6 }}>{r.severity}</div>
-                  {i < data.sectorRisks.length - 1 ? <RowDivider /> : null}
-                </div>
-              ))
-            ) : (
-              <div style={{ color: C.muted }}>No sector risks returned.</div>
-            )}
-          </div>
-
-          <div style={shellCardStyle()}>
-            <h3 style={sectionTitleStyle()}>Hedge ideas</h3>
-            {(data.hedgeIdeas || []).length ? (
-              <ul style={{ margin: 0, paddingLeft: 18, color: C.text, lineHeight: 1.8 }}>
-                {data.hedgeIdeas.map((h, i) => (
-                  <li key={i}>{h}</li>
-                ))}
-              </ul>
-            ) : (
-              <div style={{ color: C.muted }}>No hedge ideas returned.</div>
-            )}
+              ))}
+            </div>
+          ))}
+          <div style={card()}>
+            <div style={{ color: C.accent, fontFamily: FONT, fontSize: 12, letterSpacing: 1, marginBottom: 14 }}>HEDGE IDEAS</div>
+            {(d.hedgeIdeas || []).map((h, i) => (
+              <div key={i} style={{ color: C.text, fontFamily: FONT, fontSize: 13, marginBottom: 8 }}>• {h}</div>
+            ))}
           </div>
         </div>
       </>
@@ -1066,101 +1025,102 @@ Mark each point FACT or ANALYSIS.`,
   }
 
   function renderContent() {
-    const key = activeTab
-    const err = errors[key]
+    const isLoading = loading[activeTab]
+    const error     = errors[activeTab]
+    const data      = sectionData[activeTab]
 
-    if (isLoading(key)) {
-      return <LoadingBlock label={loadStep[key] === 0 ? 'Fetching market data…' : 'Analysing with Claude…'} />
+    if (isLoading) {
+      return (
+        <div style={{ ...card(), minHeight: 300, display: 'grid', placeItems: 'center' }}>
+          <div>
+            <div style={{ color: C.accent, fontFamily: FONT, fontSize: 14, marginBottom: 8, textAlign: 'center' }}>
+              {activeTab === 'opportunities' ? '⚡ Running trading analysis…' : '⟳ Loading…'}
+            </div>
+            <div style={{ color: C.muted, fontFamily: FONT, fontSize: 12, textAlign: 'center' }}>
+              {activeTab === 'opportunities'
+                ? 'Fetching live prices → Pulling earnings calendar → Applying trading rules → Generating CIO analysis'
+                : 'Fetching market data and running AI analysis'}
+            </div>
+          </div>
+        </div>
+      )
     }
 
-    if (err) {
-      return <ErrorBlock message={err} onRetry={() => loaders[key]?.()} />
+    if (error) {
+      return (
+        <div style={{ ...card({ borderColor: `${C.red}55` }), padding: 24 }}>
+          <div style={{ color: C.red, fontFamily: FONT, fontWeight: 700, marginBottom: 8 }}>Error loading data</div>
+          <div style={{ color: C.text, fontFamily: FONT, fontSize: 13, marginBottom: 16, whiteSpace: 'pre-wrap' }}>{error}</div>
+          <button onClick={refresh} style={btn(C.red)}>Retry</button>
+        </div>
+      )
     }
 
-    if (!sectionData[key]) {
-      return <LoadingBlock label="Loading…" />
-    }
+    if (!data) return (
+      <div style={{ ...card(), minHeight: 200, display: 'grid', placeItems: 'center' }}>
+        <div style={{ color: C.muted, fontFamily: FONT }}>Loading…</div>
+      </div>
+    )
 
-    if (key === 'global') return renderGlobal()
-    if (key === 'us') return renderUS()
-    if (key === 'europe') return renderEurope()
-    if (key === 'opportunities') return renderOpportunities()
-    if (key === 'catalysts') return renderCatalysts()
-    if (key === 'risk') return renderRisk()
-
+    if (activeTab === 'opportunities') return renderOpportunities()
+    if (activeTab === 'global')        return renderGlobal()
+    if (activeTab === 'us')            return renderUS()
+    if (activeTab === 'europe')        return renderEurope()
+    if (activeTab === 'risk')          return renderRisk()
     return null
   }
 
+  // ── Shell ──────────────────────────────────────────────────────────────────
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        background: `linear-gradient(180deg, ${C.bg} 0%, #07101f 100%)`,
-        color: C.text,
-        padding: 24,
-        fontFamily:
-          'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      }}
-    >
-      <div
-        style={{
-          maxWidth: 1500,
-          margin: '0 auto',
-        }}
-      >
-        <div
-          style={{
-            ...shellCardStyle(),
-            marginBottom: 18,
-            display: 'flex',
-            justifyContent: 'space-between',
-            gap: 18,
-            alignItems: 'center',
-          }}
-        >
-          <div>
-            <div style={{ color: C.accent, fontWeight: 900, fontSize: 28, letterSpacing: 0.6 }}>
-              CATALYST
-            </div>
-            <div style={{ color: C.muted, marginTop: 5 }}>Trading intelligence · live data</div>
-          </div>
+    <div style={{ minHeight: '100vh', background: C.bg, color: C.text, padding: 20, fontFamily: FONT }}>
+      <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;700;900&display=swap" rel="stylesheet" />
+      <div style={{ maxWidth: 1600, margin: '0 auto' }}>
 
-          <button onClick={refreshActive} style={buttonStyle(C.accent)}>
-            ↻ Refresh
-          </button>
+        {/* Header */}
+        <div style={{ ...card({ marginBottom: 14 }), display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, padding: '14px 20px' }}>
+          <div>
+            <div style={{ color: C.accent, fontWeight: 900, fontSize: 24, letterSpacing: 2 }}>CATALYST</div>
+            <div style={{ color: C.muted, fontSize: 11, letterSpacing: 1 }}>TRADING INTELLIGENCE · LIVE DATA · {new Date().toDateString().toUpperCase()}</div>
+          </div>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            {lastUpdated[activeTab] && (
+              <span style={{ color: C.muted, fontSize: 11 }}>Updated {timeStr(lastUpdated[activeTab])}</span>
+            )}
+            <button onClick={refresh} style={btn(C.accent)}>↻ REFRESH</button>
+          </div>
         </div>
 
-        <div
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: 10,
-            marginBottom: 18,
-          }}
-        >
-          {Object.entries(TABS).map(([key, tab]) => {
-            const active = activeTab === key
+        {/* Tabs */}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
+          {TABS.map(t => {
+            const active = activeTab === t.key
             return (
               <button
-                key={key}
-                onClick={() => setActiveTab(key)}
+                key={t.key}
+                onClick={() => setActiveTab(t.key)}
                 style={{
                   appearance: 'none',
-                  border: `1px solid ${active ? `${tab.color}99` : C.border}`,
-                  background: active ? `${tab.color}16` : 'transparent',
-                  color: active ? tab.color : C.text,
-                  borderRadius: 14,
-                  padding: '12px 16px',
+                  border: `1px solid ${active ? `${C.accent}88` : C.border}`,
+                  background: active ? `${C.accent}14` : 'transparent',
+                  color: active ? C.accent : C.muted,
+                  borderRadius: 8,
+                  padding: '10px 16px',
                   cursor: 'pointer',
-                  fontWeight: 800,
+                  fontWeight: 700,
+                  fontFamily: FONT,
+                  fontSize: 12,
+                  letterSpacing: 0.5,
+                  transition: 'all 0.15s',
                 }}
               >
-                {tab.label}
+                {t.label}
+                {loading[t.key] && ' ⟳'}
               </button>
             )
           })}
         </div>
 
+        {/* Content */}
         {renderContent()}
       </div>
     </div>
