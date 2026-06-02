@@ -149,9 +149,10 @@ const COMPANY_NAMES = {
 const FALLBACK_EARNINGS = {
   // CONFIRMED dates
   META: { date: '2026-07-29', note: 'confirmed' },
-  VRT:  { date: '2026-08-05', note: 'confirmed' },
+  VRT:  { date: '2026-07-28', note: 'confirmed' },   // Range 24-29 Jul — using 28 Jul midpoint
   MRVL: { date: '2026-08-20', note: 'confirmed' },
   AVGO: { date: '2026-06-03', note: 'confirmed' },   // CONFIRMED — reports 3 Jun 2026 (IMMINENT)
+  CRDO: { date: '2026-06-01', note: 'confirmed' },   // CONFIRMED — reports TODAY 1 Jun 2026 after close
   // Corrected estimates
   FCX:  { date: '2026-07-16', note: 'est' },          // corrected from 22 Jul — Investing.com shows 16 Jul
   GEV:  { date: '2026-07-23', note: 'est' },
@@ -166,7 +167,7 @@ const FALLBACK_EARNINGS = {
   CEG:  { date: '2026-08-07', note: 'est' },
   CCJ:  { date: '2026-08-07', note: 'est' },
   NVDA: { date: '2026-08-27', note: 'est' },
-  CRDO: { date: '2026-08-27', note: 'est' },
+  // CRDO moved to confirmed dates above
   CRWD: { date: '2026-08-26', note: 'est' },
 }
 
