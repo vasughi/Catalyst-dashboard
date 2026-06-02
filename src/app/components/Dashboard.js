@@ -174,6 +174,37 @@ function Pill({ tone='grey', size='sm', children, style={} }) {
   return <span style={{ display:'inline-flex', alignItems:'center', padding:p, borderRadius:999, background:bg, color, fontSize:fs, fontWeight:700, fontFamily:FB, whiteSpace:'nowrap', ...style }}>{children}</span>
 }
 
+// ─── Tooltip (hover for plain-English definition) ───────────────────────────
+function Tip({ term, meaning }) {
+  const [show, setShow] = useState(false)
+  return (
+    <span style={{ position:'relative', display:'inline-flex', alignItems:'center', gap:3 }}>
+      <span>{term}</span>
+      <span
+        onMouseEnter={()=>setShow(true)}
+        onMouseLeave={()=>setShow(false)}
+        onTouchStart={()=>setShow(s=>!s)}
+        style={{ width:16, height:16, borderRadius:'50%', background:C.accentBg, color:C.accent, fontSize:10, fontWeight:800, display:'inline-flex', alignItems:'center', justifyContent:'center', cursor:'help', flexShrink:0 }}
+      >?</span>
+      {show && (
+        <div style={{ position:'absolute', bottom:'calc(100% + 6px)', left:0, background:C.text, color:'#fff', borderRadius:8, padding:'8px 12px', fontSize:12, lineHeight:1.5, width:220, zIndex:999, boxShadow:'0 4px 16px rgba(0,0,0,0.2)', fontWeight:400, fontFamily:FB }}>
+          {meaning}
+        </div>
+      )}
+    </span>
+  )
+}
+
+// Key terms glossary
+const GLOSSARY = {
+  'Reward vs Risk': 'For every £1 you risk losing, how much could you gain. 3:1 means you could make £3 for every £1 at risk.',
+  'VIX': 'The market's fear level. Below 18 = calm. 18-25 = cautious. Above 25 = high fear — consider holding more cash.',
+  'Opportunity Score': 'Our overall rating out of 100. Above 80 = strong setup. 70-80 = good. Below 60 = borderline.',
+  '15%+ PATH EXISTS': 'We checked whether a realistic path to 15% gain exists within 8 weeks. Green tick means yes.',
+  'BEATS HOLDING CASH': 'We checked whether this trade is clearly better than just keeping your money in cash. Green tick means yes.',
+  'Portfolio %': 'What percentage of your total investment budget to put into this one stock. Never put everything in one stock.',
+}
+
 function ActionBadge({ action, size='md' }) {
   const t = { 'STRONG BUY':'green', 'BUY':'blue', 'WATCH':'amber', 'AVOID':'red' }
   return <Pill tone={t[action]||'grey'} size={size}>{action||'WATCH'}</Pill>
@@ -253,14 +284,21 @@ function OppCard({ opp, rank, active, onClick, onDeepDive, deepDiveLoading, deep
 
       {/* Gates */}
       <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:12 }}>
-        <GateBadge label="RETURN GATE"    pass={opp.returnGate==='PASS'?true:opp.returnGate==='FAIL'?false:null} />
-        <GateBadge label="CASH CHALLENGE" pass={opp.cashChallenge==='PASS'?true:opp.cashChallenge==='FAIL'?false:null} />
+        <GateBadge label="15%+ PATH EXISTS" pass={opp.returnGate==='PASS'?true:opp.returnGate==='FAIL'?false:null} />
+        <GateBadge label="BEATS HOLDING CASH" pass={opp.cashChallenge==='PASS'?true:opp.cashChallenge==='FAIL'?false:null} />
         <Pill tone="green" size="sm">✓ LIVE PRICE</Pill>
       </div>
 
       {/* Trade details */}
       <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:10, marginBottom:12 }}>
-        {[['Catalyst', opp.catalyst], ['Date', opp.catalystDate||opp.earningsDate], ['Entry', opp.entryZone], ['Stop Loss', opp.stopLoss], ['R/R', opp.riskReward], ['Allocation', opp.allocation]].map(([l,v]) => v ? (
+        {[
+          ['Upcoming event',   opp.catalyst||opp.upcomingEvent],
+          ['Event date',       opp.catalystDate||opp.eventDate||opp.earningsDate],
+          ['Buy between',      opp.entryZone],
+          ['Sell if drops to', opp.stopLoss],
+          ['Reward vs Risk ❓', opp.riskReward],
+          ['Portfolio % ❓',    opp.allocation],
+        ].map(([l,v]) => v ? (
           <div key={l}>
             <div style={LBL}>{l}</div>
             <div style={{ ...VAL, fontSize:14 }}>{v}</div>
@@ -274,7 +312,10 @@ function OppCard({ opp, rank, active, onClick, onDeepDive, deepDiveLoading, deep
       {/* Score */}
       {opp.opportunityScore != null && (
         <div style={{ marginTop:14 }}>
-          <div style={LBL}>OPPORTUNITY SCORE</div>
+          <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:4 }}>
+            <span style={LBL}>OUR RATING</span>
+            <span style={{ color:C.muted, fontSize:11 }}>(out of 100 — above 75 is strong)</span>
+          </div>
           <ScoreBar score={opp.opportunityScore} />
         </div>
       )}
@@ -302,7 +343,7 @@ function EarningsCal({ calendar }) {
   if (!items.length) return null
   return (
     <div style={{ ...card({ marginTop:18 }) }}>
-      <div style={{ ...LBL, marginBottom:14 }}>📅 EARNINGS CALENDAR — NEXT 60 DAYS</div>
+      <div style={{ ...LBL, marginBottom:14 }}>📅 UPCOMING EARNINGS RESULTS — NEXT 60 DAYS</div><div style={{ color:C.muted, fontSize:12, marginBottom:12 }}>Companies below are reporting their financial results soon. This is when big price moves happen.</div>
       <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(150px,1fr))', gap:10 }}>
         {items.map((e,i) => {
           const t = e.tradingDaysAway<=3?'red':e.tradingDaysAway<=10?'amber':'blue'
@@ -347,9 +388,9 @@ function CIOPanel({ cio, marketCondition, vix, vixRegime, sectors, regime, cashP
       {cio && (
         <div style={{ display:'grid', gridTemplateColumns:isMobile?'1fr 1fr':'repeat(3,1fr)', gap:10, marginBottom:14 }}>
           {[
-            ['⚡ Best Trade', cio.bestTradeToday, 'green'],
-            ['📐 Best R/R',   cio.bestRiskReward,  'blue'],
-            ['🎯 Decision',   cio.finalMarketDecision, condTone],
+            ['⚡ Best Buy Today',       cio.bestTradeToday, 'green'],
+            ['📐 Best Value Setup',     cio.bestRiskReward,  'blue'],
+            ['🎯 Overall Advice',       cio.finalMarketDecision, condTone],
           ].filter(([,v])=>v).map(([l,v,tone])=>(
             <div key={l} style={{ background:TONES[tone][1], borderRadius:10, padding:'10px 14px', border:`1px solid ${TONES[tone][0]}33` }}>
               <div style={{ color:C.muted, fontSize:11, fontWeight:600, letterSpacing:0.8, textTransform:'uppercase', marginBottom:4 }}>{l}</div>
@@ -370,7 +411,7 @@ function CIOPanel({ cio, marketCondition, vix, vixRegime, sectors, regime, cashP
       {/* Row 4 — Watch tiles */}
       {cio?.watchList?.length > 0 && (
         <div style={{ marginBottom:cio?.avoidList?.length?10:0 }}>
-          <div style={{ ...LBL, marginBottom:8 }}>👀 WATCH</div>
+          <div style={{ ...LBL, marginBottom:8 }}>👀 KEEP AN EYE ON THESE</div>
           <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
             {cio.watchList.map((w,i)=>(
               <div key={i} style={{ background:C.amberBg, border:`1px solid ${C.amber}33`, borderRadius:8, padding:'5px 10px' }}>
@@ -385,7 +426,7 @@ function CIOPanel({ cio, marketCondition, vix, vixRegime, sectors, regime, cashP
       {/* Row 5 — Avoid tiles */}
       {cio?.avoidList?.length > 0 && (
         <div>
-          <div style={{ ...LBL, marginBottom:8 }}>🚫 AVOID</div>
+          <div style={{ ...LBL, marginBottom:8 }}>🚫 DON'T BUY THESE NOW</div>
           <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
             {cio.avoidList.map((w,i)=>(
               <div key={i} style={{ background:C.downBg, border:`1px solid ${C.down}33`, borderRadius:8, padding:'5px 10px' }}>
@@ -416,7 +457,7 @@ function DetailPanel({ stock, content, loading, onRun }) {
           </div>
 
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:14 }}>
-            {[['Live Price', stock.currentPrice], ['Target', stock.takeProfit||stock.expectedGain], ['Stop Loss', stock.stopLoss], ['R/R', stock.riskReward], ['Entry', stock.entryZone], ['Allocation', stock.allocation]].map(([l,v]) => v ? (
+            {[['Current Price', stock.currentPrice], ['Target Price', stock.takeProfit||stock.expectedGain], ['Exit if below', stock.stopLoss], ['Reward vs Risk', stock.riskReward], ['Buy between', stock.entryZone], ['Portfolio %', stock.allocation]].map(([l,v]) => v ? (
               <div key={l} style={{ background:C.bg, borderRadius:10, padding:'10px 12px' }}>
                 <div style={LBL}>{l}</div>
                 <div style={{ ...VAL, fontSize:14 }}>{v}</div>
@@ -438,14 +479,14 @@ function DetailPanel({ stock, content, loading, onRun }) {
 
           {stock.catalyst && (
             <div style={{ marginBottom:10 }}>
-              <div style={LBL}>CATALYST</div>
+              <div style={LBL}>UPCOMING EVENT</div>
               <div style={{ ...VAL, fontSize:14 }}>{stock.catalyst}</div>
             </div>
           )}
 
           {stock.invalidation && (
             <div style={{ background:C.downBg, borderRadius:10, padding:'10px 14px', marginBottom:14 }}>
-              <div style={LBL}>INVALIDATION</div>
+              <div style={LBL}>🚨 SELL IMMEDIATELY IF...</div>
               <div style={{ color:C.down, fontSize:13, fontWeight:600 }}>{stock.invalidation}</div>
             </div>
           )}
@@ -534,35 +575,44 @@ export default function Dashboard() {
       ).join('\n')
 
       const prompt = `TODAY: ${new Date().toDateString()}
-VIX PROXY: ${vix||'N/A'} → REGIME: ${vixRegime||'UNKNOWN'}
+MARKET FEAR LEVEL (VIX): ${vix||'N/A'} → ${vixRegime||'UNKNOWN'} (above 25 = high fear, reduce bets)
 SECTORS TODAY: ${sectorLines||'N/A'}
 
-LIVE PRICES (source: Finnhub):
+LIVE STOCK PRICES (source: Finnhub):
 ${stockLines}
 
-VERIFIED EARNINGS CALENDAR:
+UPCOMING EARNINGS DATES:
 ${calLines||'None found'}
 
-EARNINGS REACTION HISTORY:
+PAST EARNINGS REACTIONS (how much the stock moved after the last 4 earnings reports):
 ${Object.entries(EH).map(([k,v])=>`${k}: ${v.label}`).join(' | ')}
 
-MANDATORY RULES — apply every time, no exceptions:
-1. ONLY use earnings dates marked [VERIFIED] or [EST] above — never invent dates
-2. GAP-UP PENALTY: stock up >8% today → maximum rating WATCH (not BUY)
-3. POST-CATALYST CHASE: catalyst already occurred + stock up >15% → maximum rating WATCH
-4. RETURN GATE: must prove a credible 15%+ path within 40 trading days
-5. CASH CHALLENGE: must justify why this beats holding cash
-6. No dated catalyst within 40 trading days → maximum rating WATCH
-7. Zero BUY recommendations is correct when nothing qualifies — do not manufacture trades
-8. Stocks with earnings in 0-10 days are highest priority for BUY consideration
-9. High-fear VIX (>25): reduce all position sizes, increase cash recommendation
-10. Keep all string values SHORT — max 15 words per field
-10b. currentPrice MUST be the exact price from LIVE PRICES above (e.g. "$323.39") — never write "N/A", never leave blank
-11. INCLUDE top WATCH setups for quality names without near-term catalyst (NVDA, MRVL, AVGO, CRDO) — show entry zone and what trigger to wait for
-12. Rank ALL opportunities by Opportunity Score — BUYs first then WATCHes
+RULES — apply every time:
+1. Only use earnings dates from the calendar above — never guess dates
+2. If a stock jumped more than 8% TODAY: maximum rating is WATCH only (too late to buy safely)
+3. If earnings already happened and stock already moved 15%+: maximum rating is WATCH (missed the move)
+4. Only recommend BUY if there is a clear path to 15%+ gain within 40 trading days (about 8 weeks)
+5. Only recommend BUY if this is clearly better than just holding cash
+6. No earnings date within 40 days = WATCH at best
+7. Zero BUY recommendations is perfectly fine if nothing qualifies
+8. Stocks with earnings in the next 0-10 days are highest priority
+9. If fear level (VIX) is above 25: suggest holding more cash, smaller position sizes
+10. currentPrice MUST be the exact dollar price from LIVE STOCK PRICES above — never write N/A
+11. Always include WATCH cards for great companies without near-term earnings (NVDA, MRVL, AVGO, CRDO) — show what price to buy at and what to wait for
+12. Sort by score — BUYs first, WATCHes after
 
-Return ONLY this JSON (up to 10 opportunities — all qualifying BUYs plus top WATCHes):
-{"marketCondition":"BUY AGGRESSIVELY|BUY SELECTIVELY|WAIT|HOLD CASH","cashRecommendation":"one sentence","cashPct":30,"regime":"one sentence on market regime","cio":{"bestTradeToday":"TICKER or NONE","bestRiskReward":"TICKER or NONE","finalMarketDecision":"BUY AGGRESSIVELY|BUY SELECTIVELY|WAIT|HOLD CASH","watchList":[{"ticker":"","reason":"max 8 words"}],"avoidList":[{"ticker":"","reason":"max 8 words"}]},"opportunities":[{"ticker":"","company":"","action":"STRONG BUY|BUY|WATCH|AVOID","currentPrice":"","entryZone":"$X-$Y","stopLoss":"$X","takeProfit":"$X","expectedGain":"15-20%","riskReward":"3:1","allocation":"10%","catalyst":"max 12 words","catalystDate":"VERIFIED/EST date or UNVERIFIED","thesis":"max 15 words","invalidation":"max 12 words","returnGate":"PASS|CONDITIONAL PASS|FAIL","cashChallenge":"PASS|FAIL","opportunityScore":75}]}`
+LANGUAGE RULES — very important:
+- Write as if explaining to someone who has never traded before
+- No jargon. Instead of "catalyst" say "upcoming event". Instead of "thesis" say "why we like it".
+- Instead of "invalidation" say "what would make us sell immediately"
+- Instead of "pullback to support" say "price drops back to a good entry level around $X"
+- Instead of "bullish" say "moving up" or "looks strong". Instead of "bearish" say "moving down" or "looks weak"
+- Instead of "capex" say "investment spending". Instead of "secular tailwind" say "long-term growth trend"
+- Instead of "beat-and-raise" say "beat expectations and raised their forecast"
+- Keep every sentence under 20 words. Plain English only.
+
+Return ONLY this JSON (up to 10 opportunities):
+{"marketCondition":"BUY AGGRESSIVELY|BUY SELECTIVELY|WAIT|HOLD CASH","cashRecommendation":"one plain-English sentence — explain why in simple terms","cashPct":30,"regime":"one plain-English sentence describing what the market is doing today","cio":{"bestTradeToday":"TICKER or NONE","bestRiskReward":"TICKER or NONE","finalMarketDecision":"BUY AGGRESSIVELY|BUY SELECTIVELY|WAIT|HOLD CASH","watchList":[{"ticker":"","reason":"plain English, max 10 words — e.g. waiting for earnings date to be confirmed"}],"avoidList":[{"ticker":"","reason":"plain English, max 10 words — e.g. already jumped 15% today, too late to buy"}]},"opportunities":[{"ticker":"","company":"","action":"STRONG BUY|BUY|WATCH|AVOID","currentPrice":"","entryZone":"$X-$Y","stopLoss":"$X","takeProfit":"$X","expectedGain":"15-20%","riskReward":"3:1","allocation":"10%","whyWeLikeIt":"plain English — what upcoming event could drive the price up, max 20 words","whatCouldGoWrong":"plain English — one thing that would make us exit immediately, max 15 words","upcomingEvent":"name of the event e.g. Q2 earnings results","eventDate":"date in format DD Mon YYYY","returnGate":"PASS|CONDITIONAL PASS|FAIL","cashChallenge":"PASS|FAIL","opportunityScore":75}]}`
 
       const ai = repairJSON(await claude(prompt, 'cio'))
 
@@ -572,9 +622,14 @@ Return ONLY this JSON (up to 10 opportunities — all qualifying BUYs plus top W
         const live = pm[o.ticker]||{}
         return {
           ...o,
+          // Map new plain-English field names back to display fields
+          thesis:      o.whyWeLikeIt      || o.thesis      || '',
+          invalidation:o.whatCouldGoWrong || o.invalidation || '',
+          catalyst:    o.upcomingEvent     || o.catalyst     || '',
+          catalystDate:o.eventDate         || o.catalystDate || '',
           company:                 live.name || o.company || o.ticker,
-          // Always prefer verified live price — never show N/A if we have it
-          currentPrice:            live.priceFormatted || (o.currentPrice && o.currentPrice !== 'N/A' ? o.currentPrice : live.priceFormatted || '—'),
+          // Always prefer verified live price
+          currentPrice:            live.priceFormatted || (o.currentPrice && o.currentPrice !== 'N/A' ? o.currentPrice : '—'),
           change1d:                live.change1d || null,
           changePctToday:          live.changePct || 0,
           direction:               live.direction || 'up',
@@ -613,8 +668,8 @@ Commodities: ${commLines||'N/A'}
 FX: ${fxLines||'N/A'}
 VIX proxy: ${md.vix||'N/A'} (${md.vixRegime||'N/A'})
 
-You are a swing trader's macro analyst. Based ONLY on the data above, return JSON:
-{"sentiment":"RISK ON|RISK OFF|NEUTRAL","sentimentReason":"one sentence — cite specific data","regimeAdvice":"one actionable sentence for a swing trader","keyRisk":"biggest macro risk right now in one sentence","keyOpportunity":"biggest macro tailwind in one sentence","macroEvents":[{"event":"","detail":"one sentence","impact":"HIGH|MEDIUM|LOW"}]}`
+You explain financial markets in simple, plain English for beginners. No jargon. Based ONLY on the data above, return JSON:
+{"sentiment":"RISK ON|RISK OFF|NEUTRAL","sentimentReason":"one plain sentence explaining what markets are doing today and why, no jargon","regimeAdvice":"one plain actionable sentence for someone new to investing — what should they do with their money today","keyRisk":"biggest thing that could cause markets to fall, explained simply in one sentence","keyOpportunity":"biggest thing that could push markets higher, explained simply in one sentence","macroEvents":[{"event":"event name in plain English","detail":"one plain sentence explaining why this matters to investors","impact":"HIGH|MEDIUM|LOW"}]}`
 
       const ai = repairJSON(await claude(prompt))
       setData(p=>({...p, global:{ ...md, ...ai }}))
@@ -636,11 +691,11 @@ NASDAQ today: ${md.indices?.find(i=>i.name==='NASDAQ 100')?.change||'N/A'}
 Sector performance today: ${md.sectors?.map(s=>`${s.label} ${s.change}`).join(', ')||'N/A'}
 Gold: ${md.commodities?.find(c=>c.name?.includes('Gold'))?.change||'N/A'}
 
-You are a risk manager for a swing trader with 1-4 week holding periods.
-Using the live data above plus your knowledge, assess risk for the next 40 trading days.
-Be specific — name actual upcoming events, known policy decisions, earnings seasons.
+You explain financial risks in plain, simple English for beginner investors with 1-4 week holding periods.
+Using the live data above plus your knowledge, explain the key risks over the next 8 weeks.
+Name specific upcoming events and dates. No jargon. Short sentences.
 Return JSON:
-{"overallRisk":"HIGH|ELEVATED|MODERATE|LOW","cashSuggestion":"X%","positionSizingAdvice":"one actionable sentence","macroRisks":[{"risk":"","detail":"specific — name dates/events","severity":"HIGH|MEDIUM|LOW","action":"what to do"}],"geopoliticalRisks":[{"risk":"","detail":"","severity":"","action":""}],"sectorRisks":[{"sector":"","risk":"","severity":"","action":""}],"hedgeIdeas":["specific hedge with rationale"],"bestEnvironmentFor":["type of trade that works best now"]}`
+{"overallRisk":"HIGH|ELEVATED|MODERATE|LOW","cashSuggestion":"X%","positionSizingAdvice":"one plain sentence — e.g. keep each stock position under 10% of your money","macroRisks":[{"risk":"risk name in plain English","detail":"plain sentence explaining why this could hurt stock prices — name specific dates or events","severity":"HIGH|MEDIUM|LOW","action":"plain sentence on what to do about it"}],"geopoliticalRisks":[{"risk":"","detail":"plain sentence","severity":"","action":"plain sentence"}],"sectorRisks":[{"sector":"sector name","risk":"plain sentence on what could go wrong","severity":"","action":"plain sentence on what to do"}],"hedgeIdeas":["plain sentence explaining a simple protective move and why"],"bestEnvironmentFor":["plain sentence describing what kind of stocks or trades work best right now"]}`
 
       const ai = repairJSON(await claude(prompt))
       setData(p=>({...p, risk:{ ...ai, vix:md.vix, vixRegime:md.vixRegime }}))
@@ -655,20 +710,31 @@ Return JSON:
     try {
       const hist = EH[opp.ticker]
       const text = await claude(`Today: ${new Date().toDateString()}
-Analyse ${opp.ticker} (${opp.company}) at ${opp.currentPrice}.
-Earnings: ${opp.earningsDate||'not confirmed'} (${opp.earningsTradingDaysAway??'?'} trading days)${opp.earningsSource==='estimate'?' [ESTIMATED DATE]':' [VERIFIED]'}
-Catalyst: ${opp.catalyst||'N/A'}
-Thesis: ${opp.thesis}
-Earnings history: ${hist?hist.label:'not available'}
-Entry zone: ${opp.entryZone||'N/A'} · Stop loss: ${opp.stopLoss||'N/A'} · Target: ${opp.takeProfit||opp.expectedGain||'N/A'}
+Stock: ${opp.ticker} — ${opp.company}
+Current price: ${opp.currentPrice}
+Next earnings results: ${opp.earningsDate||'date not yet confirmed'} (${opp.earningsTradingDaysAway??'?'} trading days away)${opp.earningsSource==='estimate'?' — estimated date':' — confirmed date'}
+Why we like it: ${opp.thesis}
+Upcoming event: ${opp.catalyst||'N/A'}
+Past earnings reactions: ${hist?hist.label:'not available'}
+Suggested buy range: ${opp.entryZone||'N/A'} · Exit if it drops to: ${opp.stopLoss||'N/A'} · Price target: ${opp.takeProfit||opp.expectedGain||'N/A'}
 
-Write a focused 260-word analysis covering:
-1. WHY THIS SETUP NOW — specific price action and catalyst timing
-2. THE BULL CASE — what drives 15%+ from here
-3. THE BEAR CASE — what kills the thesis immediately
-4. IDEAL ENTRY TRIGGER — exact condition to pull the trigger
+Write a clear, simple analysis for someone new to investing. Use short sentences. No jargon.
+Cover exactly these four sections with these headings:
 
-Label each sentence: FACT / ANALYSIS / OPINION`, 'deepdive')
+WHY BUY NOW
+Explain in 2-3 simple sentences why this is a good moment to consider buying. What is about to happen that could push the price up?
+
+THE UPSIDE
+In 2-3 sentences, explain what the best-case scenario looks like and roughly how much the price could rise.
+
+THE RISK
+In 2-3 sentences, explain the main thing that could go wrong and cause the price to fall instead.
+
+WHEN TO BUY
+In 1-2 sentences, describe the exact situation or price level you should wait for before buying.
+
+After each sentence, add (FACT), (ANALYSIS) or (OPINION) so the reader knows what type of claim it is.
+Keep total response under 280 words. Plain English only — no trading jargon.`, 'deepdive')
       setDrill(text)
     } catch(e) { setDrill(`Error: ${e.message}`) }
     finally { setDrillLoad(false) }
@@ -705,18 +771,29 @@ Label each sentence: FACT / ANALYSIS / OPINION`, 'deepdive')
     try {
       const hist = EH[opp.ticker]
       const text = await claude(`Today: ${new Date().toDateString()}
-Analyse ${opp.ticker} (${opp.company}) at ${opp.currentPrice}.
-Earnings: ${opp.earningsDate ? ukDate(opp.earningsDate) : 'not confirmed'} (${opp.earningsTradingDaysAway??'?'} trading days)${opp.earningsSource==='estimate'?' [ESTIMATED]':' [VERIFIED]'}
-Catalyst: ${opp.catalyst||'N/A'} · Thesis: ${opp.thesis}
-Earnings history: ${hist ? hist.label : 'not available'}
-Entry: ${opp.entryZone||'N/A'} · Stop: ${opp.stopLoss||'N/A'} · Target: ${opp.takeProfit||opp.expectedGain||'N/A'}
+Stock: ${opp.ticker} — ${opp.company}
+Current price: ${opp.currentPrice}
+Next earnings: ${opp.earningsDate ? ukDate(opp.earningsDate) : 'not yet confirmed'} (${opp.earningsTradingDaysAway??'?'} trading days away)${opp.earningsSource==='estimate'?' — estimated':' — confirmed'}
+Why we like it: ${opp.thesis}
+Upcoming event: ${opp.catalyst||'N/A'}
+Past reactions: ${hist ? hist.label : 'not available'}
+Buy range: ${opp.entryZone||'N/A'} · Exit if below: ${opp.stopLoss||'N/A'} · Target: ${opp.takeProfit||opp.expectedGain||'N/A'}
 
-Write 240 words covering:
-1. WHY NOW — specific price action and timing
-2. BULL CASE — what drives 15%+ from here
-3. BEAR CASE — what kills the thesis immediately  
-4. IDEAL ENTRY TRIGGER — exact condition to pull trigger
-Label each sentence: FACT / ANALYSIS / OPINION`, 'deepdive')
+Write a simple, clear analysis for a beginner investor. Short sentences. No jargon.
+
+WHY BUY NOW
+2-3 sentences on why this is a good moment to consider buying.
+
+THE UPSIDE
+2-3 sentences on what the best case looks like and how much the price could rise.
+
+THE RISK
+2-3 sentences on what could go wrong.
+
+WHEN TO BUY
+1-2 sentences on the exact price or situation to wait for before buying.
+
+Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'deepdive')
       setCardDrills(p => ({ ...p, [opp.ticker]: text }))
     } catch(e) {
       setCardDrills(p => ({ ...p, [opp.ticker]: `Error: ${e.message}` }))
