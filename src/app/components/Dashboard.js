@@ -323,7 +323,7 @@ function OppCard({ opp, rank, active, onClick, onDeepDive, deepDiveLoading, deep
       {/* Per-card deep dive */}
       <div style={{ marginTop:14, borderTop:`1px solid ${C.border}`, paddingTop:14 }} onClick={e => e.stopPropagation()}>
         {!showDive ? (
-          <button onClick={handleDeepDive} style={{ appearance:'none', background:C.accentBg, color:C.accent, border:`1px solid ${C.accent}44`, borderRadius:8, padding:'8px 16px', fontWeight:700, fontSize:13, cursor:'pointer', display:'flex', alignItems:'center', gap:6 }}>
+          <button onClick={handleDeepDive} className="no-print" style={{ appearance:'none', background:C.accentBg, color:C.accent, border:`1px solid ${C.accent}44`, borderRadius:8, padding:'8px 16px', fontWeight:700, fontSize:13, cursor:'pointer', display:'flex', alignItems:'center', gap:6 }}>
             🔍 Deep dive analysis
           </button>
         ) : deepDiveLoading ? (
@@ -1076,6 +1076,19 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
         button { -webkit-tap-highlight-color:transparent; }
         button:hover { opacity:0.88; }
         @keyframes spin { to { transform:rotate(360deg); } }
+
+        /* ── Print / PDF styles ───────────────────────────────────── */
+        @media print {
+          body { background:#fff !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+          .no-print { display:none !important; }
+          .print-break { page-break-before:always; }
+          /* Keep cards readable */
+          * { box-shadow:none !important; }
+          /* Show all opportunity cards expanded */
+          .opp-deepdive { display:block !important; }
+          /* Hide overlays and interactive elements */
+          .mobile-overlay { display:none !important; }
+        }
       `}</style>
 
       <div style={{ maxWidth:1560, margin:'0 auto', padding: mob ? '10px 12px' : '14px 24px' }}>
@@ -1086,14 +1099,23 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
             <div style={{ fontWeight:900, fontSize: mob?20:26, color:C.accent, letterSpacing:-0.5 }}>CATALYST</div>
             <div style={{ color:C.muted, fontSize:11, fontWeight:600, letterSpacing:0.5, marginTop:2 }}>TRADING INTELLIGENCE · {new Date().toDateString().toUpperCase()}</div>
           </div>
-          <div style={{ display:'flex', gap:10, alignItems:'center' }}>
+          <div style={{ display:'flex', gap:8, alignItems:'center' }} className="no-print">
             {lastUp[activeTab] && <span style={{ color:C.muted, fontSize:11 }}>Updated {ts(lastUp[activeTab])}</span>}
+            <button
+              onClick={() => {
+                // Give the browser a moment then print
+                window.print()
+              }}
+              style={{ appearance:'none', background:'#fff', color:C.accent, border:`1.5px solid ${C.accent}`, borderRadius:10, padding: mob ? '8px 12px' : '10px 16px', fontWeight:700, fontSize: mob?12:13, cursor:'pointer' }}
+            >
+              {mob ? '⬇ PDF' : '⬇ Export PDF'}
+            </button>
             <button onClick={refresh} style={{ appearance:'none', background:C.accent, color:'#fff', border:'none', borderRadius:10, padding: mob ? '8px 14px' : '10px 18px', fontWeight:700, fontSize:14, cursor:'pointer', boxShadow:'0 2px 8px rgba(37,99,235,0.25)' }}>↻ Refresh</button>
           </div>
         </div>
 
         {/* Tabs */}
-        <div style={{ display:'flex', gap:6, marginBottom:16, overflowX:'auto', WebkitOverflowScrolling:'touch', paddingBottom:4 }}>
+        <div className="no-print" style={{ display:'flex', gap:6, marginBottom:16, overflowX:'auto', WebkitOverflowScrolling:'touch', paddingBottom:4 }}>
           {TABS.map(t => {
             const active = activeTab===t.key
             return (
@@ -1112,6 +1134,25 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
               </button>
             )
           })}
+        </div>
+
+        {/* Print-only header — shows date and tab name in PDF */}
+        <div style={{ display:'none' }} className="print-header">
+          <style>{`
+            @media print {
+              .print-header {
+                display:block !important;
+                border-bottom:2px solid #2563eb;
+                padding-bottom:12px;
+                margin-bottom:20px;
+              }
+              .print-header h1 { margin:0; font-size:22px; color:#2563eb; }
+              .print-header p  { margin:4px 0 0; font-size:12px; color:#64748b; }
+            }
+          `}</style>
+          <h1>CATALYST — Trading Intelligence Report</h1>
+          <p>Generated: {new Date().toLocaleString('en-GB')} · Tab: {TABS.find(t=>t.key===activeTab)?.label}</p>
+          <p style={{ fontSize:11, marginTop:4 }}>Prices: Finnhub · Analysis: Claude AI · Not financial advice · For educational use only</p>
         </div>
 
         {renderContent()}
