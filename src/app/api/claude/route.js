@@ -1,5 +1,5 @@
 /**
- * CATALYST v2 — src/app/api/claude/route.js
+ * CATALYST — src/app/api/claude/route.js
  */
 
 import { NextResponse } from 'next/server'
@@ -24,28 +24,30 @@ export async function POST(request) {
     const { prompt, mode } = body
     if (!prompt?.trim()) return NextResponse.json({ error: 'Missing prompt' }, { status: 400 })
 
-    const isJson = mode !== 'deepdive'
-
     const systemMap = {
-      json: 'You are a trading data API. Output ONLY raw JSON. No markdown. No explanation. No text before or after the JSON object.',
+      json: 'You are a trading data API. Output ONLY raw JSON. No markdown, no backticks, no explanation. Start your response with { and end with }.',
       deepdive: 'You are a senior trading analyst. Be concise, specific and factual. Label each claim FACT, ANALYSIS or OPINION. Under 280 words.',
-      cio: `You are a CIO and master swing trader. Output ONLY raw JSON — no markdown, no explanation, no text outside the JSON.
+      cio: `You are a CIO and master swing trader. Output ONLY raw JSON — no markdown, no backticks, no explanation. Start your response with { and end with }.
 
 RULES:
 1. Every BUY/STRONG BUY must have a VERIFIED DATED CATALYST from the data provided.
 2. GAP-UP PENALTY: stock up >8% today → max rating = WATCH.
-3. RETURN GATE: must prove credible 15%+ path.
+3. RETURN GATE: must prove credible 15%+ path within 40 trading days.
 4. CASH CHALLENGE: justify vs holding cash.
-5. Zero BUY recommendations is valid if nothing qualifies.
+5. Zero BUY recommendations is valid and correct if nothing qualifies.
 6. Keep thesis to 1 sentence. Keep stopLoss to price only e.g. "$X".
-7. Return MAXIMUM 5 opportunities total to keep response short.`,
+7. Include WATCH setups for quality names without near-term catalyst (NVDA, MRVL, AVGO, CRDO).
+8. Return up to 10 opportunities total — all qualifying BUYs plus top WATCHes.`,
     }
 
     const systemPrompt = systemMap[mode] || systemMap.json
 
+    // NOTE: Sonnet 4 does NOT support assistant message prefilling.
+    // Instead we instruct via system prompt to start with { and use repairJSON on the client.
     const messages = [{ role: 'user', content: prompt.trim() }]
-    // Prefill { for all JSON modes to force valid JSON output
-    if (isJson) {
+
+    // Only use prefill for Haiku (json/deepdive modes) — NOT for Sonnet (cio mode)
+    if (mode !== 'cio' && mode !== 'deepdive') {
       messages.push({ role: 'assistant', content: '{' })
     }
 
@@ -59,8 +61,8 @@ RULES:
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        // Sonnet for CIO analysis (richer reasoning over 40+ stocks)
-        // Haiku for simple JSON transforms (global/risk summaries)
+        // Sonnet for CIO analysis — richer reasoning across 44 stocks
+        // Haiku for simple JSON transforms — faster and cheaper
         model: mode === 'cio' ? 'claude-sonnet-4-6' : 'claude-haiku-4-5-20251001',
         max_tokens: tokenMap[mode] || 2000,
         system: systemPrompt,
@@ -76,8 +78,8 @@ RULES:
       )
     }
 
-    // Prepend the { prefill
-    if (isJson && data.content?.[0]?.text) {
+    // Prepend { for Haiku JSON prefill only
+    if (mode !== 'cio' && mode !== 'deepdive' && data.content?.[0]?.text) {
       data.content[0].text = '{' + data.content[0].text
     }
 
