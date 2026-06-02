@@ -566,6 +566,8 @@ export default function Dashboard() {
   const [t212Unlocked,     setT212Unlocked]     = useState(false)
   const [t212PwInput,      setT212PwInput]      = useState('')
   const [t212PwError,      setT212PwError]      = useState(false)
+  const [t212ViewMode,     setT212ViewMode]     = useState('pies') // 'pies' | 'stocks'
+  const [expandedPies,     setExpandedPies]     = useState({})     // { pieName: bool }
   const loaded = useRef({})
   const w = useWindowWidth()
   const mob = w < 900
@@ -1873,33 +1875,227 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
           </div>
         )}
 
-        {/* Positions grid */}
+        {/* View toggle */}
         {t212Data?.positions?.length > 0 && (
+          <div style={{ display:'flex', gap:8, marginBottom:14, alignItems:'center' }}>
+            <span style={{ color:C.muted, fontSize:13, fontWeight:600 }}>View:</span>
+            {['pies','stocks'].map(mode => (
+              <button key={mode} onClick={() => setT212ViewMode(mode)} style={{
+                appearance:'none', border:`1.5px solid ${t212ViewMode===mode ? C.accent : C.border}`,
+                background: t212ViewMode===mode ? C.accent : C.card,
+                color: t212ViewMode===mode ? '#fff' : C.sub,
+                borderRadius:8, padding:'7px 14px', fontWeight:700, fontSize:13, cursor:'pointer',
+              }}>
+                {mode === 'pies' ? '🥧 By Pie' : '📋 All Stocks'}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* ── PIE VIEW ────────────────────────────────────────────────────── */}
+        {t212Data?.positions?.length > 0 && t212ViewMode === 'pies' && (() => {
+          // Build groups: pies first, then direct holdings
+          const pieGroups = {}
+          const directHoldings = []
+
+          t212Data.positions.forEach(p => {
+            if (p.pieName) {
+              if (!pieGroups[p.pieName]) pieGroups[p.pieName] = []
+              pieGroups[p.pieName].push(p)
+            } else {
+              directHoldings.push(p)
+            }
+          })
+
+          // Merge pie P&L from pies endpoint if available
+          const pieData = {}
+          ;(t212Data.pies || []).forEach(pie => { pieData[pie.name] = pie })
+
+          const StockCard = ({ p, compact=false }) => {
+            const ai       = t212Result?.holdings?.find(h => h.ticker === p.ticker)
+            const enriched = t212Result?.enriched?.find(e => e.ticker === p.ticker)
+            const border   = ai ? actionColor(ai.action) : (p.gainPct >= 0 ? C.up : C.down)
+            return (
+              <div style={{ background:C.bg, borderRadius:12, padding:14, borderLeft:`4px solid ${border}` }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:8, flexWrap:'wrap', gap:6 }}>
+                  <div>
+                    <span style={{ fontFamily:FM, fontWeight:900, fontSize:compact?16:18, color:C.text }}>{p.ticker}</span>
+                    <span style={{ color:C.muted, fontSize:11, marginLeft:6 }}>{p.quantity?.toFixed?.(4) || p.quantity} shares</span>
+                  </div>
+                  <div style={{ display:'flex', gap:6, alignItems:'center', flexWrap:'wrap' }}>
+                    <span style={{ color:p.gainPct>=0?C.up:C.down, fontFamily:FM, fontWeight:800, fontSize:13 }}>
+                      {p.gainPct>=0?'+':''}{p.gainPct}%
+                    </span>
+                    <span style={{ color:p.ppl>=0?C.up:C.down, fontFamily:FM, fontWeight:700, fontSize:12 }}>
+                      ({p.ppl>=0?'+':''}£{p.ppl})
+                    </span>
+                    {ai && <span style={{ background:actionBg(ai.action), color:actionColor(ai.action), borderRadius:6, padding:'3px 8px', fontWeight:800, fontSize:11 }}>{ai.action}</span>}
+                    {ai?.urgency==='NOW' && <span style={{ color:C.down, fontSize:11, fontWeight:700 }}>🔴 NOW</span>}
+                  </div>
+                </div>
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:6, marginBottom: ai?.recommendation ? 8 : 0 }}>
+                  {[['Bought',`£${p.averagePrice?.toFixed(2)}`],['Now',`£${p.currentPrice?.toFixed(2)}`],['Value',`£${p.totalValue?.toFixed(2)}`]].map(([l,v])=>(
+                    <div key={l} style={{ background:C.card, borderRadius:6, padding:'6px 8px' }}>
+                      <div style={{ ...LBL, fontSize:9 }}>{l}</div>
+                      <div style={{ fontFamily:FM, fontWeight:700, fontSize:12 }}>{v}</div>
+                    </div>
+                  ))}
+                </div>
+                {ai?.recommendation && <div style={{ color:C.sub, fontSize:12, lineHeight:1.5, marginBottom:6 }}>{ai.recommendation}</div>}
+                {ai?.action==='BUY MORE' && ai.entryIfBuyMore && (
+                  <div style={{ background:C.upBg, borderRadius:6, padding:'5px 8px', marginBottom:4 }}>
+                    <span style={{ color:C.up, fontWeight:700, fontSize:12 }}>Buy more at: {ai.entryIfBuyMore}</span>
+                  </div>
+                )}
+                {(ai?.action==='TRIM'||ai?.action==='SELL ALL') && ai.exitIfSell && (
+                  <div style={{ background:C.amberBg, borderRadius:6, padding:'5px 8px', marginBottom:4 }}>
+                    <span style={{ color:C.amber, fontWeight:700, fontSize:12 }}>{ai.action==='TRIM'?'Trim at:':'Sell at:'} {ai.exitIfSell}</span>
+                  </div>
+                )}
+                {enriched?.earningsDate && enriched.earningsDays >= 0 && (
+                  <Pill tone={enriched.earningsDays<=10?'amber':'blue'} size="sm" style={{ marginTop:4 }}>
+                    📅 Earnings {enriched.earningsDays}d · {ukDate(enriched.earningsDate)}
+                  </Pill>
+                )}
+              </div>
+            )
+          }
+
+          return (
+            <div style={{ display:'grid', gap:16, marginBottom:18 }}>
+              {/* Pies */}
+              {Object.entries(pieGroups).map(([pieName, stocks]) => {
+                const pd      = pieData[pieName]
+                const isOpen  = expandedPies[pieName] !== false  // default expanded
+                const totalPPL  = pd?.ppl ?? stocks.reduce((s,p)=>s+p.ppl, 0)
+                const totalVal  = pd?.totalValue ?? stocks.reduce((s,p)=>s+p.totalValue, 0)
+                const gainPct   = pd?.gainPct ?? (stocks.reduce((s,p)=>s+p.gainPct,0)/stocks.length)
+                const pplColor  = totalPPL >= 0 ? C.up : C.down
+
+                // Pie-level AI verdict — pick the most urgent action across stocks
+                const stockActions = stocks.map(p => t212Result?.holdings?.find(h=>h.ticker===p.ticker)?.action).filter(Boolean)
+                const hasNow  = stocks.some(p => t212Result?.holdings?.find(h=>h.ticker===p.ticker)?.urgency==='NOW')
+                const hasSell = stockActions.some(a=>a==='SELL ALL')
+                const hasTrim = stockActions.some(a=>a==='TRIM')
+                const hasBuy  = stockActions.some(a=>a==='BUY MORE')
+                const pieVerdict = hasSell?'SELL ALL':hasTrim?'TRIM':hasBuy?'BUY MORE':'HOLD'
+                const pieVerdictColor = actionColor(pieVerdict)
+                const pieVerdictBg    = actionBg(pieVerdict)
+
+                return (
+                  <div key={pieName} style={{ ...card({ padding:0, overflow:'hidden' }) }}>
+                    {/* Pie header — click to expand/collapse */}
+                    <button
+                      onClick={() => setExpandedPies(prev => ({ ...prev, [pieName]: !isOpen }))}
+                      style={{ appearance:'none', width:'100%', background:'none', border:'none', cursor:'pointer', padding:'16px 18px', textAlign:'left' }}
+                    >
+                      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:10 }}>
+                        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                          <span style={{ fontSize:20 }}>🥧</span>
+                          <div>
+                            <div style={{ color:C.text, fontWeight:800, fontSize:17 }}>{pieName}</div>
+                            <div style={{ color:C.muted, fontSize:12, marginTop:2 }}>{stocks.length} stocks · tap to {isOpen?'collapse':'expand'}</div>
+                          </div>
+                        </div>
+                        <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap' }}>
+                          <div style={{ textAlign:'right' }}>
+                            <div style={{ color:C.text, fontFamily:FM, fontWeight:800, fontSize:18 }}>£{totalVal?.toFixed(2)}</div>
+                            <div style={{ color:pplColor, fontFamily:FM, fontWeight:700, fontSize:13 }}>
+                              {totalPPL>=0?'+':''}£{totalPPL?.toFixed(2)} ({gainPct>=0?'+':''}{gainPct?.toFixed(1)}%)
+                            </div>
+                          </div>
+                          {t212Result && (
+                            <span style={{ background:pieVerdictBg, color:pieVerdictColor, borderRadius:8, padding:'6px 12px', fontWeight:800, fontSize:13 }}>
+                              {pieVerdict}
+                            </span>
+                          )}
+                          {hasNow && <span style={{ color:C.down, fontWeight:700, fontSize:12 }}>🔴 ACT NOW</span>}
+                          <span style={{ color:C.muted, fontSize:18 }}>{isOpen?'▲':'▼'}</span>
+                        </div>
+                      </div>
+                    </button>
+
+                    {/* Pie stocks — collapsible */}
+                    {isOpen && (
+                      <div style={{ padding:'0 14px 14px' }}>
+                        {/* Pie-level summary if analysed */}
+                        {t212Result && (
+                          <div style={{ background:C.bg, borderRadius:10, padding:'10px 14px', marginBottom:12, fontSize:13, color:C.sub }}>
+                            <strong>Pie summary:</strong> {stockActions.length > 0
+                              ? `${stockActions.filter(a=>a==='BUY MORE').length} BUY MORE, ${stockActions.filter(a=>a==='HOLD').length} HOLD, ${stockActions.filter(a=>a==='TRIM').length} TRIM, ${stockActions.filter(a=>a==='SELL ALL').length} SELL`
+                              : 'Run analysis for individual stock advice'
+                            }
+                          </div>
+                        )}
+                        <div style={{ display:'grid', gridTemplateColumns: mob?'1fr':'repeat(auto-fill,minmax(280px,1fr))', gap:10 }}>
+                          {stocks.map((p,i) => <StockCard key={i} p={p} compact />)}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+
+              {/* Direct holdings */}
+              {directHoldings.length > 0 && (
+                <div style={{ ...card({ padding:0, overflow:'hidden' }) }}>
+                  <button
+                    onClick={() => setExpandedPies(prev => ({ ...prev, '__direct__': !(prev['__direct__'] !== false) }))}
+                    style={{ appearance:'none', width:'100%', background:'none', border:'none', cursor:'pointer', padding:'16px 18px', textAlign:'left' }}
+                  >
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                      <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                        <span style={{ fontSize:20 }}>📋</span>
+                        <div>
+                          <div style={{ color:C.text, fontWeight:800, fontSize:17 }}>Direct Holdings</div>
+                          <div style={{ color:C.muted, fontSize:12, marginTop:2 }}>{directHoldings.length} stocks · tap to {expandedPies['__direct__']===false?'expand':'collapse'}</div>
+                        </div>
+                      </div>
+                      <div style={{ display:'flex', gap:10, alignItems:'center' }}>
+                        <div style={{ textAlign:'right' }}>
+                          <div style={{ color:C.text, fontFamily:FM, fontWeight:800, fontSize:18 }}>
+                            £{directHoldings.reduce((s,p)=>s+p.totalValue,0).toFixed(2)}
+                          </div>
+                          <div style={{ color: directHoldings.reduce((s,p)=>s+p.ppl,0) >= 0 ? C.up : C.down, fontFamily:FM, fontWeight:700, fontSize:13 }}>
+                            {directHoldings.reduce((s,p)=>s+p.ppl,0) >= 0 ? '+' : ''}£{directHoldings.reduce((s,p)=>s+p.ppl,0).toFixed(2)}
+                          </div>
+                        </div>
+                        <span style={{ color:C.muted, fontSize:18 }}>{expandedPies['__direct__']===false?'▼':'▲'}</span>
+                      </div>
+                    </div>
+                  </button>
+                  {expandedPies['__direct__'] !== false && (
+                    <div style={{ padding:'0 14px 14px', display:'grid', gridTemplateColumns: mob?'1fr':'repeat(auto-fill,minmax(280px,1fr))', gap:10 }}>
+                      {directHoldings.map((p,i) => <StockCard key={i} p={p} />)}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })()}
+
+        {/* ── ALL STOCKS VIEW ─────────────────────────────────────────────── */}
+        {t212Data?.positions?.length > 0 && t212ViewMode === 'stocks' && (
           <div style={{ display:'grid', gridTemplateColumns: mob ? '1fr' : 'repeat(auto-fill, minmax(320px, 1fr))', gap:12, marginBottom:18 }}>
             {t212Data.positions.map((p, i) => {
-              const ai = t212Result?.holdings?.find(h => h.ticker === p.ticker)
+              const ai       = t212Result?.holdings?.find(h => h.ticker === p.ticker)
               const enriched = t212Result?.enriched?.find(e => e.ticker === p.ticker)
               return (
                 <div key={i} style={{ ...card({ borderLeft:`5px solid ${ai ? actionColor(ai.action) : (p.gainPct >= 0 ? C.up : C.down)}` }) }}>
-                  {/* Header */}
                   <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:10 }}>
                     <div>
                       <span style={{ fontFamily:FM, fontWeight:900, fontSize:22, color:C.text }}>{p.ticker}</span>
                       <span style={{ color:C.muted, fontSize:12, marginLeft:8 }}>{p.quantity} shares</span>
+                      {p.pieName && <span style={{ color:C.accent, fontSize:11, marginLeft:8 }}>🥧 {p.pieName}</span>}
                     </div>
                     <div style={{ display:'flex', gap:6, alignItems:'center' }}>
-                      <span style={{ color: p.gainPct >= 0 ? C.up : C.down, fontFamily:FM, fontWeight:800, fontSize:15 }}>
-                        {p.gainPct >= 0 ? '+' : ''}{p.gainPct}%
+                      <span style={{ color:p.gainPct>=0?C.up:C.down, fontFamily:FM, fontWeight:800, fontSize:15 }}>
+                        {p.gainPct>=0?'+':''}{p.gainPct}%
                       </span>
-                      {ai && (
-                        <span style={{ background: actionBg(ai.action), color: actionColor(ai.action), borderRadius:8, padding:'4px 10px', fontWeight:800, fontSize:12 }}>
-                          {ai.action}
-                        </span>
-                      )}
+                      {ai && <span style={{ background:actionBg(ai.action), color:actionColor(ai.action), borderRadius:8, padding:'4px 10px', fontWeight:800, fontSize:12 }}>{ai.action}</span>}
                     </div>
                   </div>
-
-                  {/* Price row */}
                   <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8, marginBottom:10 }}>
                     <div style={{ background:C.bg, borderRadius:8, padding:'8px 10px' }}>
                       <div style={{ ...LBL, fontSize:10 }}>BOUGHT AT</div>
@@ -1907,43 +2103,31 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
                     </div>
                     <div style={{ background:C.bg, borderRadius:8, padding:'8px 10px' }}>
                       <div style={{ ...LBL, fontSize:10 }}>NOW</div>
-                      <div style={{ fontFamily:FM, fontWeight:700, fontSize:14, color: p.gainPct >= 0 ? C.up : C.down }}>£{p.currentPrice?.toFixed(2)}</div>
+                      <div style={{ fontFamily:FM, fontWeight:700, fontSize:14, color:p.gainPct>=0?C.up:C.down }}>£{p.currentPrice?.toFixed(2)}</div>
                     </div>
-                    <div style={{ background: p.ppl >= 0 ? C.upBg : C.downBg, borderRadius:8, padding:'8px 10px' }}>
+                    <div style={{ background:p.ppl>=0?C.upBg:C.downBg, borderRadius:8, padding:'8px 10px' }}>
                       <div style={{ ...LBL, fontSize:10 }}>P&L</div>
-                      <div style={{ fontFamily:FM, fontWeight:800, fontSize:14, color: p.ppl >= 0 ? C.up : C.down }}>
-                        {p.ppl >= 0 ? '+' : ''}£{p.ppl}
-                      </div>
+                      <div style={{ fontFamily:FM, fontWeight:800, fontSize:14, color:p.ppl>=0?C.up:C.down }}>{p.ppl>=0?'+':''}£{p.ppl}</div>
                     </div>
                   </div>
-
-                  {/* AI recommendation */}
-                  {ai?.recommendation && (
-                    <div style={{ color:C.sub, fontSize:13, lineHeight:1.6, marginBottom:8 }}>{ai.recommendation}</div>
-                  )}
-
-                  {/* Entry/exit prices */}
-                  {ai?.action === 'BUY MORE' && ai.entryIfBuyMore && (
+                  {ai?.recommendation && <div style={{ color:C.sub, fontSize:13, lineHeight:1.6, marginBottom:8 }}>{ai.recommendation}</div>}
+                  {ai?.action==='BUY MORE' && ai.entryIfBuyMore && (
                     <div style={{ background:C.upBg, borderRadius:8, padding:'7px 10px', marginBottom:8 }}>
                       <span style={{ color:C.up, fontWeight:700, fontSize:13 }}>Buy more at: {ai.entryIfBuyMore}</span>
                     </div>
                   )}
-                  {(ai?.action === 'TRIM' || ai?.action === 'SELL ALL') && ai.exitIfSell && (
+                  {(ai?.action==='TRIM'||ai?.action==='SELL ALL') && ai.exitIfSell && (
                     <div style={{ background:C.amberBg, borderRadius:8, padding:'7px 10px', marginBottom:8 }}>
-                      <span style={{ color:C.amber, fontWeight:700, fontSize:13 }}>{ai.action === 'TRIM' ? 'Trim at:' : 'Sell at:'} {ai.exitIfSell}</span>
+                      <span style={{ color:C.amber, fontWeight:700, fontSize:13 }}>{ai.action==='TRIM'?'Trim at:':'Sell at:'} {ai.exitIfSell}</span>
                     </div>
                   )}
-
-                  {/* Earnings pill */}
                   {enriched?.earningsDate && enriched.earningsDays >= 0 && (
-                    <Pill tone={enriched.earningsDays <= 10 ? 'amber' : 'blue'} size="sm">
+                    <Pill tone={enriched.earningsDays<=10?'amber':'blue'} size="sm">
                       📅 Earnings {enriched.earningsDays}d · {ukDate(enriched.earningsDate)}
                     </Pill>
                   )}
-
-                  {/* Urgency */}
-                  {ai?.urgency === 'NOW' && <div style={{ color:C.down, fontSize:12, fontWeight:700, marginTop:6 }}>🔴 ACT NOW</div>}
-                  {ai?.urgency === 'THIS WEEK' && <div style={{ color:C.amber, fontSize:12, fontWeight:700, marginTop:6 }}>🟡 THIS WEEK</div>}
+                  {ai?.urgency==='NOW' && <div style={{ color:C.down, fontSize:12, fontWeight:700, marginTop:6 }}>🔴 ACT NOW</div>}
+                  {ai?.urgency==='THIS WEEK' && <div style={{ color:C.amber, fontSize:12, fontWeight:700, marginTop:6 }}>🟡 THIS WEEK</div>}
                 </div>
               )
             })}
