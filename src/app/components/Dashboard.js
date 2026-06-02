@@ -284,6 +284,41 @@ function OppCard({ opp, rank, active, onClick, onDeepDive, deepDiveLoading, deep
       {/* Thesis */}
       <p style={{ color:C.sub, fontSize:14, lineHeight:1.6, margin:'0 0 12px 0' }}>{opp.thesis||'—'}</p>
 
+      {/* Technical trend badge */}
+      {(opp.trend || opp.setup) && (
+        <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:8 }}>
+          {opp.trend && (
+            <Pill tone={
+              opp.trend==='STRONG UPTREND'?'green':
+              opp.trend==='PULLBACK IN UPTREND'?'blue':
+              opp.trend==='RECOVERING'?'amber':'red'
+            } size="sm">
+              📈 {opp.trend}
+            </Pill>
+          )}
+          {opp.setup && opp.setup !== 'NEUTRAL' && (
+            <Pill tone={
+              opp.setup==='PULLBACK'?'green':
+              opp.setup==='EXTENDED'?'amber':'grey'
+            } size="sm">
+              {opp.setup==='PULLBACK'?'✓ IDEAL ENTRY':opp.setup==='EXTENDED'?'⚠ EXTENDED':'📊 '+opp.setup}
+            </Pill>
+          )}
+          {opp.entryQuality && (
+            <Pill tone={
+              opp.entryQuality==='EXCELLENT'?'green':
+              opp.entryQuality==='GOOD'?'blue':
+              opp.entryQuality==='AVERAGE'?'grey':'red'
+            } size="sm">
+              Entry: {opp.entryQuality}
+            </Pill>
+          )}
+        </div>
+      )}
+      {opp.trendComment && (
+        <div style={{ color:C.muted, fontSize:12, fontStyle:'italic', marginBottom:8 }}>{opp.trendComment}</div>
+      )}
+
       {/* Gates */}
       <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:12 }}>
         <GateBadge label="15%+ PATH EXISTS" pass={opp.returnGate==='PASS'?true:opp.returnGate==='FAIL'?false:null} />
@@ -623,14 +658,21 @@ export default function Dashboard() {
 
       // Build stock lines for prompt
       const stockLines = (stocks||[]).map(s => {
-        const hist = EH[s.ticker]
+        const hist = getEH(s.ticker)
         const parts = [
-          `${s.ticker} (${s.name}): price=${s.priceFormatted} change=${s.change1d}`,
+          s.ticker+'('+s.name+'): $'+s.price?.toFixed(2)+' '+s.change1d,
           s.hasVerifiedEarnings
-            ? ('EARNINGS='+s.earningsDate+' in_'+s.earningsTradingDaysAway+'_trading_days'+(s.earningsSource==='estimate'?' [EST]':' [VERIFIED]')+(s.epsEstimate?' EPS_est=$'+s.epsEstimate:''))
-            : 'NO_EARNINGS_DATE_IN_WINDOW',
-          s.bigMoverToday ? 'BIG_MOVER_TODAY — apply Gap-Up Penalty if >8%' : '',
-          hist ? `HIST: ${hist.label}` : '',
+            ? ('EARNINGS='+s.earningsDate+' in_'+s.earningsTradingDaysAway+'d'+(s.earningsSource==='estimate'?' [EST]':' [VERIFIED]')+(s.epsEstimate?' EPS=$'+s.epsEstimate:''))
+            : 'NO_EARNINGS',
+          s.bigMoverToday ? 'GAP_UP>8%_APPLY_PENALTY' : '',
+          hist ? 'HIST:'+hist.label+(hist.live?' [LIVE]':'') : '',
+          s.trend           ? 'TREND:'+s.trend           : '',
+          s.setup           ? 'SETUP:'+s.setup           : '',
+          s.entryQuality    ? 'ENTRY:'+s.entryQuality    : '',
+          s.sma200          ? 'SMA200:$'+s.sma200+(s.pctAbove200!==null?'('+(s.pctAbove200>=0?'+':'')+s.pctAbove200+'%)':'') : 'NO_SMA_DATA',
+          s.sma50           ? 'SMA50:$'+s.sma50+(s.pctAbove50!==null?'('+(s.pctAbove50>=0?'+':'')+s.pctAbove50+'%)':'')    : '',
+          s.nearestSupport      ? 'SUPPORT:'+s.nearestSupport       : '',
+          s.suggestedStopLoss   ? 'CALC_STOP:$'+s.suggestedStopLoss+'('+s.distToStopPct+'%_below)' : '',
         ]
         return parts.filter(Boolean).join(' | ')
       }).join('\n')
@@ -690,18 +732,29 @@ MANUALLY NOTED EVENTS (may be stale — cross-check with live news above):
 
 RULES — apply every time:
 1. Only use earnings dates from the calendar above — never guess dates
-2. If a stock jumped more than 8% TODAY: maximum rating is WATCH only (too late to buy safely)
-3. If earnings already happened and stock already moved 15%+: maximum rating is WATCH (missed the move)
-4. Only recommend BUY if there is a clear path to 15%+ gain within 40 trading days (about 8 weeks)
+2. If a stock jumped more than 8% TODAY (GAP_UP flag): maximum rating is WATCH only
+3. If earnings already happened and stock moved 15%+: maximum rating is WATCH
+4. Only recommend BUY if there is a clear path to 15%+ gain within 40 trading days
 5. Only recommend BUY if this is clearly better than just holding cash
 6. No earnings date within 40 days = WATCH at best
 7. Zero BUY recommendations is perfectly fine if nothing qualifies
 8. Stocks with earnings in the next 0-10 days are highest priority
-9. If fear level (VIX) is above 25: suggest holding more cash, smaller position sizes
-10. currentPrice MUST be the exact dollar price from LIVE STOCK PRICES above — never write N/A
-11. Always include WATCH cards for great companies without near-term earnings (NVDA, MRVL, AVGO, CRDO)
+9. If VIX above 25: suggest holding more cash, smaller position sizes
+10. currentPrice MUST be the exact dollar price from LIVE STOCK PRICES — never write N/A
+11. Always include WATCH cards for NVDA, MRVL, AVGO, CRDO without near-term earnings
 12. Sort by score — BUYs first, WATCHes after
-13. RETURN GATE: if average past earnings reaction is below 10%, mark returnGate as CONDITIONAL PASS not PASS
+13. RETURN GATE: if average past earnings reaction below 10%, mark CONDITIONAL PASS not PASS
+
+TECHNICAL RULES — use the SMA/trend data provided for each stock:
+14. TREND=DOWNTREND (below 200 SMA): maximum rating WATCH regardless of earnings — do not recommend BUY for stocks in downtrend
+15. TREND=PULLBACK IN UPTREND or SETUP=PULLBACK: this is the IDEAL entry — prioritise these for BUY
+16. SETUP=EXTENDED (stock far above 50 SMA): reduce entry quality score, warn it may pull back before moving higher
+17. Use CALC_STOP as the stop loss price — this is calculated from the actual nearest support level, not guessed
+18. Entry zone should be near current price for PULLBACK setups, or wait for pullback to SMA50 for EXTENDED setups
+19. Risk/Reward: calculate using (takeProfit - entry) / (entry - stopLoss) using CALC_STOP
+20. For stocks with ENTRY_QUALITY=EXCELLENT: these are your best setups — prioritise in ranking
+21. For stocks with ENTRY_QUALITY=POOR: cap at WATCH unless earnings catalyst is within 5 days
+22. SMA filter: only recommend BUY for stocks with SMA200 data showing price ABOVE 200 SMA (above200=true)
 
 LANGUAGE RULES — very important:
 - Write as if explaining to someone who has never traded before
@@ -714,7 +767,7 @@ LANGUAGE RULES — very important:
 - Keep every sentence under 20 words. Plain English only.
 
 Return ONLY this JSON (up to 10 opportunities):
-{"marketCondition":"BUY AGGRESSIVELY|BUY SELECTIVELY|WAIT|HOLD CASH","cashRecommendation":"one plain-English sentence — explain why in simple terms","cashPct":30,"regime":"one plain-English sentence describing what the market is doing today","cio":{"bestTradeToday":"TICKER or NONE","bestRiskReward":"TICKER or NONE","finalMarketDecision":"BUY AGGRESSIVELY|BUY SELECTIVELY|WAIT|HOLD CASH","watchList":[{"ticker":"","reason":"plain English, max 10 words — e.g. waiting for earnings date to be confirmed"}],"avoidList":[{"ticker":"","reason":"plain English, max 10 words — e.g. already jumped 15% today, too late to buy"}]},"opportunities":[{"ticker":"","company":"","action":"STRONG BUY|BUY|WATCH|AVOID","currentPrice":"","entryZone":"$X-$Y","stopLoss":"$X","takeProfit":"$X","expectedGain":"15-20%","riskReward":"3:1","allocation":"10%","whyWeLikeIt":"plain English — what upcoming event could drive the price up, max 20 words","whatCouldGoWrong":"plain English — one thing that would make us exit immediately, max 15 words","upcomingEvent":"name of the event e.g. Q2 earnings results","eventDate":"date in format DD Mon YYYY","returnGate":"PASS|CONDITIONAL PASS|FAIL","cashChallenge":"PASS|FAIL","opportunityScore":75}]}`
+{"marketCondition":"BUY AGGRESSIVELY|BUY SELECTIVELY|WAIT|HOLD CASH","cashRecommendation":"one plain-English sentence — explain why in simple terms","cashPct":30,"regime":"one plain-English sentence describing what the market is doing today","cio":{"bestTradeToday":"TICKER or NONE","bestRiskReward":"TICKER or NONE","finalMarketDecision":"BUY AGGRESSIVELY|BUY SELECTIVELY|WAIT|HOLD CASH","watchList":[{"ticker":"","reason":"plain English, max 10 words — e.g. waiting for earnings date to be confirmed"}],"avoidList":[{"ticker":"","reason":"plain English, max 10 words — e.g. already jumped 15% today, too late to buy"}]},"opportunities":[{"ticker":"","company":"","action":"STRONG BUY|BUY|WATCH|AVOID","currentPrice":"","entryZone":"$X-$Y","stopLoss":"use CALC_STOP from data","takeProfit":"$X","expectedGain":"15-20%","riskReward":"calculated e.g. 3:1","allocation":"10%","whyWeLikeIt":"plain English, max 20 words","whatCouldGoWrong":"plain English, max 15 words","upcomingEvent":"event name","eventDate":"DD Mon YYYY","trend":"from data e.g. PULLBACK IN UPTREND","setup":"from data e.g. PULLBACK","entryQuality":"EXCELLENT|GOOD|AVERAGE|POOR","trendComment":"one plain sentence on what the chart looks like","returnGate":"PASS|CONDITIONAL PASS|FAIL","cashChallenge":"PASS|FAIL","opportunityScore":75}]}`
 
       const ai = repairJSON(await claude(prompt, 'cio'))
 
@@ -740,6 +793,16 @@ Return ONLY this JSON (up to 10 opportunities):
           earningsTradingDaysAway: live.earningsTradingDaysAway ?? null,
           earningsSource:          live.earningsSource || null,
           hasVerifiedEarnings:     live.hasVerifiedEarnings || false,
+          // Verified technical data from market route
+          trend:        live.trend        || o.trend        || null,
+          setup:        live.setup        || o.setup        || null,
+          entryQuality: live.entryQuality || o.entryQuality || null,
+          sma20:        live.sma20        ?? null,
+          sma50:        live.sma50        ?? null,
+          sma200:       live.sma200       ?? null,
+          pctAbove200:  live.pctAbove200  ?? null,
+          nearestSupport:    live.nearestSupport    || null,
+          suggestedStopLoss: live.suggestedStopLoss || null,
         }
       })
 
