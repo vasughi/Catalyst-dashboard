@@ -71,7 +71,7 @@ const EH = {
   // AI silicon
   NVDA:  { avg: 14.2, beats: 4, label: '14.2% avg · 4/4 beats — next: est Aug 2026' },
   AMD:   { avg: 9.8,  beats: 3, label: '9.8% avg · 3/4 beats' },
-  AVGO:  { avg: 11.4, beats: 4, label: '11.4% avg · 4/4 beats — next: est Sep 2026' },
+  AVGO:  { avg: 11.4, beats: 4, label: '11.4% avg · 4/4 beats — REPORTS 3 JUN 2026' },
   MRVL:  { avg: 16.2, beats: 4, label: '16.2% avg · 4/4 beats — next: 20 Aug 2026' },
   ARM:   { avg: 12.8, beats: 3, label: '12.8% avg · 3/4 beats' },
   QCOM:  { avg: 7.4,  beats: 3, label: '7.4% avg · 3/4 beats' },
@@ -587,6 +587,12 @@ ${calLines||'None found'}
 PAST EARNINGS REACTIONS (how much the stock moved after the last 4 earnings reports):
 ${Object.entries(EH).map(([k,v])=>`${k}: ${v.label}`).join(' | ')}
 
+IMPORTANT BREAKING NEWS — factor these into ratings:
+- AVGO (Broadcom): Reports earnings TOMORROW 3 Jun 2026 — this is the highest priority setup right now. AI chip revenue and data centre demand guidance will move the stock. Evaluate carefully for BUY.
+- GOOGL: Announced $80 billion new share issue on 1 Jun 2026. Issuing that many new shares reduces the value of existing shares. This is a negative event — max GOOGL rating = WATCH, reduce confidence score.
+- GOOGL: HSBC cut price target from $435 to $420 today — further caution.
+- FCX (Freeport-McMoRan): Despite beating Q1 estimates, stock fell 12% because the Grasberg copper mine in Indonesia had its production cut from 100,000 to 60,000 tons per day. This is a fundamental deterioration — max FCX rating = WATCH.
+
 RULES — apply every time:
 1. Only use earnings dates from the calendar above — never guess dates
 2. If a stock jumped more than 8% TODAY: maximum rating is WATCH only (too late to buy safely)
@@ -598,8 +604,9 @@ RULES — apply every time:
 8. Stocks with earnings in the next 0-10 days are highest priority
 9. If fear level (VIX) is above 25: suggest holding more cash, smaller position sizes
 10. currentPrice MUST be the exact dollar price from LIVE STOCK PRICES above — never write N/A
-11. Always include WATCH cards for great companies without near-term earnings (NVDA, MRVL, AVGO, CRDO) — show what price to buy at and what to wait for
+11. Always include WATCH cards for great companies without near-term earnings (NVDA, MRVL, AVGO, CRDO)
 12. Sort by score — BUYs first, WATCHes after
+13. RETURN GATE: if average past earnings reaction is below 10%, mark returnGate as CONDITIONAL PASS not PASS
 
 LANGUAGE RULES — very important:
 - Write as if explaining to someone who has never traded before
