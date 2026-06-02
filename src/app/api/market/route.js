@@ -315,10 +315,11 @@ export async function GET(request) {
         'META','CRWD','ANET','CRDO','NOW','ZS','RKLB','MSFT',
       ]
 
-      // Run in parallel: quotes + earnings + sectors + VIX + news + technicals
+      // Run in parallel: quotes + earnings + sectors + VIX + news
+      // NOTE: technicals run AFTER quotes resolve (needs prices for context)
       const HIGH_PRIORITY_NEWS = ['NVDA','AVGO','MRVL','ARM','PLTR','CRDO','VRT','GEV','META','NOW']
 
-      const [stockQuotes, earnings, ninjasEarnings, sectorQ, vixQ, newsResults, techResults] =
+      const [stockQuotes, earnings, ninjasEarnings, sectorQ, vixQ, newsResults] =
         await Promise.all([
           quotes(UNIVERSE),
           earningsCalendar(isoDate(today), isoDate(in60days)),
@@ -328,30 +329,27 @@ export async function GET(request) {
           Promise.allSettled(
             HIGH_PRIORITY_NEWS.map(t => companyNews(t, 5).then(n => [t, n]))
           ),
-          // Technicals: fetch in batches with delay to avoid rate limits
-          (async () => {
-            const result = {}
-            const BATCH = 3
-            for (let i = 0; i < TECH_PRIORITY.length; i += BATCH) {
-              const batch = TECH_PRIORITY.slice(i, i + BATCH)
-              const batchResults = await Promise.allSettled(
-                batch.map(sym =>
-                  technicals(sym, stockQuotes[sym]?.price)
-                    .then(t => [sym, t])
-                )
-              )
-              batchResults.forEach(r => {
-                if (r.status === 'fulfilled' && r.value?.[1]) {
-                  result[r.value[0]] = r.value[1]
-                }
-              })
-              if (i + BATCH < TECH_PRIORITY.length) {
-                await new Promise(r => setTimeout(r, 400))
-              }
-            }
-            return result
-          })(),
         ])
+
+      // Technicals run after quotes — needs stockQuotes to be resolved first
+      const techResults = {}
+      const BATCH = 3
+      for (let i = 0; i < TECH_PRIORITY.length; i += BATCH) {
+        const batch = TECH_PRIORITY.slice(i, i + BATCH)
+        const batchRes = await Promise.allSettled(
+          batch.map(sym =>
+            technicals(sym, stockQuotes[sym]?.price).then(t => [sym, t])
+          )
+        )
+        batchRes.forEach(r => {
+          if (r.status === 'fulfilled' && r.value?.[1]) {
+            techResults[r.value[0]] = r.value[1]
+          }
+        })
+        if (i + BATCH < TECH_PRIORITY.length) {
+          await new Promise(r => setTimeout(r, 400))
+        }
+      }
 
       // News map
       const newsMap = {}
