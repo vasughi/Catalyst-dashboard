@@ -1,12 +1,10 @@
 /**
- * CATALYST v3 — src/app/api/market/route.js
+ * CATALYST v4 — src/app/api/market/route.js
  *
- * 3-tab architecture: opportunities | global | risk
- * Data source: Finnhub free tier (60 calls/min, no credit card)
+ * Now includes: SMA 20/50/200, trend classification, entry quality,
+ * breakout/pullback setup detection for every stock.
  *
- * Env vars:
- *   FINNHUB_API_KEY   — finnhub.io
- *   ANTHROPIC_API_KEY — console.anthropic.com
+ * Env vars: FINNHUB_API_KEY, API_NINJAS_KEY (optional)
  */
 
 import { NextResponse } from 'next/server'
@@ -36,24 +34,23 @@ async function fh(path) {
   return res.json()
 }
 
-// Price sanity ranges — reject Finnhub glitch prices outside these bounds
+// Wide sanity ranges — catches Finnhub glitch prices
 const SANITY = {
-  NVDA:[80,230],  AMD:[80,260],   AVGO:[150,750], TSM:[100,260],  MRVL:[50,400],
-  ARM:[80,550],   MSFT:[300,600], GOOGL:[100,500],META:[400,800], PLTR:[50,320],
-  DELL:[80,200],  SMCI:[20,110],  CRWD:[200,550], PANW:[100,280], ZS:[100,300],
-  LMT:[400,750],  RTX:[80,200],   NOC:[400,750],  AXON:[100,450], VRT:[150,500],
-  ETN:[200,450],  CEG:[150,400],  FSLR:[100,400], ANET:[50,150],  RKLB:[10,60],
-  GEV:[300,1400], VST:[50,250],   NOW:[700,1600], CRDO:[100,500], FCX:[30,120],
-  CCJ:[30,90],    ENPH:[50,200],  INTC:[15,60],   QCOM:[100,300], CIEN:[40,120],
-  CRWD:[200,550], PANW:[100,280], S:[10,50],      LUNR:[5,50],    ACHR:[2,30],
-  NRG:[50,200],   MP:[10,50],     HII:[150,350],  GD:[200,350],
+  NVDA:[80,280],  AMD:[80,280],   AVGO:[150,900], TSM:[100,300],  MRVL:[50,450],
+  ARM:[80,650],   MSFT:[300,700], GOOGL:[100,600],META:[300,900], PLTR:[50,400],
+  DELL:[80,250],  SMCI:[20,150],  CRWD:[200,650], PANW:[100,350], ZS:[100,350],
+  LMT:[300,950],  RTX:[50,250],   NOC:[300,950],  AXON:[100,550], VRT:[100,600],
+  ETN:[150,550],  CEG:[100,500],  FSLR:[50,500],  ANET:[50,200],  RKLB:[5,80],
+  GEV:[200,1800], VST:[30,400],   NOW:[500,2000], CRDO:[50,600],  FCX:[20,150],
+  CCJ:[20,120],   ENPH:[20,300],  INTC:[15,80],   QCOM:[100,350], CIEN:[40,150],
+  S:[10,60],      LUNR:[5,60],    ACHR:[2,50],    NRG:[40,250],
+  MP:[5,60],      HII:[100,400],  GD:[150,400],
 }
 
 async function quote(sym) {
   try {
     const d = await fh(`/quote?symbol=${encodeURIComponent(sym)}`)
     if (!d || d.c === 0) return null
-    // Reject prices outside expected range — prevents rate-limit glitches
     const r = SANITY[sym]
     if (r && (d.c < r[0] || d.c > r[1])) return null
     return { symbol: sym, price: d.c, changePct: d.dp ?? 0, prevClose: d.pc }
@@ -61,7 +58,6 @@ async function quote(sym) {
 }
 
 async function quotes(syms) {
-  // Chunk to 15 with 500ms gaps — conservative for Finnhub 60/min free tier
   const CHUNK = 15
   const map = {}
   for (let i = 0; i < syms.length; i += CHUNK) {
@@ -75,6 +71,113 @@ async function quotes(syms) {
   return map
 }
 
+// Fetch daily candles — used for SMA calculation
+async function candles(sym, days = 220) {
+  try {
+    const to   = Math.floor(Date.now() / 1000)
+    const from = to - days * 86400
+    const d    = await fh(`/stock/candle?symbol=${encodeURIComponent(sym)}&resolution=D&from=${from}&to=${to}`)
+    if (!d || d.s !== 'ok' || !d.c?.length) return null
+    return d.c  // array of closing prices, oldest first
+  } catch { return null }
+}
+
+function calcSMA(closes, period) {
+  if (!closes || closes.length < period) return null
+  const slice = closes.slice(-period)
+  return parseFloat((slice.reduce((a, b) => a + b, 0) / period).toFixed(2))
+}
+
+// Compute full technical picture for one stock
+async function technicals(sym, currentPrice) {
+  const closes = await candles(sym, 220)
+  if (!closes || closes.length < 20) return null
+
+  const sma20  = calcSMA(closes, 20)
+  const sma50  = calcSMA(closes, Math.min(50,  closes.length))
+  const sma200 = calcSMA(closes, Math.min(200, closes.length))
+  const price  = currentPrice || closes[closes.length - 1]
+
+  // Trend classification
+  const above20  = sma20  ? price > sma20  : null
+  const above50  = sma50  ? price > sma50  : null
+  const above200 = sma200 ? price > sma200 : null
+
+  let trend = 'UNKNOWN'
+  if (above200 === true  && above50 === true  && above20 === true)  trend = 'STRONG UPTREND'
+  else if (above200 === true && above50 === true && above20 === false) trend = 'PULLBACK IN UPTREND'
+  else if (above200 === true && above50 === false) trend = 'RECOVERING'
+  else if (above200 === false) trend = 'DOWNTREND'
+
+  // Setup type — is the stock pulling back to support or consolidating near breakout?
+  const pctAbove50  = sma50  ? parseFloat(((price - sma50)  / sma50  * 100).toFixed(1)) : null
+  const pctAbove200 = sma200 ? parseFloat(((price - sma200) / sma200 * 100).toFixed(1)) : null
+
+  // Entry quality
+  let entryQuality = 'AVERAGE'
+  let setup = 'NEUTRAL'
+
+  if (trend === 'STRONG UPTREND') {
+    if (pctAbove50 !== null && pctAbove50 > -2 && pctAbove50 < 5) {
+      setup = 'PULLBACK'         // at 50 SMA — ideal entry
+      entryQuality = 'EXCELLENT'
+    } else if (pctAbove50 !== null && pctAbove50 > 20) {
+      setup = 'EXTENDED'         // too far above — poor entry
+      entryQuality = 'POOR'
+    } else {
+      setup = 'TRENDING'
+      entryQuality = 'GOOD'
+    }
+  } else if (trend === 'PULLBACK IN UPTREND') {
+    setup = 'PULLBACK'           // classic buy-the-dip setup
+    entryQuality = 'EXCELLENT'
+  } else if (trend === 'RECOVERING') {
+    setup = 'RECOVERY'
+    entryQuality = 'AVERAGE'
+  } else if (trend === 'DOWNTREND') {
+    setup = 'DOWNTREND'
+    entryQuality = 'POOR'
+  }
+
+  // Natural support level (nearest SMA below price)
+  const smaMaps = [
+    { label: '20 SMA', val: sma20  },
+    { label: '50 SMA', val: sma50  },
+    { label: '200 SMA',val: sma200 },
+  ].filter(s => s.val && s.val < price)
+  const nearestSupport = smaMaps.length
+    ? smaMaps.reduce((a, b) => Math.abs(price - b.val) < Math.abs(price - a.val) ? b : a)
+    : null
+
+  // Suggested stop loss — 2% below nearest support SMA
+  const stopLevel = nearestSupport
+    ? parseFloat((nearestSupport.val * 0.98).toFixed(2))
+    : sma200 ? parseFloat((sma200 * 0.97).toFixed(2)) : null
+
+  const distToStop = stopLevel
+    ? parseFloat(((price - stopLevel) / price * 100).toFixed(1))
+    : null
+
+  return {
+    sma20,
+    sma50,
+    sma200,
+    above20,
+    above50,
+    above200,
+    pctAbove50,
+    pctAbove200,
+    trend,
+    setup,
+    entryQuality,
+    nearestSupport:    nearestSupport ? `${nearestSupport.label} at $${nearestSupport.val}` : null,
+    suggestedStopLoss: stopLevel,
+    distToStopPct:     distToStop,
+  }
+}
+
+// ─── Earnings helpers ─────────────────────────────────────────────────────────
+
 async function earningsCalendar(from, to) {
   try {
     const d = await fh(`/calendar/earnings?from=${from}&to=${to}`)
@@ -82,14 +185,10 @@ async function earningsCalendar(from, to) {
   } catch { return [] }
 }
 
-// Second earnings calendar source — API Ninjas (free, no CC, different data provider)
-// Cross-checking two sources dramatically improves date accuracy
 async function earningsCalendarNinjas(tickers) {
   const NINJAS_KEY = process.env.API_NINJAS_KEY
-  if (!NINJAS_KEY) return {}  // gracefully skip if not configured
-
+  if (!NINJAS_KEY) return {}
   const results = {}
-  // API Ninjas: GET /v1/earningscalendar?ticker=NVDA
   const fetches = tickers.slice(0, 20).map(async ticker => {
     try {
       const res = await fetch(
@@ -98,11 +197,8 @@ async function earningsCalendarNinjas(tickers) {
       )
       if (!res.ok) return
       const data = await res.json()
-      // Take the next upcoming date (first one in the future)
       const today = new Date().toISOString().split('T')[0]
-      const upcoming = (data || [])
-        .filter(e => e.date >= today)
-        .sort((a, b) => a.date.localeCompare(b.date))[0]
+      const upcoming = (data || []).filter(e => e.date >= today).sort((a,b) => a.date.localeCompare(b.date))[0]
       if (upcoming) results[ticker] = { date: upcoming.date, source: 'api_ninjas' }
     } catch {}
   })
@@ -110,8 +206,6 @@ async function earningsCalendarNinjas(tickers) {
   return results
 }
 
-// Fetch recent company news for breaking events (Finnhub free tier)
-// Returns the 5 most recent news items per ticker — used to detect major events
 async function companyNews(ticker, days = 7) {
   try {
     const to   = new Date().toISOString().split('T')[0]
@@ -122,7 +216,6 @@ async function companyNews(ticker, days = 7) {
       headline: n.headline,
       summary:  n.summary?.slice(0, 200),
       date:     new Date(n.datetime * 1000).toISOString().split('T')[0],
-      source:   n.source,
     }))
   } catch { return [] }
 }
@@ -130,10 +223,7 @@ async function companyNews(ticker, days = 7) {
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 
 function isoDate(d) { return d.toISOString().split('T')[0] }
-
-function addDays(d, n) {
-  const r = new Date(d); r.setDate(r.getDate() + n); return r
-}
+function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); return r }
 
 function tradingDaysUntil(dateStr) {
   if (!dateStr) return null
@@ -152,68 +242,28 @@ function tradingDaysUntil(dateStr) {
 // ─── Company names ────────────────────────────────────────────────────────────
 
 const COMPANY_NAMES = {
-  // AI silicon
-  NVDA: 'NVIDIA',       AMD:  'AMD',            AVGO: 'Broadcom',
-  TSM:  'TSMC',         MRVL: 'Marvell',        ARM:  'Arm Holdings',
-  INTC: 'Intel',        QCOM: 'Qualcomm',
-  // Networking
-  ANET: 'Arista',       CIEN: 'Ciena',          CRDO: 'Credo Tech',
-  // Big tech
-  MSFT: 'Microsoft',    GOOGL:'Alphabet',        META: 'Meta',
-  PLTR: 'Palantir',     NOW:  'ServiceNow',
-  // Servers
-  DELL: 'Dell',         SMCI: 'Super Micro',     HPE:  'HP Enterprise',
-  // Cyber
-  CRWD: 'CrowdStrike',  PANW: 'Palo Alto',       ZS:   'Zscaler',
-  S:    'SentinelOne',
-  // Defence
-  LMT:  'Lockheed',     RTX:  'RTX Corp',        NOC:  'Northrop',
-  AXON: 'Axon',         HII:  'Huntington Ingalls', GD: 'General Dynamics',
-  BA:   'Boeing',
-  // Space / drones
-  RKLB: 'Rocket Lab',   LUNR: 'Intuitive Machines', ACHR: 'Archer Aviation',
-  JOBY: 'Joby Aviation',
-  // Power / grid
-  VRT:  'Vertiv',       ETN:  'Eaton',           CEG:  'Constellation',
-  VST:  'Vistra',       GEV:  'GE Vernova',      NRG:  'NRG Energy',
-  // Solar
-  FSLR: 'First Solar',  ENPH: 'Enphase',
-  // Critical minerals
-  FCX:  'Freeport-McMoRan', MP: 'MP Materials',  CCJ:  'Cameco',
+  NVDA:'NVIDIA',  AMD:'AMD',       AVGO:'Broadcom', TSM:'TSMC',     MRVL:'Marvell',
+  ARM:'Arm',      INTC:'Intel',    QCOM:'Qualcomm', ANET:'Arista',  CRDO:'Credo',
+  CIEN:'Ciena',   MSFT:'Microsoft',GOOGL:'Alphabet',META:'Meta',    PLTR:'Palantir',
+  NOW:'ServiceNow',DELL:'Dell',    SMCI:'SuperMicro',CRWD:'CrowdStrike',PANW:'Palo Alto',
+  ZS:'Zscaler',   S:'SentinelOne', LMT:'Lockheed',  RTX:'RTX',     NOC:'Northrop',
+  AXON:'Axon',    HII:'Huntington',GD:'General Dynamics',BA:'Boeing',
+  RKLB:'RocketLab',LUNR:'Intuitive',ACHR:'Archer',  VRT:'Vertiv',  ETN:'Eaton',
+  CEG:'Constellation',VST:'Vistra',GEV:'GE Vernova',NRG:'NRG',
+  FSLR:'FirstSolar',ENPH:'Enphase',FCX:'Freeport',  CCJ:'Cameco',  MP:'MP Materials',
 }
 
 // ── Fallback earnings dates ───────────────────────────────────────────────────
-// Finnhub confirmed dates take priority. These fill the gaps.
-// AUDIT LOG (02 Jun 2026):
-//   META: 29 Jul 2026 CONFIRMED (TipRanks)
-//   VRT:  05 Aug 2026 CONFIRMED (TipRanks/Investing.com) — NOT 28 Jul
-//   MRVL: 20 Aug 2026 CONFIRMED (TipRanks/Investing.com) — reports after close
-//   GEV:  23 Jul 2026 estimated (multiple sources)
-//   NOW:  23 Jul 2026 estimated
-//   GOOGL:22 Jul 2026 estimated
-//   MSFT: 28 Jul 2026 estimated
-//   AMD:  29 Jul 2026 estimated
-//   NVDA: 27 Aug 2026 estimated
-//   PLTR: 04 Aug 2026 estimated
-//   CRWD: 26 Aug 2026 estimated
-//   SMCI: 05 Aug 2026 estimated
-//   ANET: 29 Jul 2026 estimated
-//   AVGO: 11 Sep 2026 estimated (fiscal year end Dec, reports ~Sep)
-//   CRDO: 27 Aug 2026 estimated
-//   VST:  07 Aug 2026 estimated
-//   CEG:  07 Aug 2026 estimated
-//   FCX:  22 Jul 2026 estimated
-//   CCJ:  07 Aug 2026 estimated
 const FALLBACK_EARNINGS = {
-  // CONFIRMED dates
+  // CONFIRMED
   META: { date: '2026-07-29', note: 'confirmed' },
-  VRT:  { date: '2026-07-28', note: 'confirmed' },   // Range 24-29 Jul — using 28 Jul midpoint
+  VRT:  { date: '2026-07-28', note: 'confirmed' },
   MRVL: { date: '2026-08-20', note: 'confirmed' },
-  AVGO: { date: '2026-06-03', note: 'confirmed' },   // CONFIRMED — reports 3 Jun 2026 (IMMINENT)
-  CRDO: { date: '2026-06-01', note: 'confirmed' },   // CONFIRMED — reports TODAY 1 Jun 2026 after close
-  // Corrected estimates
-  FCX:  { date: '2026-07-16', note: 'est' },          // corrected from 22 Jul — Investing.com shows 16 Jul
-  ARM:  { date: '2026-07-29', note: 'confirmed' },  // CONFIRMED — investors.arm.com shows 29 Jul 2026
+  AVGO: { date: '2026-06-03', note: 'confirmed' },
+  CRDO: { date: '2026-06-01', note: 'confirmed' },
+  ARM:  { date: '2026-07-29', note: 'confirmed' },
+  // Estimated
+  FCX:  { date: '2026-07-16', note: 'est' },
   GEV:  { date: '2026-07-23', note: 'est' },
   GOOGL:{ date: '2026-07-22', note: 'est' },
   NOW:  { date: '2026-07-23', note: 'est' },
@@ -226,7 +276,6 @@ const FALLBACK_EARNINGS = {
   CEG:  { date: '2026-08-07', note: 'est' },
   CCJ:  { date: '2026-08-07', note: 'est' },
   NVDA: { date: '2026-08-27', note: 'est' },
-  // CRDO moved to confirmed dates above
   CRWD: { date: '2026-08-26', note: 'est' },
 }
 
@@ -237,198 +286,193 @@ export async function GET(request) {
   const type = searchParams.get('type')
 
   if (!type) return resp({ error: 'Missing type parameter' }, 400)
-  if (!KEY)  return resp({ error: 'FINNHUB_API_KEY not set in Vercel environment variables.' }, 500)
+  if (!KEY)  return resp({ error: 'FINNHUB_API_KEY not set.' }, 500)
 
   try {
 
     // ── OPPORTUNITIES ──────────────────────────────────────────────────────
     if (type === 'opportunities') {
       const UNIVERSE = [
-        // AI silicon / semis (highest priority — largest earnings movers)
-        'NVDA','AMD','AVGO','TSM','MRVL','ARM','QCOM','INTC',
-        // Networking / AI infra (high earnings velocity)
-        'ANET','CRDO','CIEN',
-        // Big tech / AI software
+        'NVDA','AMD','AVGO','TSM','MRVL','ARM','QCOM',
+        'ANET','CRDO',
         'MSFT','GOOGL','META','PLTR','NOW',
-        // Servers / storage
-        'DELL','SMCI','HPE',
-        // Cybersecurity
-        'CRWD','PANW','ZS','S',
-        // Defence / aerospace
-        'LMT','RTX','NOC','AXON','GD','HII',
-        // Space / drones / autonomy
-        'RKLB','LUNR','ACHR',
-        // Power / grid / nuclear (AI infrastructure beneficiaries)
-        'VRT','ETN','CEG','VST','GEV','NRG',
-        // Solar / clean energy
-        'FSLR','ENPH',
-        // Critical minerals / supply chain choke points
-        'FCX','CCJ','MP',
+        'DELL','SMCI',
+        'CRWD','PANW','ZS',
+        'LMT','RTX','NOC','AXON','GD',
+        'RKLB','LUNR',
+        'VRT','ETN','CEG','VST','GEV',
+        'FSLR',
+        'FCX','CCJ',
       ]
 
       const today    = new Date()
       const in60days = addDays(today, 60)
 
-      // All data in parallel — Finnhub + Ninjas cross-check + news
-      const HIGH_PRIORITY = ['NVDA','AVGO','MRVL','ARM','PLTR','CRDO','VRT','GEV','META','NOW']
-      const [stockQuotes, earnings, ninjasEarnings, sectorQ, vixQ, newsItems] = await Promise.all([
-        quotes(UNIVERSE),
-        earningsCalendar(isoDate(today), isoDate(in60days)),
-        earningsCalendarNinjas(UNIVERSE),  // second source for cross-checking
-        quotes(['XLK','ITA','XSD','CIBR','XLE']),
-        quote('VIXY'),
-        // Fetch news for high-priority stocks to auto-detect major events
-        Promise.allSettled(HIGH_PRIORITY.map(t => companyNews(t, 5).then(n => [t, n]))),
-      ])
+      // Priority stocks — fetch technicals for these (most impactful names)
+      // Limit to 15 to control Finnhub API calls
+      const TECH_PRIORITY = [
+        'NVDA','AVGO','MRVL','ARM','PLTR','VRT','GEV',
+        'META','CRWD','ANET','CRDO','NOW','ZS','RKLB','MSFT',
+      ]
 
-      // Build news map: { TICKER: [headlines] }
+      // Run in parallel: quotes + earnings + sectors + VIX + news + technicals
+      const HIGH_PRIORITY_NEWS = ['NVDA','AVGO','MRVL','ARM','PLTR','CRDO','VRT','GEV','META','NOW']
+
+      const [stockQuotes, earnings, ninjasEarnings, sectorQ, vixQ, newsResults, techResults] =
+        await Promise.all([
+          quotes(UNIVERSE),
+          earningsCalendar(isoDate(today), isoDate(in60days)),
+          earningsCalendarNinjas(UNIVERSE),
+          quotes(['XLK','ITA','XSD','CIBR','XLE']),
+          quote('VIXY'),
+          Promise.allSettled(
+            HIGH_PRIORITY_NEWS.map(t => companyNews(t, 5).then(n => [t, n]))
+          ),
+          // Technicals: fetch in batches with delay to avoid rate limits
+          (async () => {
+            const result = {}
+            const BATCH = 3
+            for (let i = 0; i < TECH_PRIORITY.length; i += BATCH) {
+              const batch = TECH_PRIORITY.slice(i, i + BATCH)
+              const batchResults = await Promise.allSettled(
+                batch.map(sym =>
+                  technicals(sym, stockQuotes[sym]?.price)
+                    .then(t => [sym, t])
+                )
+              )
+              batchResults.forEach(r => {
+                if (r.status === 'fulfilled' && r.value?.[1]) {
+                  result[r.value[0]] = r.value[1]
+                }
+              })
+              if (i + BATCH < TECH_PRIORITY.length) {
+                await new Promise(r => setTimeout(r, 400))
+              }
+            }
+            return result
+          })(),
+        ])
+
+      // News map
       const newsMap = {}
-      newsItems.forEach(r => {
+      newsResults.forEach(r => {
         if (r.status === 'fulfilled' && r.value) {
           const [ticker, items] = r.value
           if (items.length) newsMap[ticker] = items
         }
       })
 
-      // Build earnings map with three-tier confidence:
-      //   1. Both Finnhub + Ninjas agree → 'confirmed' (highest confidence)
-      //   2. Finnhub only → 'finnhub' (good but verify)
-      //   3. Ninjas only → 'ninjas' (alternative source)
-      //   4. Hardcoded fallback → 'estimate' (lowest — manual override)
+      // Earnings map — three-tier confidence
       const earningsMap = {}
-
-      // Tier 1: Finnhub dates
-      earnings
-        .filter(e => UNIVERSE.includes(e.symbol))
-        .forEach(e => {
-          const days = tradingDaysUntil(e.date)
-          if (days !== null && days >= 0) {
-            earningsMap[e.symbol] = {
-              ticker:      e.symbol,
-              date:        e.date,
-              tradingDaysAway: days,
-              epsEstimate: e.epsEstimate ?? null,
-              source:      'finnhub',
-            }
+      earnings.filter(e => UNIVERSE.includes(e.symbol)).forEach(e => {
+        const days = tradingDaysUntil(e.date)
+        if (days !== null && days >= 0) {
+          earningsMap[e.symbol] = {
+            ticker: e.symbol, date: e.date,
+            tradingDaysAway: days, epsEstimate: e.epsEstimate ?? null, source: 'finnhub',
           }
-        })
-
-      // Cross-check with Ninjas — upgrade confidence or correct date
+        }
+      })
       Object.entries(ninjasEarnings).forEach(([ticker, nb]) => {
         if (!UNIVERSE.includes(ticker)) return
         const days = tradingDaysUntil(nb.date)
         if (days === null || days < 0) return
         const existing = earningsMap[ticker]
         if (!existing) {
-          // Ninjas has date, Finnhub doesn't
           earningsMap[ticker] = { ticker, date: nb.date, tradingDaysAway: days, epsEstimate: null, source: 'ninjas' }
         } else if (existing.date === nb.date) {
-          // Both agree — upgrade to confirmed
           earningsMap[ticker].source = 'confirmed'
         } else {
-          // Dates differ — flag as conflicted, use Ninjas date if closer
-          const fDays = existing.tradingDaysAway
           earningsMap[ticker].source = 'conflicted'
           earningsMap[ticker].altDate = nb.date
-          // Use whichever is sooner (more likely to be correct)
-          if (days < fDays) {
+          if (days < existing.tradingDaysAway) {
             earningsMap[ticker].date = nb.date
             earningsMap[ticker].tradingDaysAway = days
           }
         }
       })
-
-      // Tier 3: Hardcoded fallbacks for gaps
       Object.entries(FALLBACK_EARNINGS).forEach(([ticker, fb]) => {
         if (!earningsMap[ticker]) {
           const days = tradingDaysUntil(fb.date)
           if (days !== null && days >= 0) {
             earningsMap[ticker] = {
-              ticker,
-              date: fb.date,
-              tradingDaysAway: days,
-              epsEstimate: null,
+              ticker, date: fb.date, tradingDaysAway: days, epsEstimate: null,
               source: fb.note === 'confirmed' ? 'confirmed' : 'estimate',
-              note: fb.note,
             }
           }
         }
       })
 
-      // VIX & sector regime
+      // VIX & sectors
       const vixPrice  = vixQ?.price ?? null
-      const vixRegime = vixPrice
-        ? (vixPrice > 25 ? 'HIGH_FEAR' : vixPrice > 18 ? 'ELEVATED' : 'CALM')
-        : 'UNKNOWN'
+      const vixRegime = vixPrice ? (vixPrice > 25 ? 'HIGH_FEAR' : vixPrice > 18 ? 'ELEVATED' : 'CALM') : 'UNKNOWN'
 
-      // Sector direction (today's % change of ETF)
       const mkSector = (sym, label) => {
         const q = sectorQ[sym]
         if (!q) return null
-        return {
-          label,
-          changePct: q.changePct,
-          direction: q.changePct >= 0 ? 'BULLISH' : 'BEARISH',
-          change: `${q.changePct >= 0 ? '+' : ''}${q.changePct.toFixed(2)}%`,
-        }
+        return { label, changePct: q.changePct, direction: q.changePct >= 0 ? 'BULLISH' : 'BEARISH', change: `${q.changePct>=0?'+':''}${q.changePct.toFixed(2)}%` }
       }
       const sectors = [
-        mkSector('XLK',  'Technology'),
-        mkSector('XSD',  'Semiconductors'),
-        mkSector('ITA',  'Defence'),
-        mkSector('CIBR', 'Cybersecurity'),
-        mkSector('XLE',  'Energy'),
+        mkSector('XLK','Technology'), mkSector('XSD','Semiconductors'),
+        mkSector('ITA','Defence'), mkSector('CIBR','Cybersecurity'), mkSector('XLE','Energy'),
       ].filter(Boolean)
 
-      // Build stock objects
+      // Build stock objects with technicals
       const stocks = UNIVERSE
         .filter(sym => stockQuotes[sym])
         .map(sym => {
           const q  = stockQuotes[sym]
           const ec = earningsMap[sym] || null
+          const tc = techResults[sym] || null
           return {
-            ticker: sym,
-            name:   COMPANY_NAMES[sym] || sym,
-            price:        q.price,
+            ticker:      sym,
+            name:        COMPANY_NAMES[sym] || sym,
+            price:       q.price,
             priceFormatted: `$${q.price.toFixed(2)}`,
-            changePct:    q.changePct,
-            change1d:     `${q.changePct >= 0 ? '+' : ''}${q.changePct.toFixed(2)}%`,
-            direction:    q.changePct >= 0 ? 'up' : 'down',
+            changePct:   q.changePct,
+            change1d:    `${q.changePct>=0?'+':''}${q.changePct.toFixed(2)}%`,
+            direction:   q.changePct >= 0 ? 'up' : 'down',
             bigMoverToday: Math.abs(q.changePct) > 8,
+            // Earnings
             earningsDate:            ec?.date ?? null,
             earningsTradingDaysAway: ec?.tradingDaysAway ?? null,
             epsEstimate:             ec?.epsEstimate ?? null,
             earningsSource:          ec?.source ?? null,
             hasVerifiedEarnings:     !!ec,
+            // Technicals — the new part
+            sma20:         tc?.sma20 ?? null,
+            sma50:         tc?.sma50 ?? null,
+            sma200:        tc?.sma200 ?? null,
+            above200:      tc?.above200 ?? null,
+            pctAbove50:    tc?.pctAbove50 ?? null,
+            pctAbove200:   tc?.pctAbove200 ?? null,
+            trend:         tc?.trend ?? null,
+            setup:         tc?.setup ?? null,
+            entryQuality:  tc?.entryQuality ?? null,
+            nearestSupport:    tc?.nearestSupport ?? null,
+            suggestedStopLoss: tc?.suggestedStopLoss ?? null,
+            distToStopPct:     tc?.distToStopPct ?? null,
           }
         })
         .sort((a, b) => {
-          // Nearest earnings first, then by absolute % move
           const aD = a.earningsTradingDaysAway ?? 999
           const bD = b.earningsTradingDaysAway ?? 999
           if (aD !== bD) return aD - bD
           return Math.abs(b.changePct) - Math.abs(a.changePct)
         })
 
-      // Sorted earnings calendar for display
       const calendarItems = Object.values(earningsMap)
         .sort((a, b) => a.tradingDaysAway - b.tradingDaysAway)
 
       return resp({
         meta: {
-          requestedType: type,
-          fetchedAt: new Date().toISOString(),
-          provider: 'finnhub+ninjas',
-          stocksReturned: stocks.length,
+          requestedType: type, fetchedAt: new Date().toISOString(),
+          provider: 'finnhub+ninjas', stocksReturned: stocks.length,
+          technicalsComputed: Object.keys(techResults).length,
           earningsFound: calendarItems.length,
-          confirmedDates: calendarItems.filter(e => e.source === 'confirmed').length,
         },
-        vix: vixPrice,
-        vixRegime,
-        sectors,
-        stocks,
+        vix: vixPrice, vixRegime, sectors, stocks,
         earningsCalendar: calendarItems,
-        // Live company news — auto-detects major events like dilutions, guidance cuts etc.
         companyNews: newsMap,
       })
     }
@@ -444,7 +488,7 @@ export async function GET(request) {
       }
 
       const [indices, comms, sectorQ, vixQ, gbpusd, eurusd, usdjpy] = await Promise.all([
-        quotes(['SPY','QQQ','DIA','IWM','EWG','EWQ','EWJ','ITA','XSD']), // ITA=defence, XSD=semis added
+        quotes(['SPY','QQQ','DIA','IWM','EWG','EWQ','EWJ']),
         quotes(['USO','GLD','CPER']),
         quotes(['XLK','ITA','XSD','CIBR','XLE','XLI']),
         quote('VIXY'),
@@ -454,71 +498,42 @@ export async function GET(request) {
       ])
 
       const vixPrice  = vixQ?.price ?? null
-      const vixRegime = vixPrice
-        ? (vixPrice > 25 ? 'HIGH_FEAR' : vixPrice > 18 ? 'ELEVATED' : 'CALM')
-        : 'UNKNOWN'
+      const vixRegime = vixPrice ? (vixPrice > 25 ? 'HIGH_FEAR' : vixPrice > 18 ? 'ELEVATED' : 'CALM') : 'UNKNOWN'
 
       const fmtQ = (q, name) => {
         if (!q) return null
         const c = q.changePct ?? 0
-        return {
-          name,
-          value: q.price.toLocaleString('en-US', { maximumFractionDigits: 2 }),
-          change: `${c >= 0 ? '+' : ''}${c.toFixed(2)}%`,
-          direction: c >= 0 ? 'up' : 'down',
-        }
+        return { name, value: q.price.toLocaleString('en-US',{maximumFractionDigits:2}), change: `${c>=0?'+':''}${c.toFixed(2)}%`, direction: c>=0?'up':'down' }
       }
-
-      // Sanity check commodity ETF prices
-      const usoQ  = comms['USO']
-      const gldQ  = comms['GLD']
-      const cperQ = comms['CPER']
-
       const mkSector = (sym, label) => {
-        const q = sectorQ[sym]
-        if (!q) return null
-        return {
-          label,
-          changePct: q.changePct,
-          direction: q.changePct >= 0 ? 'up' : 'down',
-          change: `${q.changePct >= 0 ? '+' : ''}${q.changePct.toFixed(2)}%`,
-        }
+        const q = sectorQ[sym]; if (!q) return null
+        return { label, changePct: q.changePct, direction: q.changePct>=0?'up':'down', change:`${q.changePct>=0?'+':''}${q.changePct.toFixed(2)}%` }
       }
+
+      const usoQ = comms['USO'], gldQ = comms['GLD'], cperQ = comms['CPER']
 
       return resp({
         meta: { requestedType: type, fetchedAt: new Date().toISOString(), provider: 'finnhub' },
-        vix: vixPrice,
-        vixRegime,
-        // US indices via ETF proxies
+        vix: vixPrice, vixRegime,
         indices: [
-          fmtQ(indices['SPY'], 'S&P 500'),
-          fmtQ(indices['QQQ'], 'NASDAQ 100'),
-          fmtQ(indices['DIA'], 'Dow Jones'),
-          fmtQ(indices['IWM'], 'Russell 2000'),
-          fmtQ(indices['EWG'], 'DAX'),
-          fmtQ(indices['EWQ'], 'CAC 40'),
-          fmtQ(indices['EWJ'], 'Nikkei'),
+          fmtQ(indices['SPY'],'S&P 500'), fmtQ(indices['QQQ'],'NASDAQ 100'),
+          fmtQ(indices['DIA'],'Dow Jones'), fmtQ(indices['IWM'],'Russell 2000'),
+          fmtQ(indices['EWG'],'DAX'), fmtQ(indices['EWQ'],'CAC 40'), fmtQ(indices['EWJ'],'Nikkei'),
         ].filter(Boolean),
-        // Sector performance today
         sectors: [
-          mkSector('XLK',  'Technology'),
-          mkSector('XSD',  'Semiconductors'),
-          mkSector('ITA',  'Defence'),
-          mkSector('CIBR', 'Cybersecurity'),
-          mkSector('XLE',  'Energy'),
-          mkSector('XLI',  'Industrials'),
+          mkSector('XLK','Technology'), mkSector('XSD','Semiconductors'),
+          mkSector('ITA','Defence'), mkSector('CIBR','Cybersecurity'),
+          mkSector('XLE','Energy'), mkSector('XLI','Industrials'),
         ].filter(Boolean),
-        // Commodities (sanity-checked)
         commodities: [
           usoQ  && usoQ.price  < 200 ? fmtQ(usoQ,  'WTI Oil (USO)') : null,
           gldQ  && gldQ.price  < 500 ? fmtQ(gldQ,  'Gold (GLD)')    : null,
           cperQ && cperQ.price < 100 ? fmtQ(cperQ, 'Copper (CPER)') : null,
         ].filter(Boolean),
-        // FX
         currencies: [
-          gbpusd ? { pair: 'GBP/USD', value: gbpusd.price.toFixed(4), change: `${gbpusd.changePct >= 0 ? '+' : ''}${gbpusd.changePct.toFixed(2)}%` } : null,
-          eurusd ? { pair: 'EUR/USD', value: eurusd.price.toFixed(4), change: `${eurusd.changePct >= 0 ? '+' : ''}${eurusd.changePct.toFixed(2)}%` } : null,
-          usdjpy ? { pair: 'USD/JPY', value: usdjpy.price.toFixed(2), change: `${usdjpy.changePct >= 0 ? '+' : ''}${usdjpy.changePct.toFixed(2)}%` } : null,
+          gbpusd ? { pair:'GBP/USD', value:gbpusd.price.toFixed(4), change:`${gbpusd.changePct>=0?'+':''}${gbpusd.changePct.toFixed(2)}%` } : null,
+          eurusd ? { pair:'EUR/USD', value:eurusd.price.toFixed(4), change:`${eurusd.changePct>=0?'+':''}${eurusd.changePct.toFixed(2)}%` } : null,
+          usdjpy ? { pair:'USD/JPY', value:usdjpy.price.toFixed(2),  change:`${usdjpy.changePct>=0?'+':''}${usdjpy.changePct.toFixed(2)}%` } : null,
         ].filter(Boolean),
       })
     }
