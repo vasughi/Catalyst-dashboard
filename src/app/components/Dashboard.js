@@ -578,6 +578,7 @@ export default function Dashboard() {
   const [showOverlay, setShowOverlay] = useState(false)
   // Portfolio password gate — stored in sessionStorage (cleared on browser close)
   const [portfolioUnlocked, setPortfolioUnlocked] = useState(false)
+  const [loadingStep, setLoadingStep] = useState('')
   const [passwordInput,     setPasswordInput]     = useState('')
   const [passwordError,     setPasswordError]     = useState(false)
   // Live earnings history — fetched from /api/earnings-history, cached 24h
@@ -652,8 +653,10 @@ export default function Dashboard() {
   const loadOpps = useCallback(async () => {
     setLoading(p=>({...p,opportunities:true}))
     setErrors(p=>({...p,opportunities:null}))
+    setLoadingStep('Fetching live prices…')
     try {
       const md = await market('opportunities')
+      setLoadingStep('Building AI analysis…')
       const { stocks, earningsCalendar, vix, vixRegime, sectors } = md
 
       // Build stock lines for prompt
@@ -813,6 +816,7 @@ Return ONLY this JSON (up to 10 opportunities):
       setErrors(p=>({...p,opportunities:e.message}))
     } finally {
       setLoading(p=>({...p,opportunities:false}))
+      setLoadingStep('')
     }
   }, [market, claude])
 
@@ -2239,12 +2243,31 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
       <div style={{ ...card({ minHeight:320 }), display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:14 }}>
         <div style={{ width:44, height:44, border:`3px solid ${C.border}`, borderTop:`3px solid ${C.accent}`, borderRadius:'50%', animation:'spin 0.8s linear infinite' }} />
         <div style={{ color:C.text, fontWeight:700, fontSize:16 }}>
-          {activeTab==='opportunities' ? 'Running full analysis…' : 'Loading…'}
+          {loadingStep || (activeTab==='opportunities' ? 'Running full analysis…' : 'Loading…')}
         </div>
-        <div style={{ color:C.muted, fontSize:13, textAlign:'center', maxWidth:380, lineHeight:1.6 }}>
+        {activeTab==='opportunities' && (
+          <div style={{ display:'flex', flexDirection:'column', gap:6, alignItems:'center', marginTop:4 }}>
+            {[
+              ['Fetching live prices…',    '~3s',  loadingStep !== 'Fetching live prices…'],
+              ['Computing SMA trends…',    '~8s',  loadingStep === 'Building AI analysis…'],
+              ['Building AI analysis…',    '~10s', false],
+            ].map(([step, time, done]) => (
+              <div key={step} style={{ display:'flex', alignItems:'center', gap:8 }}>
+                <span style={{ fontSize:14, width:16, textAlign:'center' }}>
+                  {done ? '✓' : loadingStep === step ? '⟳' : '○'}
+                </span>
+                <span style={{ color: done ? C.up : loadingStep === step ? C.accent : C.muted, fontSize:13 }}>
+                  {step}
+                </span>
+                <span style={{ color:C.muted, fontSize:11 }}>{time}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ color:C.muted, fontSize:12, marginTop:4 }}>
           {activeTab==='opportunities'
-            ? 'Fetching live prices · Pulling earnings calendar · Applying trading rules · Generating CIO analysis'
-            : 'Fetching live market data and running AI analysis'}
+            ? 'SMA trends are cached for 6 hours — faster after first load'
+            : 'Fetching live market data'}
         </div>
       </div>
     )
