@@ -197,12 +197,12 @@ function Tip({ term, meaning }) {
 
 // Key terms glossary
 const GLOSSARY = {
-  'Reward vs Risk': 'For every £1 you risk losing, how much could you gain. 3:1 means you could make £3 for every £1 at risk.',
-  'VIX': 'The market's fear level. Below 18 = calm. 18-25 = cautious. Above 25 = high fear — consider holding more cash.',
-  'Opportunity Score': 'Our overall rating out of 100. Above 80 = strong setup. 70-80 = good. Below 60 = borderline.',
-  '15%+ PATH EXISTS': 'We checked whether a realistic path to 15% gain exists within 8 weeks. Green tick means yes.',
-  'BEATS HOLDING CASH': 'We checked whether this trade is clearly better than just keeping your money in cash. Green tick means yes.',
-  'Portfolio %': 'What percentage of your total investment budget to put into this one stock. Never put everything in one stock.',
+  "Reward vs Risk": "For every £1 you risk losing, how much could you gain. 3:1 means you could make £3 for every £1 at risk.",
+  "VIX": "The market's fear level. Below 18 = calm. 18-25 = cautious. Above 25 = high fear — consider holding more cash.",
+  "Opportunity Score": "Our overall rating out of 100. Above 80 = strong setup. 70-80 = good. Below 60 = borderline.",
+  "15%+ PATH EXISTS": "We checked whether a realistic path to 15% gain exists within 8 weeks. Green tick means yes.",
+  "BEATS HOLDING CASH": "We checked whether this trade is clearly better than just keeping your money in cash. Green tick means yes.",
+  "Portfolio %": "What percentage of your total investment budget to put into this one stock. Never put everything in one stock.",
 }
 
 function ActionBadge({ action, size='md' }) {
