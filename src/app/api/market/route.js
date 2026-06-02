@@ -47,24 +47,6 @@ const SANITY = {
   MP:[5,60],      HII:[100,400],  GD:[150,400],
 }
 
-// ── Module-level technicals cache ───────────────────────────────────────────
-// SMAs change slowly — cache for 6 hours to avoid re-fetching candles every refresh
-const TECH_CACHE = {}          // { sym: { data, cachedAt } }
-const TECH_CACHE_TTL = 6 * 60 * 60 * 1000  // 6 hours in ms
-
-async function cachedTechnicals(sym, currentPrice) {
-  const cached = TECH_CACHE[sym]
-  const now = Date.now()
-  if (cached && (now - cached.cachedAt) < TECH_CACHE_TTL) {
-    return cached.data  // return cached result, skip candle fetch
-  }
-  const result = await technicals(sym, currentPrice)
-  if (result) {
-    TECH_CACHE[sym] = { data: result, cachedAt: now }
-  }
-  return result
-}
-
 async function quote(sym) {
   try {
     const d = await fh(`/quote?symbol=${encodeURIComponent(sym)}`)
@@ -90,110 +72,7 @@ async function quotes(syms) {
 }
 
 // Fetch daily candles — used for SMA calculation
-async function candles(sym, days = 220) {
-  try {
-    const to   = Math.floor(Date.now() / 1000)
-    const from = to - days * 86400
-    const d    = await fh(`/stock/candle?symbol=${encodeURIComponent(sym)}&resolution=D&from=${from}&to=${to}`)
-    if (!d || d.s !== 'ok' || !d.c?.length) return null
-    return d.c  // array of closing prices, oldest first
-  } catch { return null }
-}
-
-function calcSMA(closes, period) {
-  if (!closes || closes.length < period) return null
-  const slice = closes.slice(-period)
-  return parseFloat((slice.reduce((a, b) => a + b, 0) / period).toFixed(2))
-}
-
 // Compute full technical picture for one stock
-async function technicals(sym, currentPrice) {
-  const closes = await candles(sym, 220)
-  if (!closes || closes.length < 20) return null
-
-  const sma20  = calcSMA(closes, 20)
-  const sma50  = calcSMA(closes, Math.min(50,  closes.length))
-  const sma200 = calcSMA(closes, Math.min(200, closes.length))
-  const price  = currentPrice || closes[closes.length - 1]
-
-  // Trend classification
-  const above20  = sma20  ? price > sma20  : null
-  const above50  = sma50  ? price > sma50  : null
-  const above200 = sma200 ? price > sma200 : null
-
-  let trend = 'UNKNOWN'
-  if (above200 === true  && above50 === true  && above20 === true)  trend = 'STRONG UPTREND'
-  else if (above200 === true && above50 === true && above20 === false) trend = 'PULLBACK IN UPTREND'
-  else if (above200 === true && above50 === false) trend = 'RECOVERING'
-  else if (above200 === false) trend = 'DOWNTREND'
-
-  // Setup type — is the stock pulling back to support or consolidating near breakout?
-  const pctAbove50  = sma50  ? parseFloat(((price - sma50)  / sma50  * 100).toFixed(1)) : null
-  const pctAbove200 = sma200 ? parseFloat(((price - sma200) / sma200 * 100).toFixed(1)) : null
-
-  // Entry quality
-  let entryQuality = 'AVERAGE'
-  let setup = 'NEUTRAL'
-
-  if (trend === 'STRONG UPTREND') {
-    if (pctAbove50 !== null && pctAbove50 > -2 && pctAbove50 < 5) {
-      setup = 'PULLBACK'         // at 50 SMA — ideal entry
-      entryQuality = 'EXCELLENT'
-    } else if (pctAbove50 !== null && pctAbove50 > 20) {
-      setup = 'EXTENDED'         // too far above — poor entry
-      entryQuality = 'POOR'
-    } else {
-      setup = 'TRENDING'
-      entryQuality = 'GOOD'
-    }
-  } else if (trend === 'PULLBACK IN UPTREND') {
-    setup = 'PULLBACK'           // classic buy-the-dip setup
-    entryQuality = 'EXCELLENT'
-  } else if (trend === 'RECOVERING') {
-    setup = 'RECOVERY'
-    entryQuality = 'AVERAGE'
-  } else if (trend === 'DOWNTREND') {
-    setup = 'DOWNTREND'
-    entryQuality = 'POOR'
-  }
-
-  // Natural support level (nearest SMA below price)
-  const smaMaps = [
-    { label: '20 SMA', val: sma20  },
-    { label: '50 SMA', val: sma50  },
-    { label: '200 SMA',val: sma200 },
-  ].filter(s => s.val && s.val < price)
-  const nearestSupport = smaMaps.length
-    ? smaMaps.reduce((a, b) => Math.abs(price - b.val) < Math.abs(price - a.val) ? b : a)
-    : null
-
-  // Suggested stop loss — 2% below nearest support SMA
-  const stopLevel = nearestSupport
-    ? parseFloat((nearestSupport.val * 0.98).toFixed(2))
-    : sma200 ? parseFloat((sma200 * 0.97).toFixed(2)) : null
-
-  const distToStop = stopLevel
-    ? parseFloat(((price - stopLevel) / price * 100).toFixed(1))
-    : null
-
-  return {
-    sma20,
-    sma50,
-    sma200,
-    above20,
-    above50,
-    above200,
-    pctAbove50,
-    pctAbove200,
-    trend,
-    setup,
-    entryQuality,
-    nearestSupport:    nearestSupport ? `${nearestSupport.label} at $${nearestSupport.val}` : null,
-    suggestedStopLoss: stopLevel,
-    distToStopPct:     distToStop,
-  }
-}
-
 // ─── Earnings helpers ─────────────────────────────────────────────────────────
 
 async function earningsCalendar(from, to) {
@@ -342,16 +221,7 @@ export async function GET(request) {
       const today    = new Date()
       const in60days = addDays(today, 60)
 
-      // Priority stocks — fetch technicals for these (most impactful names)
-      // Limit to 15 to control Finnhub API calls
-      const TECH_PRIORITY = [
-        'NVDA','AVGO','MRVL','ARM','PLTR','VRT','GEV',
-        'META','CRWD','ANET','CRDO','NOW','ZS','RKLB','MSFT',
-        'SMCI','PANW','ETN','CEG','FCX','GOOGL',
-      ]
-
-      // Run in parallel: quotes + earnings + sectors + VIX + news
-      // NOTE: technicals run AFTER quotes resolve (needs prices for context)
+      // Run everything in parallel — no SMA computation here (moved to /api/technicals)
       const HIGH_PRIORITY_NEWS = ['NVDA','AVGO','MRVL','ARM','PLTR','CRDO','VRT','GEV','META','NOW']
 
       const [stockQuotes, earnings, ninjasEarnings, sectorQ, vixQ, newsResults] =
@@ -366,25 +236,8 @@ export async function GET(request) {
           ),
         ])
 
-      // Technicals run after quotes — needs stockQuotes to be resolved first
+      // techResults now comes from /api/technicals — empty here, filled async on client
       const techResults = {}
-      const BATCH = 3
-      for (let i = 0; i < TECH_PRIORITY.length; i += BATCH) {
-        const batch = TECH_PRIORITY.slice(i, i + BATCH)
-        const batchRes = await Promise.allSettled(
-          batch.map(sym =>
-            cachedTechnicals(sym, stockQuotes[sym]?.price).then(t => [sym, t])
-          )
-        )
-        batchRes.forEach(r => {
-          if (r.status === 'fulfilled' && r.value?.[1]) {
-            techResults[r.value[0]] = r.value[1]
-          }
-        })
-        if (i + BATCH < TECH_PRIORITY.length) {
-          await new Promise(r => setTimeout(r, 250))  // was 400ms
-        }
-      }
 
       // News map
       const newsMap = {}
@@ -501,7 +354,6 @@ export async function GET(request) {
         meta: {
           requestedType: type, fetchedAt: new Date().toISOString(),
           provider: 'finnhub+ninjas', stocksReturned: stocks.length,
-          technicalsComputed: Object.keys(techResults).length,
           earningsFound: calendarItems.length,
         },
         vix: vixPrice, vixRegime, sectors, stocks,
