@@ -69,15 +69,15 @@ const UNIVERSE = [
 // avg = average 1-day move after earnings (last 4 quarters), beats = quarters beat out of 4
 const EH = {
   // AI silicon
-  NVDA:  { avg: 14.2, beats: 4, label: '14.2% avg · 4/4 beats' },
+  NVDA:  { avg: 14.2, beats: 4, label: '14.2% avg · 4/4 beats — next: est Aug 2026' },
   AMD:   { avg: 9.8,  beats: 3, label: '9.8% avg · 3/4 beats' },
-  AVGO:  { avg: 11.4, beats: 4, label: '11.4% avg · 4/4 beats' },
-  MRVL:  { avg: 16.2, beats: 4, label: '16.2% avg · 4/4 beats' },
+  AVGO:  { avg: 11.4, beats: 4, label: '11.4% avg · 4/4 beats — next: est Sep 2026' },
+  MRVL:  { avg: 16.2, beats: 4, label: '16.2% avg · 4/4 beats — next: 20 Aug 2026' },
   ARM:   { avg: 12.8, beats: 3, label: '12.8% avg · 3/4 beats' },
   QCOM:  { avg: 7.4,  beats: 3, label: '7.4% avg · 3/4 beats' },
   // Networking
   ANET:  { avg: 9.2,  beats: 4, label: '9.2% avg · 4/4 beats' },
-  CRDO:  { avg: 19.8, beats: 3, label: '19.8% avg · 3/4 beats' },
+  CRDO:  { avg: 19.8, beats: 3, label: '19.8% avg · 3/4 beats — next: est Aug 2026' },
   // Big tech
   MSFT:  { avg: 4.8,  beats: 4, label: '4.8% avg · 4/4 beats — below 15% gate' },
   GOOGL: { avg: 7.2,  beats: 3, label: '7.2% avg · 3/4 beats' },
@@ -522,8 +522,10 @@ MANDATORY RULES — apply every time, no exceptions:
 8. Stocks with earnings in 0-10 days are highest priority for BUY consideration
 9. High-fear VIX (>25): reduce all position sizes, increase cash recommendation
 10. Keep all string values SHORT — max 15 words per field
+11. INCLUDE top WATCH setups for quality names without near-term catalyst (NVDA, MRVL, AVGO, CRDO) — show entry zone and what trigger to wait for
+12. Rank ALL opportunities by Opportunity Score — BUYs first then WATCHes
 
-Return ONLY this JSON (max 5 opportunities):
+Return ONLY this JSON (up to 10 opportunities — all qualifying BUYs plus top WATCHes):
 {"marketCondition":"BUY AGGRESSIVELY|BUY SELECTIVELY|WAIT|HOLD CASH","cashRecommendation":"one sentence","cashPct":30,"regime":"one sentence on market regime","cio":{"bestTradeToday":"TICKER or NONE","bestRiskReward":"TICKER or NONE","finalMarketDecision":"BUY AGGRESSIVELY|BUY SELECTIVELY|WAIT|HOLD CASH","watchList":[{"ticker":"","reason":"max 8 words"}],"avoidList":[{"ticker":"","reason":"max 8 words"}]},"opportunities":[{"ticker":"","company":"","action":"STRONG BUY|BUY|WATCH|AVOID","currentPrice":"","entryZone":"$X-$Y","stopLoss":"$X","takeProfit":"$X","expectedGain":"15-20%","riskReward":"3:1","allocation":"10%","catalyst":"max 12 words","catalystDate":"VERIFIED/EST date or UNVERIFIED","thesis":"max 15 words","invalidation":"max 12 words","returnGate":"PASS|CONDITIONAL PASS|FAIL","cashChallenge":"PASS|FAIL","opportunityScore":75}]}`
 
       const ai = repairJSON(await claude(prompt, 'cio'))
