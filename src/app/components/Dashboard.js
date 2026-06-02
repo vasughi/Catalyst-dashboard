@@ -619,7 +619,7 @@ export default function Dashboard() {
         const parts = [
           `${s.ticker} (${s.name}): price=${s.priceFormatted} change=${s.change1d}`,
           s.hasVerifiedEarnings
-            ? `EARNINGS=${s.earningsDate} in_${s.earningsTradingDaysAway}_trading_days${s.earningsSource==='estimate'?' [EST]':' [VERIFIED]'}${s.epsEstimate?` EPS_est=$${s.epsEstimate}`:''}`
+            ? ('EARNINGS='+s.earningsDate+' in_'+s.earningsTradingDaysAway+'_trading_days'+(s.earningsSource==='estimate'?' [EST]':' [VERIFIED]')+(s.epsEstimate?' EPS_est=$'+s.epsEstimate:''))
             : 'NO_EARNINGS_DATE_IN_WINDOW',
           s.bigMoverToday ? 'BIG_MOVER_TODAY — apply Gap-Up Penalty if >8%' : '',
           hist ? `HIST: ${hist.label}` : '',
@@ -627,7 +627,7 @@ export default function Dashboard() {
         return parts.filter(Boolean).join(' | ')
       }).join('\n')
 
-      const sectorLines = (sectors||[]).map(s=>`${s.label}: ${s.change} (${s.direction})`).join(', ')
+      const sectorLines = (sectors||[]).map(s=>s.label+': '+s.change+' ('+s.direction+')').join(', ')
 
       // Build earnings history lines — live if available, hardcoded fallback otherwise
       const ehLines = UNIVERSE.map(sym => {
@@ -642,7 +642,7 @@ export default function Dashboard() {
           : e.source === 'ninjas'    ? '[API NINJAS source]'
           : e.source === 'estimate'  ? '[HARDCODED ESTIMATE]'
           : '[FINNHUB]'
-        return `${e.ticker} → ${e.date} (${e.tradingDaysAway}d) ${conf}${e.epsEstimate?` EPS_est=$${e.epsEstimate}`:''}`
+        return e.ticker+' → '+e.date+' ('+e.tradingDaysAway+'d) '+conf+(e.epsEstimate?' EPS_est=$'+e.epsEstimate:'')
       }).join('\n')
 
       // Live company news — auto-built from Finnhub news feed
@@ -666,8 +666,8 @@ UPCOMING EARNINGS DATES:
 ${calLines||'None found'}
 
 PAST EARNINGS REACTIONS (how much the stock moved after the last 4 earnings reports):
-${ehLines || Object.entries(EH).map(([k,v])=>`${k}: ${v.label}`).join(' | ')}
-${Object.keys(liveEH).length > 0 ? `[${Object.keys(liveEH).length} stocks have LIVE reaction data from Finnhub]` : '[Using cached reaction history — live data loading]'}
+${ehLines || Object.entries(EH).map(([k,v])=>(k+": "+v.label)).join(' | ')}
+${Object.keys(liveEH).length > 0 ? "["+Object.keys(liveEH).length+" stocks have LIVE reaction data from Finnhub]" : '[Using cached reaction history — live data loading]'}
 
 LIVE COMPANY NEWS (fetched automatically from Finnhub — last 5 days):
 ${liveNewsLines || 'No significant news detected'}
@@ -751,7 +751,7 @@ Return ONLY this JSON (up to 10 opportunities):
     try {
       const md = await market('global')
       const idxLines  = md.indices?.map(m=>`${m.name} ${m.value} ${m.change}`).join(', ')
-      const secLines  = md.sectors?.map(s=>`${s.label} ${s.change}`).join(', ')
+      const secLines  = md.sectors?.map(s=>s.label+' '+s.change).join(', ')
       const commLines = md.commodities?.map(c=>`${c.name} ${c.value} ${c.change}`).join(', ')
       const fxLines   = md.currencies?.map(c=>`${c.pair} ${c.value} ${c.change}`).join(', ')
 
@@ -782,7 +782,7 @@ You explain financial markets in simple, plain English for beginners. No jargon.
 VIX proxy: ${md.vix||'N/A'} (${md.vixRegime||'N/A'})
 S&P 500 today: ${md.indices?.find(i=>i.name==='S&P 500')?.change||'N/A'}
 NASDAQ today: ${md.indices?.find(i=>i.name==='NASDAQ 100')?.change||'N/A'}
-Sector performance today: ${md.sectors?.map(s=>`${s.label} ${s.change}`).join(', ')||'N/A'}
+Sector performance today: ${md.sectors?.map(s=>s.label+' '+s.change).join(', ')||'N/A'}
 Gold: ${md.commodities?.find(c=>c.name?.includes('Gold'))?.change||'N/A'}
 
 You explain financial risks in plain, simple English for beginner investors with 1-4 week holding periods.
@@ -901,8 +901,7 @@ Keep total response under 280 words. Plain English only — no trading jargon.`,
         h.change1d ? `today ${h.change1d}` : '',
         h.earningsDate ? `next earnings ${h.earningsDate} (${h.earningsTradingDaysAway}d away)` : 'no upcoming earnings confirmed',
         h.earningsHistory ? `past reactions: ${h.earningsHistory}` : '',
-      ].filter(Boolean).join(' | ')).join('
-')
+      ].filter(Boolean).join(' | ')).join('\n')
 
       const prompt = `Today: ${new Date().toDateString()}
 
@@ -911,7 +910,7 @@ ${holdingsText}
 
 CURRENT MARKET CONTEXT:
 VIX: ${priceData.vix || 'N/A'} (${priceData.vixRegime || 'N/A'})
-Sector health: ${(priceData.sectors || []).map(s => \`\${s.label} \${s.change}\`).join(', ')}
+Sector health: ${(priceData.sectors || []).map(s => s.label+' '+s.change).join(', ')}
 
 RULES:
 1. For each holding, give exactly one action: BUY MORE / HOLD / TRIM (sell some) / SELL ALL
@@ -1008,13 +1007,11 @@ Return JSON:
         (p.change1d ? `, today ${p.change1d}` : '') +
         (p.earningsDate ? `, earnings ${p.earningsDate} in ${p.earningsDays}d` : '') +
         (p.earningsHistory ? `, history: ${p.earningsHistory}` : '')
-      ).join('
-')
+      ).join('\n')
 
       const pendingLines = (t212Data.pendingOrders || []).map(o =>
         `${o.side} ${o.quantity} ${o.ticker} @ £${o.limitPrice} (${o.orderType})`
-      ).join('
-') || 'None'
+      ).join('\n') || 'None'
 
       const prompt = `Today: ${new Date().toDateString()}
 TRADING 212 LIVE PORTFOLIO (${t212Data.env || 'LIVE'} account):
@@ -1033,7 +1030,7 @@ ${pendingLines}
 
 MARKET CONTEXT:
 VIX: ${marketData.vix || 'N/A'} (${marketData.vixRegime || 'N/A'})
-Sectors today: ${(marketData.sectors || []).map(s => `${s.label} ${s.change}`).join(', ')}
+Sectors today: ${(marketData.sectors || []).map(s => "${s.label} ${s.change}").join(', ')}
 
 RULES:
 1. For each position give one action: BUY MORE / HOLD / TRIM / SELL ALL
