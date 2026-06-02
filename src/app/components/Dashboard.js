@@ -231,8 +231,8 @@ function ScoreBar({ score }) {
 }
 
 // ─── Opportunity card ─────────────────────────────────────────────────────────
-function OppCard({ opp, rank, active, onClick, onDeepDive, deepDiveLoading, deepDiveContent }) {
-  const hist    = EH[opp.ticker]
+function OppCard({ opp, rank, active, onClick, onDeepDive, deepDiveLoading, deepDiveContent, getEH }) {
+  const hist    = getEH ? getEH(opp.ticker) : EH[opp.ticker]
   const gapUp   = opp.bigMoverToday && Math.abs(opp.changePctToday||0) > 8
   const isBuy   = opp.action==='BUY'||opp.action==='STRONG BUY'
   const earTone = (opp.earningsTradingDaysAway??999)<=3 ? 'red' : (opp.earningsTradingDaysAway??999)<=10 ? 'amber' : 'blue'
@@ -309,7 +309,11 @@ function OppCard({ opp, rank, active, onClick, onDeepDive, deepDiveLoading, deep
       </div>
 
       {/* Earnings history */}
-      {hist && <Pill tone="purple" size="sm">📊 {hist.label}</Pill>}
+      {hist && (
+        <Pill tone={hist.live ? 'green' : 'purple'} size="sm">
+          {hist.live ? '📡' : '📊'} {hist.label}{hist.live ? ' · live' : ''}
+        </Pill>
+      )}
 
       {/* Score */}
       {opp.opportunityScore != null && (
@@ -529,11 +533,38 @@ export default function Dashboard() {
   const [drillLoad,   setDrillLoad]   = useState(false)
   const [lastUp,      setLastUp]      = useState({})
   const [showOverlay, setShowOverlay] = useState(false)
+  // Live earnings history — fetched from /api/earnings-history, cached 24h
+  // Falls back to hardcoded EH if fetch fails
+  const [liveEH,      setLiveEH]      = useState({})
   const loaded = useRef({})
   const w = useWindowWidth()
   const mob = w < 900
 
   // ── API helpers ────────────────────────────────────────────────────────────
+  // Fetch live earnings history (cached 24h on server)
+  const fetchEarningsHistory = useCallback(async () => {
+    try {
+      const r = await fetch('/api/earnings-history', { cache: 'force-cache' })
+      if (!r.ok) return
+      const d = await r.json()
+      if (d?.history) {
+        setLiveEH(d.history)
+      }
+    } catch {}
+  }, [])
+
+  // Merge live EH with hardcoded fallback — live takes priority
+  const getEH = useCallback((ticker) => {
+    const live = liveEH[ticker]
+    if (live) return {
+      avg:   live.avgMove,
+      beats: live.beatCount,
+      label: live.label,
+      live:  true,
+    }
+    return EH[ticker] || null
+  }, [liveEH])
+
   const claude = useCallback(async (prompt, mode='json') => {
     const r = await fetch('/api/claude', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({prompt,mode}) })
     const d = await r.json()
@@ -574,6 +605,13 @@ export default function Dashboard() {
 
       const sectorLines = (sectors||[]).map(s=>`${s.label}: ${s.change} (${s.direction})`).join(', ')
 
+      // Build earnings history lines — live if available, hardcoded fallback otherwise
+      const ehLines = UNIVERSE.map(sym => {
+        const h = getEH(sym)
+        if (!h) return null
+        return `${sym}: ${h.label}${h.live ? ' [LIVE]' : ' [CACHED]'}`
+      }).filter(Boolean).join(' | ')
+
       const calLines = (earningsCalendar||[]).slice(0,15).map(e => {
         const conf = e.source === 'confirmed' ? '[CONFIRMED by 2 sources]'
           : e.source === 'conflicted' ? `[CONFLICTED — alt date: ${e.altDate}]`
@@ -604,7 +642,8 @@ UPCOMING EARNINGS DATES:
 ${calLines||'None found'}
 
 PAST EARNINGS REACTIONS (how much the stock moved after the last 4 earnings reports):
-${Object.entries(EH).map(([k,v])=>`${k}: ${v.label}`).join(' | ')}
+${ehLines || Object.entries(EH).map(([k,v])=>`${k}: ${v.label}`).join(' | ')}
+${Object.keys(liveEH).length > 0 ? `[${Object.keys(liveEH).length} stocks have LIVE reaction data from Finnhub]` : '[Using cached reaction history — live data loading]'}
 
 LIVE COMPANY NEWS (fetched automatically from Finnhub — last 5 days):
 ${liveNewsLines || 'No significant news detected'}
@@ -739,14 +778,14 @@ Return JSON:
   const deepDive = useCallback(async (opp) => {
     setDrillLoad(true); setDrill(null)
     try {
-      const hist = EH[opp.ticker]
+      const hist = getEH(opp.ticker)
       const text = await claude(`Today: ${new Date().toDateString()}
 Stock: ${opp.ticker} — ${opp.company}
 Current price: ${opp.currentPrice}
 Next earnings results: ${opp.earningsDate||'date not yet confirmed'} (${opp.earningsTradingDaysAway??'?'} trading days away)${opp.earningsSource==='estimate'?' — estimated date':' — confirmed date'}
 Why we like it: ${opp.thesis}
 Upcoming event: ${opp.catalyst||'N/A'}
-Past earnings reactions: ${hist?hist.label:'not available'}
+Past earnings reactions: ${hist ? hist.label + (hist.live ? ' [live data]' : '') : 'not available'}
 Suggested buy range: ${opp.entryZone||'N/A'} · Exit if it drops to: ${opp.stopLoss||'N/A'} · Price target: ${opp.takeProfit||opp.expectedGain||'N/A'}
 
 Write a clear, simple analysis for someone new to investing. Use short sentences. No jargon.
@@ -772,6 +811,9 @@ Keep total response under 280 words. Plain English only — no trading jargon.`,
   }, [claude])
 
   const loaders = { opportunities:loadOpps, global:loadGlobal, risk:loadRisk }
+
+  // Fetch earnings history once on mount
+  useEffect(() => { fetchEarningsHistory() }, []) // eslint-disable-line
 
   useEffect(() => {
     if (!loaded.current[activeTab] && !loading[activeTab] && !data[activeTab]) {
@@ -800,14 +842,14 @@ Keep total response under 280 words. Plain English only — no trading jargon.`,
     if (cardDrills[opp.ticker]) return // already loaded
     setCardDrillLoad(p => ({ ...p, [opp.ticker]: true }))
     try {
-      const hist = EH[opp.ticker]
+      const hist = getEH(opp.ticker)
       const text = await claude(`Today: ${new Date().toDateString()}
 Stock: ${opp.ticker} — ${opp.company}
 Current price: ${opp.currentPrice}
 Next earnings: ${opp.earningsDate ? ukDate(opp.earningsDate) : 'not yet confirmed'} (${opp.earningsTradingDaysAway??'?'} trading days away)${opp.earningsSource==='estimate'?' — estimated':' — confirmed'}
 Why we like it: ${opp.thesis}
 Upcoming event: ${opp.catalyst||'N/A'}
-Past reactions: ${hist ? hist.label : 'not available'}
+Past reactions: ${hist ? hist.label + (hist.live ? ' [live]' : '') : 'not available'}
 Buy range: ${opp.entryZone||'N/A'} · Exit if below: ${opp.stopLoss||'N/A'} · Target: ${opp.takeProfit||opp.expectedGain||'N/A'}
 
 Write a simple, clear analysis for a beginner investor. Short sentences. No jargon.
@@ -859,7 +901,7 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
           <div>
             <div style={{ display:'grid', gridTemplateColumns:mob?'1fr':opps.length>3?'repeat(2,1fr)':'1fr', gap:14 }}>
             {opps.length
-              ? opps.map((o,i) => <OppCard key={`${o.ticker}-${i}`} opp={o} rank={i+1} active={selected?.ticker===o.ticker} onClick={handleClick} onDeepDive={handleCardDive} deepDiveLoading={!!cardDrillLoad[o.ticker]} deepDiveContent={cardDrills[o.ticker]} />)
+              ? opps.map((o,i) => <OppCard key={`${o.ticker}-${i}`} opp={o} rank={i+1} active={selected?.ticker===o.ticker} onClick={handleClick} onDeepDive={handleCardDive} deepDiveLoading={!!cardDrillLoad[o.ticker]} deepDiveContent={cardDrills[o.ticker]} getEH={getEH} />)
               : (
                 <div style={{ ...card({ textAlign:'center', padding:48 }) }}>
                   <div style={{ fontSize:36, marginBottom:12 }}>💵</div>
