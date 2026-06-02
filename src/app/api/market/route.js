@@ -479,7 +479,7 @@ export async function GET(request) {
 
     // ── GLOBAL MACRO ───────────────────────────────────────────────────────
     if (type === 'global') {
-      async function fxQuote(sym) {
+      const fxQuote = async (sym) => {
         try {
           const d = await fh(`/quote?symbol=${encodeURIComponent(sym)}`)
           if (!d || d.c === 0) return null
