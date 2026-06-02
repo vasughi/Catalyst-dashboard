@@ -39,29 +39,77 @@ const FB = `'DM Sans', system-ui, sans-serif`
 const FM = `'DM Mono', 'JetBrains Mono', monospace`
 
 // ─── Universe + history ───────────────────────────────────────────────────────
+// ── TRADING UNIVERSE ─────────────────────────────────────────────────────────
+// Edit freely — add/remove tickers here and in market-route.js UNIVERSE array
 const UNIVERSE = [
-  'NVDA','AMD','AVGO','TSM','MRVL','ARM',
-  'MSFT','GOOGL','META','PLTR',
-  'DELL','SMCI','CRWD','PANW','ZS',
-  'LMT','RTX','NOC','AXON',
-  'VRT','ETN','CEG','FSLR','ANET','RKLB',
+  // AI silicon / semiconductors
+  'NVDA','AMD','AVGO','TSM','MRVL','ARM','INTC','QCOM',
+  // Networking / AI infra
+  'ANET','CIEN','CRDO',
+  // Big tech / AI software
+  'MSFT','GOOGL','META','PLTR','NOW',
+  // Servers / storage
+  'DELL','SMCI','HPE',
+  // Cybersecurity
+  'CRWD','PANW','ZS','S',
+  // Defence / aerospace
+  'LMT','RTX','NOC','AXON','HII','GD','BA',
+  // Space / drones / autonomy
+  'RKLB','LUNR','ACHR','JOBY',
+  // Power / grid / nuclear
+  'VRT','ETN','CEG','VST','GEV','NRG',
+  // Clean energy / solar
+  'FSLR','ENPH',
+  // Critical minerals / supply chain
+  'FCX','MP','CCJ',
 ]
 
-// Update after each earnings season
+// ── EARNINGS REACTION HISTORY ─────────────────────────────────────────────────
+// Update after each earnings season — this is your Return Gate evidence
+// avg = average 1-day move after earnings (last 4 quarters), beats = quarters beat out of 4
 const EH = {
+  // AI silicon
   NVDA:  { avg: 14.2, beats: 4, label: '14.2% avg · 4/4 beats' },
   AMD:   { avg: 9.8,  beats: 3, label: '9.8% avg · 3/4 beats' },
   AVGO:  { avg: 11.4, beats: 4, label: '11.4% avg · 4/4 beats' },
   MRVL:  { avg: 16.2, beats: 4, label: '16.2% avg · 4/4 beats' },
   ARM:   { avg: 12.8, beats: 3, label: '12.8% avg · 3/4 beats' },
+  QCOM:  { avg: 7.4,  beats: 3, label: '7.4% avg · 3/4 beats' },
+  // Networking
+  ANET:  { avg: 9.2,  beats: 4, label: '9.2% avg · 4/4 beats' },
+  CRDO:  { avg: 19.8, beats: 3, label: '19.8% avg · 3/4 beats' },
+  // Big tech
+  MSFT:  { avg: 4.8,  beats: 4, label: '4.8% avg · 4/4 beats — below 15% gate' },
+  GOOGL: { avg: 7.2,  beats: 3, label: '7.2% avg · 3/4 beats' },
+  META:  { avg: 11.2, beats: 4, label: '11.2% avg · 4/4 beats' },
   PLTR:  { avg: 18.4, beats: 4, label: '18.4% avg · 4/4 beats' },
+  NOW:   { avg: 12.1, beats: 4, label: '12.1% avg · 4/4 beats' },
+  // Servers
+  DELL:  { avg: 13.6, beats: 3, label: '13.6% avg · 3/4 beats' },
+  SMCI:  { avg: 21.4, beats: 3, label: '21.4% avg · 3/4 beats' },
+  // Cyber
   CRWD:  { avg: 13.1, beats: 4, label: '13.1% avg · 4/4 beats' },
   PANW:  { avg: 8.6,  beats: 3, label: '8.6% avg · 3/4 beats' },
-  META:  { avg: 11.2, beats: 4, label: '11.2% avg · 4/4 beats' },
-  MSFT:  { avg: 4.8,  beats: 4, label: '4.8% avg · 4/4 beats' },
-  GOOGL: { avg: 7.2,  beats: 3, label: '7.2% avg · 3/4 beats' },
+  ZS:    { avg: 11.8, beats: 4, label: '11.8% avg · 4/4 beats' },
+  // Defence
+  LMT:   { avg: 4.2,  beats: 3, label: '4.2% avg · 3/4 beats — low volatility' },
+  RTX:   { avg: 5.1,  beats: 4, label: '5.1% avg · 4/4 beats — low volatility' },
+  NOC:   { avg: 4.8,  beats: 3, label: '4.8% avg · 3/4 beats' },
+  AXON:  { avg: 14.7, beats: 4, label: '14.7% avg · 4/4 beats' },
+  // Space / drones
   RKLB:  { avg: 22.0, beats: 3, label: '22.0% avg · 3/4 beats' },
+  // Power / grid
   VRT:   { avg: 15.8, beats: 4, label: '15.8% avg · 4/4 beats' },
+  ETN:   { avg: 6.8,  beats: 4, label: '6.8% avg · 4/4 beats' },
+  GEV:   { avg: 18.2, beats: 3, label: '18.2% avg · 3/4 beats' },
+  // Nuclear
+  CEG:   { avg: 8.4,  beats: 3, label: '8.4% avg · 3/4 beats' },
+  VST:   { avg: 11.6, beats: 3, label: '11.6% avg · 3/4 beats' },
+  // Solar
+  FSLR:  { avg: 12.3, beats: 3, label: '12.3% avg · 3/4 beats' },
+  // Critical minerals
+  FCX:   { avg: 7.8,  beats: 3, label: '7.8% avg · 3/4 beats' },
+  CCJ:   { avg: 9.4,  beats: 3, label: '9.4% avg · 3/4 beats' },
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -92,6 +140,15 @@ function repairJSON(str) {
 function ts(iso) {
   if (!iso) return '—'
   try { return new Date(iso).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }) } catch { return '—' }
+}
+
+// UK date format: "29 Jul 2026"
+function ukDate(isoStr) {
+  if (!isoStr) return '—'
+  try {
+    const d = new Date(isoStr + (isoStr.length === 10 ? 'T12:00:00' : ''))
+    return d.toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' })
+  } catch { return isoStr }
 }
 
 // ─── Style primitives ─────────────────────────────────────────────────────────
@@ -143,14 +200,21 @@ function ScoreBar({ score }) {
 }
 
 // ─── Opportunity card ─────────────────────────────────────────────────────────
-function OppCard({ opp, rank, active, onClick }) {
-  const hist   = EH[opp.ticker]
-  const gapUp  = opp.bigMoverToday && Math.abs(opp.changePctToday||0) > 8
-  const isBuy  = opp.action==='BUY'||opp.action==='STRONG BUY'
+function OppCard({ opp, rank, active, onClick, onDeepDive, deepDiveLoading, deepDiveContent }) {
+  const hist    = EH[opp.ticker]
+  const gapUp   = opp.bigMoverToday && Math.abs(opp.changePctToday||0) > 8
+  const isBuy   = opp.action==='BUY'||opp.action==='STRONG BUY'
   const earTone = (opp.earningsTradingDaysAway??999)<=3 ? 'red' : (opp.earningsTradingDaysAway??999)<=10 ? 'amber' : 'blue'
+  const [showDive, setShowDive] = useState(false)
+
+  const handleDeepDive = (e) => {
+    e.stopPropagation()
+    setShowDive(true)
+    onDeepDive(opp)
+  }
 
   return (
-    <button onClick={() => onClick(opp)} style={{
+    <div onClick={() => onClick(opp)} style={{
       ...card({ textAlign:'left', cursor:'pointer', width:'100%',
         borderLeft:`5px solid ${isBuy ? C.up : opp.action==='WATCH' ? C.amber : C.border}`,
         background: active ? '#f0f7ff' : C.card,
@@ -165,10 +229,10 @@ function OppCard({ opp, rank, active, onClick }) {
           <span style={{ color:C.text, fontFamily:FM, fontWeight:900, fontSize:26 }}>{opp.ticker}</span>
           <span style={{ color:C.muted, fontSize:13 }}>{opp.company}</span>
           {opp.earningsDate && opp.earningsTradingDaysAway >= 0 && (
-            <Pill tone={earTone} size="sm">
-              📅 {opp.earningsTradingDaysAway===0 ? 'TODAY' : `${opp.earningsTradingDaysAway}d`} · {opp.earningsDate}
-              {opp.earningsSource==='estimate' && ' (est)'}
-            </Pill>
+            <span style={{ display:'inline-flex', alignItems:'center', gap:5, background: earTone==='red' ? '#fee2e2' : earTone==='amber' ? '#fef3c7' : '#dbeafe', color: earTone==='red' ? '#dc2626' : earTone==='amber' ? '#d97706' : '#2563eb', borderRadius:8, padding:'5px 12px', fontWeight:800, fontSize:13, fontFamily:FM }}>
+              📅 {opp.earningsTradingDaysAway===0 ? 'TODAY' : `${opp.earningsTradingDaysAway}d`} · {ukDate(opp.earningsDate)}
+              {opp.earningsSource==='estimate' && <span style={{ fontSize:10, fontWeight:600, opacity:0.8 }}> (est)</span>}
+            </span>
           )}
           {gapUp && <Pill tone="amber" size="sm">⚠ GAP UP</Pill>}
         </div>
@@ -212,7 +276,20 @@ function OppCard({ opp, rank, active, onClick }) {
           <ScoreBar score={opp.opportunityScore} />
         </div>
       )}
-    </button>
+
+      {/* Per-card deep dive */}
+      <div style={{ marginTop:14, borderTop:`1px solid ${C.border}`, paddingTop:14 }} onClick={e => e.stopPropagation()}>
+        {!showDive ? (
+          <button onClick={handleDeepDive} style={{ appearance:'none', background:C.accentBg, color:C.accent, border:`1px solid ${C.accent}44`, borderRadius:8, padding:'8px 16px', fontWeight:700, fontSize:13, cursor:'pointer', display:'flex', alignItems:'center', gap:6 }}>
+            🔍 Deep dive analysis
+          </button>
+        ) : deepDiveLoading ? (
+          <div style={{ color:C.muted, fontSize:13, padding:'8px 0' }}>Analysing {opp.ticker}…</div>
+        ) : deepDiveContent ? (
+          <div style={{ color:C.sub, fontSize:13, lineHeight:1.75, whiteSpace:'pre-wrap', background:C.bg, borderRadius:10, padding:14 }}>{deepDiveContent}</div>
+        ) : null}
+      </div>
+    </div>
   )
 }
 
@@ -235,7 +312,7 @@ function EarningsCal({ calendar }) {
                 <Pill tone={t} size="sm">{e.tradingDaysAway===0?'TODAY':`${e.tradingDaysAway}d`}</Pill>
               </div>
               <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-                <span style={{ color:C.muted, fontSize:12 }}>{e.date}</span>
+                <span style={{ color:C.sub, fontSize:13, fontWeight:700 }}>{ukDate(e.date)}</span>
                 {e.source==='estimate' && <span style={{ background:C.amberBg, color:C.amber, fontSize:10, fontWeight:700, padding:'1px 5px', borderRadius:4 }}>EST</span>}
               </div>
               {hist && <div style={{ color:C.purple, fontSize:11, fontWeight:600, marginTop:4 }}>{hist.label}</div>}
@@ -315,8 +392,11 @@ function DetailPanel({ stock, content, loading, onRun }) {
           {stock.earningsDate && (
             <div style={{ background:C.amberBg, borderRadius:10, padding:'10px 14px', marginBottom:10 }}>
               <div style={LBL}>EARNINGS DATE{stock.earningsSource==='estimate'?' (EST)':' (VERIFIED)'}</div>
-              <div style={{ color:C.amber, fontWeight:800, fontSize:15, fontFamily:FM }}>
-                {stock.earningsDate} · {stock.earningsTradingDaysAway} trading days
+              <div style={{ color:C.amber, fontWeight:900, fontSize:18, fontFamily:FM }}>
+                {ukDate(stock.earningsDate)}
+              </div>
+              <div style={{ color:C.amber, fontSize:13, marginTop:2 }}>
+                {stock.earningsTradingDaysAway} trading days away
               </div>
             </div>
           )}
@@ -576,6 +656,36 @@ Label each sentence: FACT / ANALYSIS / OPINION`, 'deepdive')
 
   // ── Renders ────────────────────────────────────────────────────────────────
 
+  // Per-card deep dive state
+  const [cardDrills, setCardDrills]     = useState({})  // { ticker: text }
+  const [cardDrillLoad, setCardDrillLoad] = useState({}) // { ticker: bool }
+
+  const handleCardDive = useCallback(async (opp) => {
+    if (cardDrills[opp.ticker]) return // already loaded
+    setCardDrillLoad(p => ({ ...p, [opp.ticker]: true }))
+    try {
+      const hist = EH[opp.ticker]
+      const text = await claude(`Today: ${new Date().toDateString()}
+Analyse ${opp.ticker} (${opp.company}) at ${opp.currentPrice}.
+Earnings: ${opp.earningsDate ? ukDate(opp.earningsDate) : 'not confirmed'} (${opp.earningsTradingDaysAway??'?'} trading days)${opp.earningsSource==='estimate'?' [ESTIMATED]':' [VERIFIED]'}
+Catalyst: ${opp.catalyst||'N/A'} · Thesis: ${opp.thesis}
+Earnings history: ${hist ? hist.label : 'not available'}
+Entry: ${opp.entryZone||'N/A'} · Stop: ${opp.stopLoss||'N/A'} · Target: ${opp.takeProfit||opp.expectedGain||'N/A'}
+
+Write 240 words covering:
+1. WHY NOW — specific price action and timing
+2. BULL CASE — what drives 15%+ from here
+3. BEAR CASE — what kills the thesis immediately  
+4. IDEAL ENTRY TRIGGER — exact condition to pull trigger
+Label each sentence: FACT / ANALYSIS / OPINION`, 'deepdive')
+      setCardDrills(p => ({ ...p, [opp.ticker]: text }))
+    } catch(e) {
+      setCardDrills(p => ({ ...p, [opp.ticker]: `Error: ${e.message}` }))
+    } finally {
+      setCardDrillLoad(p => ({ ...p, [opp.ticker]: false }))
+    }
+  }, [claude, cardDrills])
+
   function renderOpps() {
     const d = data.opportunities
     if (!d) return null
@@ -619,7 +729,7 @@ Label each sentence: FACT / ANALYSIS / OPINION`, 'deepdive')
         <div style={{ display:'grid', gridTemplateColumns:mob?'1fr':'minmax(0,1.45fr) minmax(310px,0.85fr)', gap:18, alignItems:'start' }}>
           <div style={{ display:'grid', gap:14 }}>
             {opps.length
-              ? opps.map((o,i) => <OppCard key={`${o.ticker}-${i}`} opp={o} rank={i+1} active={selected?.ticker===o.ticker} onClick={handleClick} />)
+              ? opps.map((o,i) => <OppCard key={`${o.ticker}-${i}`} opp={o} rank={i+1} active={selected?.ticker===o.ticker} onClick={handleClick} onDeepDive={handleCardDive} deepDiveLoading={!!cardDrillLoad[o.ticker]} deepDiveContent={cardDrills[o.ticker]} />)
               : (
                 <div style={{ ...card({ textAlign:'center', padding:48 }) }}>
                   <div style={{ fontSize:36, marginBottom:12 }}>💵</div>
