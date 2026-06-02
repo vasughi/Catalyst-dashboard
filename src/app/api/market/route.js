@@ -151,11 +151,12 @@ const FALLBACK_EARNINGS = {
   META: { date: '2026-07-29', note: 'confirmed' },
   VRT:  { date: '2026-08-05', note: 'confirmed' },
   MRVL: { date: '2026-08-20', note: 'confirmed' },
-  // Estimated dates
+  AVGO: { date: '2026-06-03', note: 'confirmed' },   // CONFIRMED — reports 3 Jun 2026 (IMMINENT)
+  // Corrected estimates
+  FCX:  { date: '2026-07-16', note: 'est' },          // corrected from 22 Jul — Investing.com shows 16 Jul
   GEV:  { date: '2026-07-23', note: 'est' },
-  NOW:  { date: '2026-07-23', note: 'est' },
-  FCX:  { date: '2026-07-22', note: 'est' },
   GOOGL:{ date: '2026-07-22', note: 'est' },
+  NOW:  { date: '2026-07-23', note: 'est' },
   MSFT: { date: '2026-07-28', note: 'est' },
   AMD:  { date: '2026-07-29', note: 'est' },
   ANET: { date: '2026-07-29', note: 'est' },
@@ -167,7 +168,6 @@ const FALLBACK_EARNINGS = {
   NVDA: { date: '2026-08-27', note: 'est' },
   CRDO: { date: '2026-08-27', note: 'est' },
   CRWD: { date: '2026-08-26', note: 'est' },
-  AVGO: { date: '2026-09-10', note: 'est' },
 }
 
 // ─── Route ────────────────────────────────────────────────────────────────────
