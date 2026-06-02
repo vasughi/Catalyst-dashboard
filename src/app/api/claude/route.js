@@ -49,7 +49,7 @@ RULES:
       messages.push({ role: 'assistant', content: '{' })
     }
 
-    const tokenMap = { cio: 6000, deepdive: 700, json: 2000 }
+    const tokenMap = { cio: 8000, deepdive: 800, json: 2000 }
 
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -59,7 +59,9 @@ RULES:
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',  // Haiku is faster + cheaper for JSON generation
+        // Sonnet for CIO analysis (richer reasoning over 40+ stocks)
+        // Haiku for simple JSON transforms (global/risk summaries)
+        model: mode === 'cio' ? 'claude-sonnet-4-6' : 'claude-haiku-4-5-20251001',
         max_tokens: tokenMap[mode] || 2000,
         system: systemPrompt,
         messages,
