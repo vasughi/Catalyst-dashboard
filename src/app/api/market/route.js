@@ -37,9 +37,9 @@ async function fh(path) {
 // Wide sanity ranges — catches Finnhub glitch prices
 const SANITY = {
   NVDA:[80,280],  AMD:[80,280],   AVGO:[150,900], TSM:[100,300],  MRVL:[50,450],
-  ARM:[80,650],   MSFT:[300,700], GOOGL:[100,600],META:[300,900], PLTR:[50,400],
+  ARM:[80,700],   MSFT:[300,700], GOOGL:[100,600],META:[300,900], PLTR:[50,400],
   DELL:[80,250],  SMCI:[20,150],  CRWD:[200,650], PANW:[100,350], ZS:[100,350],
-  LMT:[300,950],  RTX:[50,250],   NOC:[300,950],  AXON:[100,550], VRT:[100,600],
+  LMT:[300,950],  RTX:[50,250],   NOC:[300,950],  AXON:[100,550], VRT:[100,750],
   ETN:[150,550],  CEG:[100,500],  FSLR:[50,500],  ANET:[50,200],  RKLB:[5,80],
   GEV:[200,1800], VST:[30,400],   NOW:[500,2000], CRDO:[50,600],  FCX:[20,150],
   CCJ:[20,120],   ENPH:[20,300],  INTC:[15,80],   QCOM:[100,350], CIEN:[40,150],
@@ -347,6 +347,7 @@ export async function GET(request) {
       const TECH_PRIORITY = [
         'NVDA','AVGO','MRVL','ARM','PLTR','VRT','GEV',
         'META','CRWD','ANET','CRDO','NOW','ZS','RKLB','MSFT',
+        'SMCI','PANW','ETN','CEG','FCX','GOOGL',
       ]
 
       // Run in parallel: quotes + earnings + sectors + VIX + news
