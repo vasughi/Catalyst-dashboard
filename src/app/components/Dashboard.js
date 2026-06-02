@@ -515,6 +515,12 @@ function DetailPanel({ stock, content, loading, onRun }) {
   )
 }
 
+// ─── Password — resolved at module level ─────────────────────────────────────
+// Set NEXT_PUBLIC_PORTFOLIO_PASSWORD in Vercel env vars, or default is used
+const PORTFOLIO_PASSWORD = (
+  typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_PORTFOLIO_PASSWORD
+) || 'catalyst2026'
+
 // ─── Tabs ─────────────────────────────────────────────────────────────────────
 const TABS = [
   { key:'opportunities', label:'⚡ Opportunities' },
@@ -1397,7 +1403,7 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
   }
 
   // ── Portfolio password check ──────────────────────────────────────────────
-  const PORTFOLIO_PASSWORD = process.env.NEXT_PUBLIC_PORTFOLIO_PASSWORD || 'catalyst2026'
+  // PORTFOLIO_PASSWORD is defined at module level above
 
   const handlePasswordSubmit = () => {
     if (passwordInput === PORTFOLIO_PASSWORD) {
@@ -1709,7 +1715,7 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
 
   // ── T212 Live render ───────────────────────────────────────────────────────
   function renderT212() {
-    const PORTFOLIO_PASSWORD = process.env.NEXT_PUBLIC_PORTFOLIO_PASSWORD || 'catalyst2026'
+    // PORTFOLIO_PASSWORD is defined at module level
     const actionColor = a => a==='BUY MORE'?C.up:a==='HOLD'?C.accent:a==='TRIM'?C.amber:C.down
     const actionBg    = a => a==='BUY MORE'?C.upBg:a==='HOLD'?C.accentBg:a==='TRIM'?C.amberBg:C.downBg
     const healthColor = h => h==='STRONG'?C.up:h==='GOOD'?C.accent:h==='CAUTION'?C.amber:C.down
@@ -1974,6 +1980,10 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
   }
 
   function renderContent() {
+    // Portfolio and T212 manage their own state — skip the data/loading guards
+    if (activeTab === 'portfolio') return renderPortfolio()
+    if (activeTab === 't212')      return renderT212()
+
     const isLoad = loading[activeTab]
     const err    = errors[activeTab]
     const d      = data[activeTab]
@@ -2007,8 +2017,6 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
     )
 
     if (activeTab==='opportunities') return renderOpps()
-    if (activeTab==='portfolio')     return renderPortfolio()
-    if (activeTab==='t212')          return renderT212()
     if (activeTab==='global')        return renderGlobal()
     if (activeTab==='risk')          return renderRisk()
     return null
