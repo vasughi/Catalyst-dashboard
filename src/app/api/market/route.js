@@ -47,6 +47,24 @@ const SANITY = {
   MP:[5,60],      HII:[100,400],  GD:[150,400],
 }
 
+// ── Module-level technicals cache ───────────────────────────────────────────
+// SMAs change slowly — cache for 6 hours to avoid re-fetching candles every refresh
+const TECH_CACHE = {}          // { sym: { data, cachedAt } }
+const TECH_CACHE_TTL = 6 * 60 * 60 * 1000  // 6 hours in ms
+
+async function cachedTechnicals(sym, currentPrice) {
+  const cached = TECH_CACHE[sym]
+  const now = Date.now()
+  if (cached && (now - cached.cachedAt) < TECH_CACHE_TTL) {
+    return cached.data  // return cached result, skip candle fetch
+  }
+  const result = await technicals(sym, currentPrice)
+  if (result) {
+    TECH_CACHE[sym] = { data: result, cachedAt: now }
+  }
+  return result
+}
+
 async function quote(sym) {
   try {
     const d = await fh(`/quote?symbol=${encodeURIComponent(sym)}`)
@@ -58,7 +76,7 @@ async function quote(sym) {
 }
 
 async function quotes(syms) {
-  const CHUNK = 15
+  const CHUNK = 20   // was 15 — 20 is safe within 60/min free tier for short bursts
   const map = {}
   for (let i = 0; i < syms.length; i += CHUNK) {
     const chunk = syms.slice(i, i + CHUNK)
@@ -66,7 +84,7 @@ async function quotes(syms) {
     res.forEach((r, j) => {
       if (r.status === 'fulfilled' && r.value) map[chunk[j]] = r.value
     })
-    if (i + CHUNK < syms.length) await new Promise(r => setTimeout(r, 500))
+    if (i + CHUNK < syms.length) await new Promise(r => setTimeout(r, 200))  // was 500ms
   }
   return map
 }
@@ -206,6 +224,22 @@ async function earningsCalendarNinjas(tickers) {
   return results
 }
 
+// ── Earnings calendar cache — valid for 4 hours ─────────────────────────────
+let EARNINGS_CACHE = null
+let EARNINGS_CACHE_AT = 0
+const EARNINGS_CACHE_TTL = 4 * 60 * 60 * 1000  // 4 hours
+
+async function earningsCalendarCached(from, to) {
+  const now = Date.now()
+  if (EARNINGS_CACHE && (now - EARNINGS_CACHE_AT) < EARNINGS_CACHE_TTL) {
+    return EARNINGS_CACHE
+  }
+  const result = await earningsCalendar(from, to)
+  EARNINGS_CACHE = result
+  EARNINGS_CACHE_AT = now
+  return result
+}
+
 async function companyNews(ticker, days = 7) {
   try {
     const to   = new Date().toISOString().split('T')[0]
@@ -322,7 +356,7 @@ export async function GET(request) {
       const [stockQuotes, earnings, ninjasEarnings, sectorQ, vixQ, newsResults] =
         await Promise.all([
           quotes(UNIVERSE),
-          earningsCalendar(isoDate(today), isoDate(in60days)),
+          earningsCalendarCached(isoDate(today), isoDate(in60days)),
           earningsCalendarNinjas(UNIVERSE),
           quotes(['XLK','ITA','XSD','CIBR','XLE']),
           quote('VIXY'),
@@ -338,7 +372,7 @@ export async function GET(request) {
         const batch = TECH_PRIORITY.slice(i, i + BATCH)
         const batchRes = await Promise.allSettled(
           batch.map(sym =>
-            technicals(sym, stockQuotes[sym]?.price).then(t => [sym, t])
+            cachedTechnicals(sym, stockQuotes[sym]?.price).then(t => [sym, t])
           )
         )
         batchRes.forEach(r => {
@@ -347,7 +381,7 @@ export async function GET(request) {
           }
         })
         if (i + BATCH < TECH_PRIORITY.length) {
-          await new Promise(r => setTimeout(r, 400))
+          await new Promise(r => setTimeout(r, 250))  // was 400ms
         }
       }
 
