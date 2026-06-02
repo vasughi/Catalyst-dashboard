@@ -649,8 +649,8 @@ LIVE COMPANY NEWS (fetched automatically from Finnhub — last 5 days):
 ${liveNewsLines || 'No significant news detected'}
 
 MANUALLY NOTED EVENTS (may be stale — cross-check with live news above):
-- CRDO (Credo Technology): JUST REPORTED Q4 FY2026 on 1 Jun 2026 — EPS $1.16 beat estimate of $0.98, revenue $437M beat estimate. Full year revenue tripled YoY. Now evaluate as a post-earnings setup: check if stock has moved >15% — if yes, WATCH. If not yet fully priced, consider BUY ahead of FY2027 guidance ramp (>50% YoY growth guided).
-- AVGO (Broadcom): Reports earnings TOMORROW 3 Jun 2026 after close — AI chip revenue guided at $10.7B (up 140% YoY). EPS estimate $2.40. 37 analysts covering. This is the second highest priority right now.
+- CRDO (Credo Technology): Reported Q4 on 1 Jun 2026 — EPS $1.16 beat, revenue $437M beat, FY2027 guided >80% growth. BUT stock fell 14-15% after-hours because guidance was only inline with (not above) elevated expectations. Post-Catalyst Chase Rule applies — WATCH until price stabilises. Multiple analysts raised targets: Jefferies $270, JPMorgan $250, Goldman $250. A pullback to $190-$210 range could be a BUY entry for FY2027 catalyst.
+- AVGO (Broadcom): Reports earnings TODAY 3 Jun 2026 after close — AI chip revenue guided at $10.7B (up 140% YoY). EPS estimate $2.40 on $22B revenue. 37 analysts covering. HIGHEST PRIORITY — watch for post-close result. If beats and guidance strong, upgrade to STRONG BUY entry.
 - GOOGL: Announced $80 billion new share issue on 1 Jun 2026. More shares issued = dilution = negative for existing holders. Max GOOGL rating = WATCH.
 - GOOGL: HSBC cut price target from $435 to $420 today.
 - FCX (Freeport-McMoRan): Stock fell 12% after Q1 beat because Grasberg mine production was cut from 100,000 to 60,000 tons/day. Fundamental problem — max FCX rating = WATCH.
