@@ -451,13 +451,16 @@ function CIOPanel({ cio, marketCondition, vix, vixRegime, sectors, regime, cashP
         </div>
       )}
 
-      {/* Row 4 — Watch tiles */}
+      {/* Row 4 — Watch tiles — show ALL stocks in watchList */}
       {cio?.watchList?.length > 0 && (
-        <div style={{ marginBottom:cio?.avoidList?.length?10:0 }}>
-          <div style={{ ...LBL, marginBottom:8 }}>👀 KEEP AN EYE ON THESE</div>
+        <div style={{ marginBottom:cio?.avoidList?.length?12:0 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8 }}>
+            <div style={LBL}>👀 KEEP AN EYE ON THESE</div>
+            <span style={{ color:C.muted, fontSize:11 }}>({cio.watchList.length} stocks)</span>
+          </div>
           <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
             {cio.watchList.map((w,i)=>(
-              <div key={i} style={{ background:C.amberBg, border:`1px solid ${C.amber}33`, borderRadius:8, padding:'5px 10px' }}>
+              <div key={i} style={{ background:C.amberBg, border:`1px solid ${C.amber}33`, borderRadius:8, padding:'5px 10px', maxWidth: mob ? '100%' : 340 }}>
                 <span style={{ color:C.amber, fontWeight:800, fontFamily:FM, fontSize:13 }}>{w.ticker||w}</span>
                 {w.reason && <span style={{ color:C.sub, fontSize:12 }}> — {w.reason}</span>}
               </div>
@@ -466,13 +469,16 @@ function CIOPanel({ cio, marketCondition, vix, vixRegime, sectors, regime, cashP
         </div>
       )}
 
-      {/* Row 5 — Avoid tiles */}
+      {/* Row 5 — Avoid tiles — show ALL stocks in avoidList */}
       {cio?.avoidList?.length > 0 && (
         <div>
-          <div style={{ ...LBL, marginBottom:8 }}>🚫 DON'T BUY THESE NOW</div>
+          <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8 }}>
+            <div style={LBL}>🚫 DON'T BUY THESE NOW</div>
+            <span style={{ color:C.muted, fontSize:11 }}>({cio.avoidList.length} stocks)</span>
+          </div>
           <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
             {cio.avoidList.map((w,i)=>(
-              <div key={i} style={{ background:C.downBg, border:`1px solid ${C.down}33`, borderRadius:8, padding:'5px 10px' }}>
+              <div key={i} style={{ background:C.downBg, border:`1px solid ${C.down}33`, borderRadius:8, padding:'5px 10px', maxWidth: mob ? '100%' : 340 }}>
                 <span style={{ color:C.down, fontWeight:800, fontFamily:FM, fontSize:13 }}>{w.ticker||w}</span>
                 {w.reason && <span style={{ color:C.sub, fontSize:12 }}> — {w.reason}</span>}
               </div>
@@ -769,8 +775,14 @@ LANGUAGE RULES — very important:
 - Instead of "beat-and-raise" say "beat expectations and raised their forecast"
 - Keep every sentence under 20 words. Plain English only.
 
-Return ONLY this JSON (up to 10 opportunities):
-{"marketCondition":"BUY AGGRESSIVELY|BUY SELECTIVELY|WAIT|HOLD CASH","cashRecommendation":"one plain-English sentence — explain why in simple terms","cashPct":30,"regime":"one plain-English sentence describing what the market is doing today","cio":{"bestTradeToday":"TICKER or NONE","bestRiskReward":"TICKER or NONE","finalMarketDecision":"BUY AGGRESSIVELY|BUY SELECTIVELY|WAIT|HOLD CASH","watchList":[{"ticker":"","reason":"plain English, max 10 words — e.g. waiting for earnings date to be confirmed"}],"avoidList":[{"ticker":"","reason":"plain English, max 10 words — e.g. already jumped 15% today, too late to buy"}]},"opportunities":[{"ticker":"","company":"","action":"STRONG BUY|BUY|WATCH|AVOID","currentPrice":"","entryZone":"$X-$Y","stopLoss":"use CALC_STOP from data","takeProfit":"$X","expectedGain":"15-20%","riskReward":"calculated e.g. 3:1","allocation":"10%","whyWeLikeIt":"plain English, max 20 words","whatCouldGoWrong":"plain English, max 15 words","upcomingEvent":"event name","eventDate":"DD Mon YYYY","trend":"from data e.g. PULLBACK IN UPTREND","setup":"from data e.g. PULLBACK","entryQuality":"EXCELLENT|GOOD|AVERAGE|POOR","trendComment":"one plain sentence on what the chart looks like","returnGate":"PASS|CONDITIONAL PASS|FAIL","cashChallenge":"PASS|FAIL","opportunityScore":75}]}`
+COVERAGE REQUIREMENT — you MUST classify every single stock from LIVE STOCK PRICES above:
+- Every stock must appear in EITHER opportunities OR watchList OR avoidList
+- Do not silently ignore any stock — if you have nothing to say, put it in watchList with reason "no catalyst in window"
+- watchList = stocks worth monitoring but not ready to buy yet (include ALL stocks not in opportunities or avoidList)
+- avoidList = stocks to actively avoid right now (gap-up today, downtrend, broken thesis, dilution, production cuts)
+
+Return ONLY this JSON (up to 10 opportunity cards, but watchList and avoidList must cover ALL remaining stocks):
+{"marketCondition":"BUY AGGRESSIVELY|BUY SELECTIVELY|WAIT|HOLD CASH","cashRecommendation":"one plain-English sentence","cashPct":30,"regime":"one plain-English sentence describing what the market is doing today","cio":{"bestTradeToday":"TICKER or NONE","bestRiskReward":"TICKER or NONE","finalMarketDecision":"BUY AGGRESSIVELY|BUY SELECTIVELY|WAIT|HOLD CASH","watchList":[{"ticker":"","reason":"plain English max 10 words — why watching not buying yet"}],"avoidList":[{"ticker":"","reason":"plain English max 10 words — specific reason to avoid right now"}]},"opportunities":[{"ticker":"","company":"","action":"STRONG BUY|BUY|WATCH|AVOID","currentPrice":"","entryZone":"$X-$Y","stopLoss":"use CALC_STOP from data","takeProfit":"$X","expectedGain":"15-20%","riskReward":"calculated e.g. 3:1","allocation":"10%","whyWeLikeIt":"plain English, max 20 words","whatCouldGoWrong":"plain English, max 15 words","upcomingEvent":"event name","eventDate":"DD Mon YYYY","trend":"from data","setup":"from data","entryQuality":"EXCELLENT|GOOD|AVERAGE|POOR","trendComment":"one plain sentence on chart","returnGate":"PASS|CONDITIONAL PASS|FAIL","cashChallenge":"PASS|FAIL","opportunityScore":75}]}`
 
       const ai = repairJSON(await claude(prompt, 'cio'))
 
