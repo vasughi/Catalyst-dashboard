@@ -262,7 +262,9 @@ function OppCard({ opp, rank, active, onClick, onDeepDive, deepDiveLoading, deep
           {opp.earningsDate && opp.earningsTradingDaysAway >= 0 && (
             <span style={{ display:'inline-flex', alignItems:'center', gap:5, background: earTone==='red' ? '#fee2e2' : earTone==='amber' ? '#fef3c7' : '#dbeafe', color: earTone==='red' ? '#dc2626' : earTone==='amber' ? '#d97706' : '#2563eb', borderRadius:8, padding:'5px 12px', fontWeight:800, fontSize:13, fontFamily:FM }}>
               📅 {opp.earningsTradingDaysAway===0 ? 'TODAY' : `${opp.earningsTradingDaysAway}d`} · {ukDate(opp.earningsDate)}
-              {opp.earningsSource==='estimate' && <span style={{ fontSize:10, fontWeight:600, opacity:0.8 }}> (est)</span>}
+              {opp.earningsSource==='confirmed'  && <span style={{ fontSize:10, fontWeight:600 }}> ✓</span>}
+              {opp.earningsSource==='estimate'   && <span style={{ fontSize:10, fontWeight:600, opacity:0.8 }}> (est)</span>}
+              {opp.earningsSource==='conflicted' && <span style={{ fontSize:10, fontWeight:600 }}> ⚠</span>}
             </span>
           )}
           {gapUp && <Pill tone="amber" size="sm">⚠ GAP UP</Pill>}
@@ -356,7 +358,9 @@ function EarningsCal({ calendar }) {
               </div>
               <div style={{ display:'flex', alignItems:'center', gap:6 }}>
                 <span style={{ color:C.sub, fontSize:13, fontWeight:700 }}>{ukDate(e.date)}</span>
-                {e.source==='estimate' && <span style={{ background:C.amberBg, color:C.amber, fontSize:10, fontWeight:700, padding:'1px 5px', borderRadius:4 }}>EST</span>}
+                {e.source==='confirmed'  && <span style={{ background:C.upBg,    color:C.up,    fontSize:10, fontWeight:700, padding:'1px 5px', borderRadius:4 }}>✓ CONFIRMED</span>}
+                {e.source==='estimate'   && <span style={{ background:C.amberBg, color:C.amber, fontSize:10, fontWeight:700, padding:'1px 5px', borderRadius:4 }}>EST</span>}
+                {e.source==='conflicted' && <span style={{ background:C.downBg,  color:C.down,  fontSize:10, fontWeight:700, padding:'1px 5px', borderRadius:4 }}>⚠ CHECK DATE</span>}
               </div>
               {hist && <div style={{ color:C.purple, fontSize:11, fontWeight:600, marginTop:4 }}>{hist.label}</div>}
               {e.epsEstimate!=null && <div style={{ color:C.muted, fontSize:11, marginTop:2 }}>EPS est: ${e.epsEstimate}</div>}
@@ -570,9 +574,24 @@ export default function Dashboard() {
 
       const sectorLines = (sectors||[]).map(s=>`${s.label}: ${s.change} (${s.direction})`).join(', ')
 
-      const calLines = (earningsCalendar||[]).slice(0,15).map(e =>
-        `${e.ticker} → ${e.date} (${e.tradingDaysAway}d)${e.epsEstimate?` EPS_est=$${e.epsEstimate}`:''}${e.source==='estimate'?' [EST]':' [VERIFIED]'}`
-      ).join('\n')
+      const calLines = (earningsCalendar||[]).slice(0,15).map(e => {
+        const conf = e.source === 'confirmed' ? '[CONFIRMED by 2 sources]'
+          : e.source === 'conflicted' ? `[CONFLICTED — alt date: ${e.altDate}]`
+          : e.source === 'ninjas'    ? '[API NINJAS source]'
+          : e.source === 'estimate'  ? '[HARDCODED ESTIMATE]'
+          : '[FINNHUB]'
+        return `${e.ticker} → ${e.date} (${e.tradingDaysAway}d) ${conf}${e.epsEstimate?` EPS_est=$${e.epsEstimate}`:''}`
+      }).join('\n')
+
+      // Live company news — auto-built from Finnhub news feed
+      const newsMap = md.companyNews || {}
+      const liveNewsLines = Object.entries(newsMap)
+        .map(([ticker, items]) => {
+          const headlines = items.slice(0,2).map(n => n.headline).join(' | ')
+          return `${ticker}: ${headlines}`
+        })
+        .filter(Boolean)
+        .join('\n')
 
       const prompt = `TODAY: ${new Date().toDateString()}
 MARKET FEAR LEVEL (VIX): ${vix||'N/A'} → ${vixRegime||'UNKNOWN'} (above 25 = high fear, reduce bets)
@@ -587,8 +606,11 @@ ${calLines||'None found'}
 PAST EARNINGS REACTIONS (how much the stock moved after the last 4 earnings reports):
 ${Object.entries(EH).map(([k,v])=>`${k}: ${v.label}`).join(' | ')}
 
-IMPORTANT BREAKING NEWS — factor these into ratings:
-- CRDO (Credo Technology): Reports earnings TODAY 1 Jun 2026 after market close — Q4 FY2026 results. EPS estimate $0.98 on $430M revenue. Has beaten estimates in every quarter. Revenue tripled YoY last quarter. HIGH PRIORITY — if not yet reported, this is the #1 BUY candidate today.
+LIVE COMPANY NEWS (fetched automatically from Finnhub — last 5 days):
+${liveNewsLines || 'No significant news detected'}
+
+MANUALLY NOTED EVENTS (may be stale — cross-check with live news above):
+- CRDO (Credo Technology): JUST REPORTED Q4 FY2026 on 1 Jun 2026 — EPS $1.16 beat estimate of $0.98, revenue $437M beat estimate. Full year revenue tripled YoY. Now evaluate as a post-earnings setup: check if stock has moved >15% — if yes, WATCH. If not yet fully priced, consider BUY ahead of FY2027 guidance ramp (>50% YoY growth guided).
 - AVGO (Broadcom): Reports earnings TOMORROW 3 Jun 2026 after close — AI chip revenue guided at $10.7B (up 140% YoY). EPS estimate $2.40. 37 analysts covering. This is the second highest priority right now.
 - GOOGL: Announced $80 billion new share issue on 1 Jun 2026. More shares issued = dilution = negative for existing holders. Max GOOGL rating = WATCH.
 - GOOGL: HSBC cut price target from $435 to $420 today.
