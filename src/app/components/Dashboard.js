@@ -231,8 +231,14 @@ function ScoreBar({ score }) {
 }
 
 // ─── Opportunity card ─────────────────────────────────────────────────────────
-function OppCard({ opp, rank, active, onClick, onDeepDive, deepDiveLoading, deepDiveContent, getEH }) {
+function OppCard({ opp, rank, active, onClick, onDeepDive, deepDiveLoading, deepDiveContent, getEH, techMap }) {
   const hist    = getEH ? getEH(opp.ticker) : EH[opp.ticker]
+  // Use live techMap data if available, fall back to opp fields from AI
+  const tc      = techMap?.[opp.ticker] || {}
+  const trend        = tc.trend        || opp.trend        || null
+  const setup        = tc.setup        || opp.setup        || null
+  const entryQuality = tc.entryQuality || opp.entryQuality || null
+  const trendComment = opp.trendComment || null
   const gapUp   = opp.bigMoverToday && Math.abs(opp.changePctToday||0) > 8
   const isBuy   = opp.action==='BUY'||opp.action==='STRONG BUY'
   const earTone = (opp.earningsTradingDaysAway??999)<=3 ? 'red' : (opp.earningsTradingDaysAway??999)<=10 ? 'amber' : 'blue'
@@ -285,38 +291,39 @@ function OppCard({ opp, rank, active, onClick, onDeepDive, deepDiveLoading, deep
       <p style={{ color:C.sub, fontSize:14, lineHeight:1.6, margin:'0 0 12px 0' }}>{opp.thesis||'—'}</p>
 
       {/* Technical trend badge */}
-      {(opp.trend || opp.setup) && (
+      {(trend || setup) && (
         <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:8 }}>
-          {opp.trend && (
+          {trend && (
             <Pill tone={
-              opp.trend==='STRONG UPTREND'?'green':
-              opp.trend==='PULLBACK IN UPTREND'?'blue':
-              opp.trend==='RECOVERING'?'amber':'red'
+              trend==='STRONG UPTREND'?'green':
+              trend==='PULLBACK IN UPTREND'?'blue':
+              trend==='RECOVERING'?'amber':'red'
             } size="sm">
-              📈 {opp.trend}
+              📈 {trend}
             </Pill>
           )}
-          {opp.setup && opp.setup !== 'NEUTRAL' && (
+          {setup && setup !== 'NEUTRAL' && (
             <Pill tone={
-              opp.setup==='PULLBACK'?'green':
-              opp.setup==='EXTENDED'?'amber':'grey'
+              setup==='PULLBACK'?'green':
+              setup==='EXTENDED'?'amber':'grey'
             } size="sm">
-              {opp.setup==='PULLBACK'?'✓ IDEAL ENTRY':opp.setup==='EXTENDED'?'⚠ EXTENDED':'📊 '+opp.setup}
+              {setup==='PULLBACK'?'✓ IDEAL ENTRY':setup==='EXTENDED'?'⚠ EXTENDED':'📊 '+setup}
             </Pill>
           )}
-          {opp.entryQuality && (
+          {entryQuality && (
             <Pill tone={
-              opp.entryQuality==='EXCELLENT'?'green':
-              opp.entryQuality==='GOOD'?'blue':
-              opp.entryQuality==='AVERAGE'?'grey':'red'
+              entryQuality==='EXCELLENT'?'green':
+              entryQuality==='GOOD'?'blue':
+              entryQuality==='AVERAGE'?'grey':'red'
             } size="sm">
-              Entry: {opp.entryQuality}
+              Entry: {entryQuality}
             </Pill>
           )}
+          {tc.computedAt && <Pill tone="grey" size="sm">📡 SMA live</Pill>}
         </div>
       )}
-      {opp.trendComment && (
-        <div style={{ color:C.muted, fontSize:12, fontStyle:'italic', marginBottom:8 }}>{opp.trendComment}</div>
+      {trendComment && (
+        <div style={{ color:C.muted, fontSize:12, fontStyle:'italic', marginBottom:8 }}>{trendComment}</div>
       )}
 
       {/* Gates */}
@@ -590,6 +597,7 @@ export default function Dashboard() {
   // Live earnings history — fetched from /api/earnings-history, cached 24h
   // Falls back to hardcoded EH if fetch fails
   const [liveEH,      setLiveEH]      = useState({})
+  const [techMap,     setTechMap]     = useState({})  // SMA/trend data per ticker
   // Portfolio holdings — persisted in localStorage
   const [holdings,      setHoldings]     = useState([])
   const [portfolioResult, setPortfolioResult] = useState(null)
@@ -625,6 +633,27 @@ export default function Dashboard() {
         setLiveEH(d.history)
       }
     } catch {}
+  }, [])
+
+  // Fetch SMA/trend technicals in background — batches of 5, never blocks main load
+  const fetchTechnicals = useCallback(async (tickers) => {
+    if (!tickers?.length) return
+    const BATCH = 5
+    for (let i = 0; i < tickers.length; i += BATCH) {
+      const batch = tickers.slice(i, i + BATCH)
+      try {
+        const r = await fetch('/api/technicals?symbols=' + batch.join(','), { cache: 'no-store' })
+        if (!r.ok) continue
+        const d = await r.json()
+        if (d?.technicals) {
+          setTechMap(prev => ({ ...prev, ...d.technicals }))
+        }
+      } catch {}
+      // Small gap between batches to avoid rate limits
+      if (i + BATCH < tickers.length) {
+        await new Promise(r => setTimeout(r, 600))
+      }
+    }
   }, [])
 
   // Merge live EH with hardcoded fallback — live takes priority
@@ -675,13 +704,17 @@ export default function Dashboard() {
             : 'NO_EARNINGS',
           s.bigMoverToday ? 'GAP_UP>8%_APPLY_PENALTY' : '',
           hist ? 'HIST:'+hist.label+(hist.live?' [LIVE]':'') : '',
-          s.trend           ? 'TREND:'+s.trend           : '',
-          s.setup           ? 'SETUP:'+s.setup           : '',
-          s.entryQuality    ? 'ENTRY:'+s.entryQuality    : '',
-          s.sma200          ? 'SMA200:$'+s.sma200+(s.pctAbove200!==null?'('+(s.pctAbove200>=0?'+':'')+s.pctAbove200+'%)':'') : 'NO_SMA_DATA',
-          s.sma50           ? 'SMA50:$'+s.sma50+(s.pctAbove50!==null?'('+(s.pctAbove50>=0?'+':'')+s.pctAbove50+'%)':'')    : '',
-          s.nearestSupport      ? 'SUPPORT:'+s.nearestSupport       : '',
-          s.suggestedStopLoss   ? 'CALC_STOP:$'+s.suggestedStopLoss+'('+s.distToStopPct+'%_below)' : '',
+          // Use techMap (background fetch) over stock-level data
+          (()=>{const t=techMap[s.ticker]; return[
+            t?.trend         ? 'TREND:'+t.trend         : (s.trend?'TREND:'+s.trend:''),
+            t?.setup         ? 'SETUP:'+t.setup         : (s.setup?'SETUP:'+s.setup:''),
+            t?.entryQuality  ? 'ENTRY:'+t.entryQuality  : (s.entryQuality?'ENTRY:'+s.entryQuality:''),
+            t?.sma200        ? 'SMA200:$'+t.sma200+(t.pctAbove200!==null?'('+(t.pctAbove200>=0?'+':'')+t.pctAbove200+'%)':'')
+              : s.sma200     ? 'SMA200:$'+s.sma200                                                  : 'NO_SMA_DATA',
+            t?.sma50         ? 'SMA50:$'+t.sma50+(t.pctAbove50!==null?'('+(t.pctAbove50>=0?'+':'')+t.pctAbove50+'%)':'')   : '',
+            t?.nearestSupport    ? 'SUPPORT:'+t.nearestSupport    : '',
+            t?.suggestedStopLoss ? 'CALC_STOP:$'+t.suggestedStopLoss+'('+t.distToStopPct+'%_below)' : '',
+          ].filter(Boolean).join(' | ')})(),
         ]
         return parts.filter(Boolean).join(' | ')
       }).join('\n')
@@ -824,6 +857,9 @@ Return ONLY this JSON (up to 10 opportunity cards, but watchList and avoidList m
       setData(p=>({...p, opportunities:{ ...ai, opportunities:grounded, earningsCalendar, vix, vixRegime, sectors, meta:md.meta }}))
       setLastUp(p=>({...p, opportunities:new Date().toISOString()}))
       if (grounded[0]) setSelected(grounded[0])
+      // Fetch SMA data in background — won't block anything
+      const allTickers = (stocks||[]).map(s=>s.ticker)
+      fetchTechnicals(allTickers)
     } catch(e) {
       setErrors(p=>({...p,opportunities:e.message}))
     } finally {
@@ -1284,7 +1320,7 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
           <div>
             <div style={{ display:'grid', gridTemplateColumns:mob?'1fr':opps.length>3?'repeat(2,1fr)':'1fr', gap:14 }}>
             {opps.length
-              ? opps.map((o,i) => <OppCard key={`${o.ticker}-${i}`} opp={o} rank={i+1} active={selected?.ticker===o.ticker} onClick={handleClick} onDeepDive={handleCardDive} deepDiveLoading={!!cardDrillLoad[o.ticker]} deepDiveContent={cardDrills[o.ticker]} getEH={getEH} />)
+              ? opps.map((o,i) => <OppCard key={`${o.ticker}-${i}`} opp={o} rank={i+1} active={selected?.ticker===o.ticker} onClick={handleClick} onDeepDive={handleCardDive} deepDiveLoading={!!cardDrillLoad[o.ticker]} deepDiveContent={cardDrills[o.ticker]} getEH={getEH} techMap={techMap} />)
               : (
                 <div style={{ ...card({ textAlign:'center', padding:48 }) }}>
                   <div style={{ fontSize:36, marginBottom:12 }}>💵</div>
@@ -2261,7 +2297,6 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
           <div style={{ display:'flex', flexDirection:'column', gap:6, alignItems:'center', marginTop:4 }}>
             {[
               ['Fetching live prices…',    '~3s',  loadingStep !== 'Fetching live prices…'],
-              ['Computing SMA trends…',    '~8s',  loadingStep === 'Building AI analysis…'],
               ['Building AI analysis…',    '~10s', false],
             ].map(([step, time, done]) => (
               <div key={step} style={{ display:'flex', alignItems:'center', gap:8 }}>
@@ -2278,7 +2313,7 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
         )}
         <div style={{ color:C.muted, fontSize:12, marginTop:4 }}>
           {activeTab==='opportunities'
-            ? 'SMA trends are cached for 6 hours — faster after first load'
+            ? 'SMA trend badges load in the background after cards appear'
             : 'Fetching live market data'}
         </div>
       </div>
