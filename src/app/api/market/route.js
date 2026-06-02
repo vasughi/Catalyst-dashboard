@@ -85,26 +85,62 @@ function tradingDaysUntil(dateStr) {
 // ─── Company names ────────────────────────────────────────────────────────────
 
 const COMPANY_NAMES = {
+  // AI silicon
   NVDA: 'NVIDIA',       AMD:  'AMD',            AVGO: 'Broadcom',
   TSM:  'TSMC',         MRVL: 'Marvell',        ARM:  'Arm Holdings',
+  INTC: 'Intel',        QCOM: 'Qualcomm',
+  // Networking
+  ANET: 'Arista',       CIEN: 'Ciena',          CRDO: 'Credo Tech',
+  // Big tech
   MSFT: 'Microsoft',    GOOGL:'Alphabet',        META: 'Meta',
-  PLTR: 'Palantir',     DELL: 'Dell',            SMCI: 'Super Micro',
+  PLTR: 'Palantir',     NOW:  'ServiceNow',
+  // Servers
+  DELL: 'Dell',         SMCI: 'Super Micro',     HPE:  'HP Enterprise',
+  // Cyber
   CRWD: 'CrowdStrike',  PANW: 'Palo Alto',       ZS:   'Zscaler',
+  S:    'SentinelOne',
+  // Defence
   LMT:  'Lockheed',     RTX:  'RTX Corp',        NOC:  'Northrop',
-  AXON: 'Axon',         VRT:  'Vertiv',          ETN:  'Eaton',
-  CEG:  'Constellation',FSLR: 'First Solar',     ANET: 'Arista',
-  RKLB: 'Rocket Lab',
+  AXON: 'Axon',         HII:  'Huntington Ingalls', GD: 'General Dynamics',
+  BA:   'Boeing',
+  // Space / drones
+  RKLB: 'Rocket Lab',   LUNR: 'Intuitive Machines', ACHR: 'Archer Aviation',
+  JOBY: 'Joby Aviation',
+  // Power / grid
+  VRT:  'Vertiv',       ETN:  'Eaton',           CEG:  'Constellation',
+  VST:  'Vistra',       GEV:  'GE Vernova',      NRG:  'NRG Energy',
+  // Solar
+  FSLR: 'First Solar',  ENPH: 'Enphase',
+  // Critical minerals
+  FCX:  'Freeport-McMoRan', MP: 'MP Materials',  CCJ:  'Cameco',
 }
 
-// Fallback earnings dates — updated each quarter
-// Finnhub takes priority when it has the real date
+// ── Fallback earnings dates ───────────────────────────────────────────────────
+// Finnhub confirmed dates take priority. These fill the gaps.
+// AUDIT LOG (02 Jun 2026):
+//   META: 29 Jul 2026 CONFIRMED (TipRanks/Catacal)
+//   VRT:  05 Aug 2026 CONFIRMED (TipRanks/Investing.com)
+//   AMD:  29 Jul 2026 estimate
+//   NVDA: 27 Aug 2026 estimate
+//   PLTR: 04 Aug 2026 estimate
+//   CRWD: 26 Aug 2026 estimate
+//   SMCI: 05 Aug 2026 estimate
+//   ANET: 29 Jul 2026 estimate
+//   GEV:  23 Jul 2026 estimate
+//   NOW:  23 Jul 2026 estimate
 const FALLBACK_EARNINGS = {
+  META: { date: '2026-07-29', note: 'confirmed' },   // CONFIRMED
+  VRT:  { date: '2026-08-05', note: 'confirmed' },   // CONFIRMED
+  AMD:  { date: '2026-07-29', note: 'est' },
   NVDA: { date: '2026-08-27', note: 'est' },
   PLTR: { date: '2026-08-04', note: 'est' },
   CRWD: { date: '2026-08-26', note: 'est' },
-  AMD:  { date: '2026-07-29', note: 'est' },
   SMCI: { date: '2026-08-05', note: 'est' },
   ANET: { date: '2026-07-29', note: 'est' },
+  GEV:  { date: '2026-07-23', note: 'est' },
+  NOW:  { date: '2026-07-23', note: 'est' },
+  MSFT: { date: '2026-07-28', note: 'est' },
+  GOOGL:{ date: '2026-07-22', note: 'est' },
 }
 
 // ─── Route ────────────────────────────────────────────────────────────────────
@@ -121,11 +157,26 @@ export async function GET(request) {
     // ── OPPORTUNITIES ──────────────────────────────────────────────────────
     if (type === 'opportunities') {
       const UNIVERSE = [
-        'NVDA','AMD','AVGO','TSM','MRVL','ARM',
-        'MSFT','GOOGL','META','PLTR',
-        'DELL','SMCI','CRWD','PANW','ZS',
-        'LMT','RTX','NOC','AXON',
-        'VRT','ETN','CEG','FSLR','ANET','RKLB',
+        // AI silicon / semis
+        'NVDA','AMD','AVGO','TSM','MRVL','ARM','QCOM',
+        // Networking / AI infra
+        'ANET','CRDO',
+        // Big tech / AI software
+        'MSFT','GOOGL','META','PLTR','NOW',
+        // Servers / storage
+        'DELL','SMCI',
+        // Cybersecurity
+        'CRWD','PANW','ZS',
+        // Defence / aerospace
+        'LMT','RTX','NOC','AXON','GD',
+        // Space / drones / autonomy
+        'RKLB','LUNR',
+        // Power / grid / nuclear
+        'VRT','ETN','CEG','VST','GEV',
+        // Solar / clean energy
+        'FSLR',
+        // Critical minerals
+        'FCX','CCJ',
       ]
 
       const today    = new Date()
@@ -259,7 +310,7 @@ export async function GET(request) {
       }
 
       const [indices, comms, sectorQ, vixQ, gbpusd, eurusd, usdjpy] = await Promise.all([
-        quotes(['SPY','QQQ','DIA','IWM','EWG','EWQ','EWJ']),
+        quotes(['SPY','QQQ','DIA','IWM','EWG','EWQ','EWJ','ITA','XSD']), // ITA=defence, XSD=semis added
         quotes(['USO','GLD','CPER']),
         quotes(['XLK','ITA','XSD','CIBR','XLE','XLI']),
         quote('VIXY'),
