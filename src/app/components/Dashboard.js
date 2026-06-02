@@ -864,12 +864,22 @@ Keep total response under 280 words. Plain English only — no trading jargon.`,
     setPortfolioError(null)
     setPortfolioResult(null)
     try {
-      // Fetch live prices for all held tickers
+      // Fetch only the prices we need — much faster than loading all 44 universe stocks
       const tickers = holdings.map(h => h.ticker)
-      const priceRes = await fetch(`/api/market?type=opportunities`, { cache: 'no-store' })
-      const priceData = await priceRes.json()
+      const [priceRes, marketRes] = await Promise.all([
+        fetch(`/api/prices?symbols=${tickers.join(',')}`, { cache: 'no-store' }),
+        fetch('/api/market?type=global', { cache: 'no-store' }),  // VIX + sectors only
+      ])
+      const priceData  = await priceRes.json()
+      const marketData = await marketRes.json()
       const priceMap = {}
-      ;(priceData.stocks || []).forEach(s => { priceMap[s.ticker] = s })
+      Object.entries(priceData.prices || {}).forEach(([ticker, q]) => {
+        if (q) priceMap[ticker] = q
+      })
+      // Attach vix/sectors from global endpoint
+      priceData.vix      = marketData.vix
+      priceData.vixRegime= marketData.vixRegime
+      priceData.sectors  = marketData.sectors
 
       // Build holdings with live prices
       const enriched = holdings.map(h => {
@@ -882,14 +892,14 @@ Keep total response under 280 words. Plain English only — no trading jargon.`,
           ...h,
           livePrice,
           livePriceFormatted: livePrice ? `$${livePrice.toFixed(2)}` : 'Price unavailable',
-          gainPct: gainPct ? parseFloat(gainPct.toFixed(2)) : null,
-          gainAbs: gainAbs ? parseFloat(gainAbs.toFixed(2)) : null,
-          totalValue: livePrice ? livePrice * h.shares : null,
-          change1d: live?.change1d || null,
-          direction: live?.direction || null,
-          earningsDate: live?.earningsDate || null,
-          earningsTradingDaysAway: live?.earningsTradingDaysAway ?? null,
-          earningsSource: live?.earningsSource || null,
+          gainPct:     gainPct !== null ? parseFloat(gainPct.toFixed(2)) : null,
+          gainAbs:     gainAbs !== null ? parseFloat(gainAbs.toFixed(2)) : null,
+          totalValue:  livePrice ? livePrice * h.shares : null,
+          change1d:    live?.change1d || null,
+          direction:   live?.direction || null,
+          earningsDate: null,                // earnings from calendar, not price feed
+          earningsTradingDaysAway: null,
+          earningsSource: null,
           earningsHistory: hist ? hist.label : null,
         }
       })
@@ -909,8 +919,8 @@ PORTFOLIO HOLDINGS:
 ${holdingsText}
 
 CURRENT MARKET CONTEXT:
-VIX: ${priceData.vix || 'N/A'} (${priceData.vixRegime || 'N/A'})
-Sector health: ${(priceData.sectors || []).map(s => s.label+' '+s.change).join(', ')}
+VIX: ${marketData.vix || 'N/A'} (${marketData.vixRegime || 'N/A'})
+Sector health: ${(marketData.sectors || []).map(s => s.label+' '+s.change).join(', ')}
 
 RULES:
 1. For each holding, give exactly one action: BUY MORE / HOLD / TRIM (sell some) / SELL ALL
@@ -977,27 +987,33 @@ Return JSON:
     if (!t212Data?.positions?.length) return
     setT212AnalysisLoad(true)
     try {
-      // Fetch live Finnhub prices cross-referenced against T212 positions
-      const marketRes = await fetch('/api/market?type=opportunities', { cache: 'no-store' })
+      // Fetch only the prices for stocks we actually hold — much faster
+      const t212Tickers = t212Data.positions.map(p => p.ticker)
+      const [priceRes, marketRes] = await Promise.all([
+        fetch(`/api/prices?symbols=${t212Tickers.join(',')}`, { cache: 'no-store' }),
+        fetch('/api/market?type=global', { cache: 'no-store' }),  // VIX + sectors only
+      ])
+      const priceJson  = await priceRes.json()
       const marketData = await marketRes.json()
       const priceMap = {}
-      ;(marketData.stocks || []).forEach(s => { priceMap[s.ticker] = s })
+      Object.entries(priceJson.prices || {}).forEach(([ticker, q]) => {
+        if (q) priceMap[ticker] = q
+      })
 
-      // Enrich T212 positions with Finnhub live prices + earnings data
+      // Enrich T212 positions with Finnhub data
+      // T212 already provides currentPrice — we use Finnhub for change1d and earnings
       const enriched = t212Data.positions.map(p => {
-        const live = priceMap[p.ticker]
+        const live = priceMap[p.ticker]  // from fast /api/prices endpoint
         const hist = getEH(p.ticker)
-        // Use T212 price as primary (already live), Finnhub as secondary
-        const livePrice = p.currentPrice || live?.price || null
         return {
           ...p,
-          finnhubPrice:  live?.price || null,
-          change1d:      live?.change1d || null,
-          earningsDate:  live?.earningsDate || null,
-          earningsDays:  live?.earningsTradingDaysAway ?? null,
-          earningsSource:live?.earningsSource || null,
+          finnhubPrice:    live?.price || null,
+          change1d:        live?.change1d || null,
+          earningsDate:    null,   // earnings come from calendar, added separately if needed
+          earningsDays:    null,
+          earningsSource:  null,
           earningsHistory: hist?.label || null,
-          livePrice,
+          livePrice:       p.currentPrice || live?.price || null,
         }
       })
 
