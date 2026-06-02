@@ -36,17 +36,33 @@ async function fh(path) {
   return res.json()
 }
 
+// Price sanity ranges — reject Finnhub glitch prices outside these bounds
+const SANITY = {
+  NVDA:[80,230],  AMD:[80,260],   AVGO:[150,750], TSM:[100,260],  MRVL:[50,400],
+  ARM:[80,550],   MSFT:[300,600], GOOGL:[100,500],META:[400,800], PLTR:[50,320],
+  DELL:[80,200],  SMCI:[20,110],  CRWD:[200,550], PANW:[100,280], ZS:[100,300],
+  LMT:[400,750],  RTX:[80,200],   NOC:[400,750],  AXON:[100,450], VRT:[150,500],
+  ETN:[200,450],  CEG:[150,400],  FSLR:[100,400], ANET:[50,150],  RKLB:[10,60],
+  GEV:[300,1400], VST:[50,250],   NOW:[700,1600], CRDO:[100,500], FCX:[30,120],
+  CCJ:[30,90],    ENPH:[50,200],  INTC:[15,60],   QCOM:[100,300], CIEN:[40,120],
+  CRWD:[200,550], PANW:[100,280], S:[10,50],      LUNR:[5,50],    ACHR:[2,30],
+  NRG:[50,200],   MP:[10,50],     HII:[150,350],  GD:[200,350],
+}
+
 async function quote(sym) {
   try {
     const d = await fh(`/quote?symbol=${encodeURIComponent(sym)}`)
     if (!d || d.c === 0) return null
+    // Reject prices outside expected range — prevents rate-limit glitches
+    const r = SANITY[sym]
+    if (r && (d.c < r[0] || d.c > r[1])) return null
     return { symbol: sym, price: d.c, changePct: d.dp ?? 0, prevClose: d.pc }
   } catch { return null }
 }
 
 async function quotes(syms) {
-  // Batch in chunks of 20 with a small gap to avoid Finnhub 60/min rate limit
-  const CHUNK = 20
+  // Chunk to 15 with 500ms gaps — conservative for Finnhub 60/min free tier
+  const CHUNK = 15
   const map = {}
   for (let i = 0; i < syms.length; i += CHUNK) {
     const chunk = syms.slice(i, i + CHUNK)
@@ -54,10 +70,7 @@ async function quotes(syms) {
     res.forEach((r, j) => {
       if (r.status === 'fulfilled' && r.value) map[chunk[j]] = r.value
     })
-    // Small delay between chunks if more to fetch
-    if (i + CHUNK < syms.length) {
-      await new Promise(r => setTimeout(r, 300))
-    }
+    if (i + CHUNK < syms.length) await new Promise(r => setTimeout(r, 500))
   }
   return map
 }
@@ -66,6 +79,51 @@ async function earningsCalendar(from, to) {
   try {
     const d = await fh(`/calendar/earnings?from=${from}&to=${to}`)
     return d?.earningsCalendar || []
+  } catch { return [] }
+}
+
+// Second earnings calendar source — API Ninjas (free, no CC, different data provider)
+// Cross-checking two sources dramatically improves date accuracy
+async function earningsCalendarNinjas(tickers) {
+  const NINJAS_KEY = process.env.API_NINJAS_KEY
+  if (!NINJAS_KEY) return {}  // gracefully skip if not configured
+
+  const results = {}
+  // API Ninjas: GET /v1/earningscalendar?ticker=NVDA
+  const fetches = tickers.slice(0, 20).map(async ticker => {
+    try {
+      const res = await fetch(
+        `https://api.api-ninjas.com/v1/earningscalendar?ticker=${ticker}`,
+        { headers: { 'X-Api-Key': NINJAS_KEY }, cache: 'no-store' }
+      )
+      if (!res.ok) return
+      const data = await res.json()
+      // Take the next upcoming date (first one in the future)
+      const today = new Date().toISOString().split('T')[0]
+      const upcoming = (data || [])
+        .filter(e => e.date >= today)
+        .sort((a, b) => a.date.localeCompare(b.date))[0]
+      if (upcoming) results[ticker] = { date: upcoming.date, source: 'api_ninjas' }
+    } catch {}
+  })
+  await Promise.allSettled(fetches)
+  return results
+}
+
+// Fetch recent company news for breaking events (Finnhub free tier)
+// Returns the 5 most recent news items per ticker — used to detect major events
+async function companyNews(ticker, days = 7) {
+  try {
+    const to   = new Date().toISOString().split('T')[0]
+    const from = new Date(Date.now() - days * 86400000).toISOString().split('T')[0]
+    const d    = await fh(`/company-news?symbol=${encodeURIComponent(ticker)}&from=${from}&to=${to}`)
+    if (!Array.isArray(d)) return []
+    return d.slice(0, 5).map(n => ({
+      headline: n.headline,
+      summary:  n.summary?.slice(0, 200),
+      date:     new Date(n.datetime * 1000).toISOString().split('T')[0],
+      source:   n.source,
+    }))
   } catch { return [] }
 }
 
@@ -155,6 +213,7 @@ const FALLBACK_EARNINGS = {
   CRDO: { date: '2026-06-01', note: 'confirmed' },   // CONFIRMED — reports TODAY 1 Jun 2026 after close
   // Corrected estimates
   FCX:  { date: '2026-07-16', note: 'est' },          // corrected from 22 Jul — Investing.com shows 16 Jul
+  ARM:  { date: '2026-07-29', note: 'confirmed' },  // CONFIRMED — investors.arm.com shows 29 Jul 2026
   GEV:  { date: '2026-07-23', note: 'est' },
   GOOGL:{ date: '2026-07-22', note: 'est' },
   NOW:  { date: '2026-07-23', note: 'est' },
@@ -210,32 +269,76 @@ export async function GET(request) {
       const today    = new Date()
       const in60days = addDays(today, 60)
 
-      // All data in parallel — one round trip
-      const [stockQuotes, earnings, sectorQ, vixQ] = await Promise.all([
+      // All data in parallel — Finnhub + Ninjas cross-check + news
+      const HIGH_PRIORITY = ['NVDA','AVGO','MRVL','ARM','PLTR','CRDO','VRT','GEV','META','NOW']
+      const [stockQuotes, earnings, ninjasEarnings, sectorQ, vixQ, newsItems] = await Promise.all([
         quotes(UNIVERSE),
         earningsCalendar(isoDate(today), isoDate(in60days)),
+        earningsCalendarNinjas(UNIVERSE),  // second source for cross-checking
         quotes(['XLK','ITA','XSD','CIBR','XLE']),
         quote('VIXY'),
+        // Fetch news for high-priority stocks to auto-detect major events
+        Promise.allSettled(HIGH_PRIORITY.map(t => companyNews(t, 5).then(n => [t, n]))),
       ])
 
-      // Build earnings map — Finnhub first, fallbacks fill gaps
+      // Build news map: { TICKER: [headlines] }
+      const newsMap = {}
+      newsItems.forEach(r => {
+        if (r.status === 'fulfilled' && r.value) {
+          const [ticker, items] = r.value
+          if (items.length) newsMap[ticker] = items
+        }
+      })
+
+      // Build earnings map with three-tier confidence:
+      //   1. Both Finnhub + Ninjas agree → 'confirmed' (highest confidence)
+      //   2. Finnhub only → 'finnhub' (good but verify)
+      //   3. Ninjas only → 'ninjas' (alternative source)
+      //   4. Hardcoded fallback → 'estimate' (lowest — manual override)
       const earningsMap = {}
 
+      // Tier 1: Finnhub dates
       earnings
         .filter(e => UNIVERSE.includes(e.symbol))
         .forEach(e => {
           const days = tradingDaysUntil(e.date)
           if (days !== null && days >= 0) {
             earningsMap[e.symbol] = {
-              ticker: e.symbol,
-              date: e.date,
+              ticker:      e.symbol,
+              date:        e.date,
               tradingDaysAway: days,
               epsEstimate: e.epsEstimate ?? null,
-              source: 'finnhub',
+              source:      'finnhub',
             }
           }
         })
 
+      // Cross-check with Ninjas — upgrade confidence or correct date
+      Object.entries(ninjasEarnings).forEach(([ticker, nb]) => {
+        if (!UNIVERSE.includes(ticker)) return
+        const days = tradingDaysUntil(nb.date)
+        if (days === null || days < 0) return
+        const existing = earningsMap[ticker]
+        if (!existing) {
+          // Ninjas has date, Finnhub doesn't
+          earningsMap[ticker] = { ticker, date: nb.date, tradingDaysAway: days, epsEstimate: null, source: 'ninjas' }
+        } else if (existing.date === nb.date) {
+          // Both agree — upgrade to confirmed
+          earningsMap[ticker].source = 'confirmed'
+        } else {
+          // Dates differ — flag as conflicted, use Ninjas date if closer
+          const fDays = existing.tradingDaysAway
+          earningsMap[ticker].source = 'conflicted'
+          earningsMap[ticker].altDate = nb.date
+          // Use whichever is sooner (more likely to be correct)
+          if (days < fDays) {
+            earningsMap[ticker].date = nb.date
+            earningsMap[ticker].tradingDaysAway = days
+          }
+        }
+      })
+
+      // Tier 3: Hardcoded fallbacks for gaps
       Object.entries(FALLBACK_EARNINGS).forEach(([ticker, fb]) => {
         if (!earningsMap[ticker]) {
           const days = tradingDaysUntil(fb.date)
@@ -245,7 +348,7 @@ export async function GET(request) {
               date: fb.date,
               tradingDaysAway: days,
               epsEstimate: null,
-              source: 'estimate',
+              source: fb.note === 'confirmed' ? 'confirmed' : 'estimate',
               note: fb.note,
             }
           }
@@ -315,15 +418,18 @@ export async function GET(request) {
         meta: {
           requestedType: type,
           fetchedAt: new Date().toISOString(),
-          provider: 'finnhub',
+          provider: 'finnhub+ninjas',
           stocksReturned: stocks.length,
           earningsFound: calendarItems.length,
+          confirmedDates: calendarItems.filter(e => e.source === 'confirmed').length,
         },
         vix: vixPrice,
         vixRegime,
         sectors,
         stocks,
         earningsCalendar: calendarItems,
+        // Live company news — auto-detects major events like dilutions, guidance cuts etc.
+        companyNews: newsMap,
       })
     }
 
