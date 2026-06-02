@@ -77,7 +77,7 @@ const EH = {
   QCOM:  { avg: 7.4,  beats: 3, label: '7.4% avg · 3/4 beats' },
   // Networking
   ANET:  { avg: 9.2,  beats: 4, label: '9.2% avg · 4/4 beats' },
-  CRDO:  { avg: 19.8, beats: 3, label: '19.8% avg · 3/4 beats — next: est Aug 2026' },
+  CRDO:  { avg: 19.8, beats: 3, label: '19.8% avg · 4/4 beats — REPORTS TODAY 1 JUN 2026' },
   // Big tech
   MSFT:  { avg: 4.8,  beats: 4, label: '4.8% avg · 4/4 beats — below 15% gate' },
   GOOGL: { avg: 7.2,  beats: 3, label: '7.2% avg · 3/4 beats' },
@@ -588,10 +588,12 @@ PAST EARNINGS REACTIONS (how much the stock moved after the last 4 earnings repo
 ${Object.entries(EH).map(([k,v])=>`${k}: ${v.label}`).join(' | ')}
 
 IMPORTANT BREAKING NEWS — factor these into ratings:
-- AVGO (Broadcom): Reports earnings TOMORROW 3 Jun 2026 — this is the highest priority setup right now. AI chip revenue and data centre demand guidance will move the stock. Evaluate carefully for BUY.
-- GOOGL: Announced $80 billion new share issue on 1 Jun 2026. Issuing that many new shares reduces the value of existing shares. This is a negative event — max GOOGL rating = WATCH, reduce confidence score.
-- GOOGL: HSBC cut price target from $435 to $420 today — further caution.
-- FCX (Freeport-McMoRan): Despite beating Q1 estimates, stock fell 12% because the Grasberg copper mine in Indonesia had its production cut from 100,000 to 60,000 tons per day. This is a fundamental deterioration — max FCX rating = WATCH.
+- CRDO (Credo Technology): Reports earnings TODAY 1 Jun 2026 after market close — Q4 FY2026 results. EPS estimate $0.98 on $430M revenue. Has beaten estimates in every quarter. Revenue tripled YoY last quarter. HIGH PRIORITY — if not yet reported, this is the #1 BUY candidate today.
+- AVGO (Broadcom): Reports earnings TOMORROW 3 Jun 2026 after close — AI chip revenue guided at $10.7B (up 140% YoY). EPS estimate $2.40. 37 analysts covering. This is the second highest priority right now.
+- GOOGL: Announced $80 billion new share issue on 1 Jun 2026. More shares issued = dilution = negative for existing holders. Max GOOGL rating = WATCH.
+- GOOGL: HSBC cut price target from $435 to $420 today.
+- FCX (Freeport-McMoRan): Stock fell 12% after Q1 beat because Grasberg mine production was cut from 100,000 to 60,000 tons/day. Fundamental problem — max FCX rating = WATCH.
+- VRT (Vertiv): Next earnings window is 24-29 Jul 2026 (not yet officially confirmed).
 
 RULES — apply every time:
 1. Only use earnings dates from the calendar above — never guess dates
