@@ -1797,17 +1797,17 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
         </div>
 
         {/* Setup prompt if no API key configured */}
-        {t212Error?.includes('TRADING212_API_KEY') && (
+        {(t212Error?.includes('TRADING212_API_KEY') || t212Error?.includes('credentials not configured') || t212Error?.includes('authentication failed')) && (
           <div style={{ ...card({ borderLeft:`4px solid ${C.amber}`, marginBottom:14 }) }}>
             <div style={{ color:C.amber, fontWeight:800, fontSize:15, marginBottom:8 }}>⚙️ Setup required</div>
-            <div style={{ color:C.sub, fontSize:14, lineHeight:1.7 }}>
-              To connect your Trading 212 account:<br/>
-              1. Open T212 app → <strong>Settings → API (Beta) → Generate API key</strong><br/>
-              2. Select permissions: Account data, Portfolio, Orders (read only)<br/>
-              3. Copy the key<br/>
-              4. Go to <strong>Vercel → Settings → Environment Variables</strong><br/>
-              5. Add: <code style={{ background:C.bg, padding:'2px 6px', borderRadius:4 }}>TRADING212_API_KEY</code> = your key<br/>
-              6. Redeploy
+            <div style={{ color:C.sub, fontSize:14, lineHeight:1.85 }}>
+              Trading 212 requires <strong>two credentials</strong> — a Key and a Secret.<br/><br/>
+              <strong>Step 1:</strong> T212 app → Settings → API (Beta) → Generate API key<br/>
+              <strong>Step 2:</strong> Copy BOTH the <strong>Key</strong> and the <strong>Secret</strong> — the secret is only shown once!<br/>
+              <strong>Step 3:</strong> Vercel → Settings → Environment Variables, add:<br/>
+              <code style={{ background:C.bg, padding:'2px 6px', borderRadius:4, display:'block', margin:'6px 0' }}>TRADING212_API_KEY = your key here</code>
+              <code style={{ background:C.bg, padding:'2px 6px', borderRadius:4, display:'block', margin:'6px 0' }}>TRADING212_API_SECRET = your secret here</code>
+              <strong>Step 4:</strong> Vercel → Deployments → Redeploy
             </div>
           </div>
         )}
