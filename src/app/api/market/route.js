@@ -45,11 +45,20 @@ async function quote(sym) {
 }
 
 async function quotes(syms) {
-  const res = await Promise.allSettled(syms.map(quote))
+  // Batch in chunks of 20 with a small gap to avoid Finnhub 60/min rate limit
+  const CHUNK = 20
   const map = {}
-  res.forEach((r, i) => {
-    if (r.status === 'fulfilled' && r.value) map[syms[i]] = r.value
-  })
+  for (let i = 0; i < syms.length; i += CHUNK) {
+    const chunk = syms.slice(i, i + CHUNK)
+    const res = await Promise.allSettled(chunk.map(quote))
+    res.forEach((r, j) => {
+      if (r.status === 'fulfilled' && r.value) map[chunk[j]] = r.value
+    })
+    // Small delay between chunks if more to fetch
+    if (i + CHUNK < syms.length) {
+      await new Promise(r => setTimeout(r, 300))
+    }
+  }
   return map
 }
 
