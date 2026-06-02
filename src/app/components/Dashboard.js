@@ -518,6 +518,8 @@ function DetailPanel({ stock, content, loading, onRun }) {
 // ─── Tabs ─────────────────────────────────────────────────────────────────────
 const TABS = [
   { key:'opportunities', label:'⚡ Opportunities' },
+  { key:'portfolio',     label:'💼 My Portfolio' }, // password protected — manual input
+  { key:'t212',          label:'🏦 T212 Live' },    // password protected — Trading 212 API
   { key:'global',        label:'🌍 Global Macro' },
   { key:'risk',          label:'⚠️ Risk' },
 ]
@@ -533,9 +535,31 @@ export default function Dashboard() {
   const [drillLoad,   setDrillLoad]   = useState(false)
   const [lastUp,      setLastUp]      = useState({})
   const [showOverlay, setShowOverlay] = useState(false)
+  // Portfolio password gate — stored in sessionStorage (cleared on browser close)
+  const [portfolioUnlocked, setPortfolioUnlocked] = useState(false)
+  const [passwordInput,     setPasswordInput]     = useState('')
+  const [passwordError,     setPasswordError]     = useState(false)
   // Live earnings history — fetched from /api/earnings-history, cached 24h
   // Falls back to hardcoded EH if fetch fails
   const [liveEH,      setLiveEH]      = useState({})
+  // Portfolio holdings — persisted in localStorage
+  const [holdings,      setHoldings]     = useState([])
+  const [portfolioResult, setPortfolioResult] = useState(null)
+  const [portfolioLoading, setPortfolioLoading] = useState(false)
+  const [portfolioError, setPortfolioError] = useState(null)
+  const [newTicker,     setNewTicker]    = useState('')
+  const [newBuyPrice,   setNewBuyPrice]  = useState('')
+  const [newShares,     setNewShares]    = useState('')
+  const [newCurrency,   setNewCurrency]  = useState('USD')
+  // T212 live portfolio state
+  const [t212Data,         setT212Data]        = useState(null)
+  const [t212Loading,      setT212Loading]      = useState(false)
+  const [t212Error,        setT212Error]        = useState(null)
+  const [t212Result,       setT212Result]       = useState(null)
+  const [t212AnalysisLoad, setT212AnalysisLoad] = useState(false)
+  const [t212Unlocked,     setT212Unlocked]     = useState(false)
+  const [t212PwInput,      setT212PwInput]      = useState('')
+  const [t212PwError,      setT212PwError]      = useState(false)
   const loaded = useRef({})
   const w = useWindowWidth()
   const mob = w < 900
@@ -810,10 +834,269 @@ Keep total response under 280 words. Plain English only — no trading jargon.`,
     finally { setDrillLoad(false) }
   }, [claude])
 
+  // ── Portfolio analysis ────────────────────────────────────────────────────
+  const addHolding = useCallback(() => {
+    const ticker = newTicker.trim().toUpperCase()
+    const buyPrice = parseFloat(newBuyPrice)
+    const shares = parseFloat(newShares) || 1
+    if (!ticker || isNaN(buyPrice) || buyPrice <= 0) return
+    setHoldings(prev => {
+      const existing = prev.findIndex(h => h.ticker === ticker)
+      if (existing >= 0) {
+        const updated = [...prev]
+        updated[existing] = { ...updated[existing], buyPrice, shares, currency: newCurrency }
+        return updated
+      }
+      return [...prev, { ticker, buyPrice, shares, currency: newCurrency, addedAt: new Date().toISOString() }]
+    })
+    setNewTicker(''); setNewBuyPrice(''); setNewShares('')
+    setPortfolioResult(null)
+  }, [newTicker, newBuyPrice, newShares, newCurrency])
+
+  const removeHolding = useCallback((ticker) => {
+    setHoldings(prev => prev.filter(h => h.ticker !== ticker))
+    setPortfolioResult(null)
+  }, [])
+
+  const analysePortfolio = useCallback(async () => {
+    if (!holdings.length) return
+    setPortfolioLoading(true)
+    setPortfolioError(null)
+    setPortfolioResult(null)
+    try {
+      // Fetch live prices for all held tickers
+      const tickers = holdings.map(h => h.ticker)
+      const priceRes = await fetch(`/api/market?type=opportunities`, { cache: 'no-store' })
+      const priceData = await priceRes.json()
+      const priceMap = {}
+      ;(priceData.stocks || []).forEach(s => { priceMap[s.ticker] = s })
+
+      // Build holdings with live prices
+      const enriched = holdings.map(h => {
+        const live = priceMap[h.ticker]
+        const livePrice = live?.price || null
+        const gainPct = livePrice ? ((livePrice - h.buyPrice) / h.buyPrice * 100) : null
+        const gainAbs = livePrice ? ((livePrice - h.buyPrice) * h.shares) : null
+        const hist = getEH(h.ticker)
+        return {
+          ...h,
+          livePrice,
+          livePriceFormatted: livePrice ? `$${livePrice.toFixed(2)}` : 'Price unavailable',
+          gainPct: gainPct ? parseFloat(gainPct.toFixed(2)) : null,
+          gainAbs: gainAbs ? parseFloat(gainAbs.toFixed(2)) : null,
+          totalValue: livePrice ? livePrice * h.shares : null,
+          change1d: live?.change1d || null,
+          direction: live?.direction || null,
+          earningsDate: live?.earningsDate || null,
+          earningsTradingDaysAway: live?.earningsTradingDaysAway ?? null,
+          earningsSource: live?.earningsSource || null,
+          earningsHistory: hist ? hist.label : null,
+        }
+      })
+
+      // Build AI prompt
+      const holdingsText = enriched.map(h => [
+        `${h.ticker}: bought at ${h.currency}${h.buyPrice} × ${h.shares} shares`,
+        h.livePrice ? `current price $${h.livePrice.toFixed(2)} (${h.gainPct >= 0 ? '+' : ''}${h.gainPct?.toFixed(1) || '?'}% gain, total P&L ${h.currency}${h.gainAbs?.toFixed(2) || '?'})` : 'price unavailable',
+        h.change1d ? `today ${h.change1d}` : '',
+        h.earningsDate ? `next earnings ${h.earningsDate} (${h.earningsTradingDaysAway}d away)` : 'no upcoming earnings confirmed',
+        h.earningsHistory ? `past reactions: ${h.earningsHistory}` : '',
+      ].filter(Boolean).join(' | ')).join('
+')
+
+      const prompt = `Today: ${new Date().toDateString()}
+
+PORTFOLIO HOLDINGS:
+${holdingsText}
+
+CURRENT MARKET CONTEXT:
+VIX: ${priceData.vix || 'N/A'} (${priceData.vixRegime || 'N/A'})
+Sector health: ${(priceData.sectors || []).map(s => \`\${s.label} \${s.change}\`).join(', ')}
+
+RULES:
+1. For each holding, give exactly one action: BUY MORE / HOLD / TRIM (sell some) / SELL ALL
+2. BUY MORE only if: stock is down or flat, upcoming catalyst within 40 days, thesis intact, average down makes sense
+3. TRIM if: stock is up 15%+ and catalyst is now priced in, or position is oversize
+4. SELL ALL if: thesis broken, company fundamental problem, or better opportunity exists
+5. HOLD if: catalyst still upcoming, thesis intact, position size reasonable
+6. Be specific — name exact price levels and reasons in plain English
+7. Consider the person's actual buy price — are they in profit or loss?
+8. At the end, give an overall portfolio health summary and total estimated P&L
+
+Write in plain English. No jargon. Short sentences. As if explaining to someone new to investing.
+
+Return JSON:
+{"portfolioSummary":"2 sentences on overall portfolio health","totalGainLossPct":"overall %","cashSuggestion":"how much cash to hold right now","holdings":[{"ticker":"","action":"BUY MORE|HOLD|TRIM|SELL ALL","confidence":"HIGH|MEDIUM|LOW","currentPrice":"","buyPrice":"","gainLossPct":"","recommendation":"2 plain sentences explaining exactly what to do and why","entryIfBuyMore":"price to buy more at if action is BUY MORE","exitIfSell":"price to sell at if trimming or selling","urgency":"NOW|THIS WEEK|NO RUSH"}]}`
+
+      const res = await fetch('/api/claude', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, mode: 'cio' }),
+      })
+      const aiData = await res.json()
+      const tb = aiData.content?.find(b => b.type === 'text')
+      if (!tb) throw new Error('No response from AI')
+
+      // Parse JSON
+      let parsed
+      try {
+        let s = tb.text.replace(/```json|```/g, '').trim()
+        const i = s.indexOf('{'); if (i > 0) s = s.slice(i)
+        parsed = JSON.parse(s)
+      } catch {
+        // Try repair
+        const s = tb.text.replace(/```json|```/g, '').trim()
+        parsed = { portfolioSummary: s, holdings: [] }
+      }
+
+      setPortfolioResult({ ...parsed, enriched })
+    } catch (e) {
+      setPortfolioError(e.message)
+    } finally {
+      setPortfolioLoading(false)
+    }
+  }, [holdings, getEH])
+
+  // ── T212 API functions ────────────────────────────────────────────────────
+  const fetchT212 = useCallback(async () => {
+    setT212Loading(true)
+    setT212Error(null)
+    try {
+      const r = await fetch('/api/t212', { cache: 'no-store' })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || `T212 error ${r.status}`)
+      setT212Data(d)
+      setT212Result(null)  // clear previous analysis when data refreshes
+    } catch (e) {
+      setT212Error(e.message)
+    } finally {
+      setT212Loading(false)
+    }
+  }, [])
+
+  const analyseT212 = useCallback(async () => {
+    if (!t212Data?.positions?.length) return
+    setT212AnalysisLoad(true)
+    try {
+      // Fetch live Finnhub prices cross-referenced against T212 positions
+      const marketRes = await fetch('/api/market?type=opportunities', { cache: 'no-store' })
+      const marketData = await marketRes.json()
+      const priceMap = {}
+      ;(marketData.stocks || []).forEach(s => { priceMap[s.ticker] = s })
+
+      // Enrich T212 positions with Finnhub live prices + earnings data
+      const enriched = t212Data.positions.map(p => {
+        const live = priceMap[p.ticker]
+        const hist = getEH(p.ticker)
+        // Use T212 price as primary (already live), Finnhub as secondary
+        const livePrice = p.currentPrice || live?.price || null
+        return {
+          ...p,
+          finnhubPrice:  live?.price || null,
+          change1d:      live?.change1d || null,
+          earningsDate:  live?.earningsDate || null,
+          earningsDays:  live?.earningsTradingDaysAway ?? null,
+          earningsSource:live?.earningsSource || null,
+          earningsHistory: hist?.label || null,
+          livePrice,
+        }
+      })
+
+      // Build AI prompt
+      const posLines = enriched.map(p =>
+        `${p.ticker}: ${p.quantity} shares, avg buy price £${p.averagePrice}, current £${p.currentPrice?.toFixed(2)}, P&L £${p.ppl} (${p.gainPct >= 0 ? '+' : ''}${p.gainPct}%)` +
+        (p.change1d ? `, today ${p.change1d}` : '') +
+        (p.earningsDate ? `, earnings ${p.earningsDate} in ${p.earningsDays}d` : '') +
+        (p.earningsHistory ? `, history: ${p.earningsHistory}` : '')
+      ).join('
+')
+
+      const pendingLines = (t212Data.pendingOrders || []).map(o =>
+        `${o.side} ${o.quantity} ${o.ticker} @ £${o.limitPrice} (${o.orderType})`
+      ).join('
+') || 'None'
+
+      const prompt = `Today: ${new Date().toDateString()}
+TRADING 212 LIVE PORTFOLIO (${t212Data.env || 'LIVE'} account):
+
+CASH POSITION:
+Free cash: £${t212Data.cash?.free || '?'}
+Total invested: £${t212Data.cash?.invested || '?'}
+Total portfolio value: £${t212Data.cash?.total || '?'}
+Total P&L: £${t212Data.cash?.ppl || '?'}
+
+CURRENT POSITIONS:
+${posLines}
+
+PENDING ORDERS:
+${pendingLines}
+
+MARKET CONTEXT:
+VIX: ${marketData.vix || 'N/A'} (${marketData.vixRegime || 'N/A'})
+Sectors today: ${(marketData.sectors || []).map(s => `${s.label} ${s.change}`).join(', ')}
+
+RULES:
+1. For each position give one action: BUY MORE / HOLD / TRIM / SELL ALL
+2. BUY MORE only if catalyst is upcoming, price is at good entry, thesis intact
+3. TRIM if up 15%+ and catalyst priced in, or position too large vs total portfolio
+4. SELL ALL if thesis broken or company has fundamental problem
+5. Validate each pending order — is it still a good idea given current data?
+6. Consider the cash balance — are they overinvested or underinvested?
+7. Plain English only — no jargon. Short sentences.
+8. Use actual £ amounts from T212 data — this person invests in GBP via UK T212
+
+Return JSON:
+{"portfolioHealth":"STRONG|GOOD|CAUTION|WEAK","overallSummary":"2 plain sentences on portfolio health","cashAdvice":"one sentence on whether to deploy more cash or hold","totalPnlComment":"one sentence on overall P&L","holdings":[{"ticker":"","action":"BUY MORE|HOLD|TRIM|SELL ALL","confidence":"HIGH|MEDIUM|LOW","recommendation":"2 plain sentences — what to do and why","urgency":"NOW|THIS WEEK|NO RUSH","entryIfBuyMore":"price if BUY MORE","exitIfSell":"price if TRIM or SELL ALL"}],"pendingOrdersAdvice":[{"ticker":"","order":"description","verdict":"KEEP|CANCEL|MODIFY","reason":"one plain sentence"}],"topAction":"single most important thing to do right now in one sentence"}`
+
+      const res = await fetch('/api/claude', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, mode: 'cio' }),
+      })
+      const aiData = await res.json()
+      const tb = aiData.content?.find(b => b.type === 'text')
+      if (!tb) throw new Error('No AI response')
+
+      let parsed
+      try {
+        let s = tb.text.replace(/```json|```/g, '').trim()
+        const i = s.indexOf('{'); if (i > 0) s = s.slice(i)
+        parsed = JSON.parse(s)
+      } catch { parsed = { overallSummary: tb.text, holdings: [] } }
+
+      setT212Result({ ...parsed, enriched, raw: t212Data })
+    } catch (e) {
+      setT212Error(e.message)
+    } finally {
+      setT212AnalysisLoad(false)
+    }
+  }, [t212Data, getEH])
+
   const loaders = { opportunities:loadOpps, global:loadGlobal, risk:loadRisk }
 
   // Fetch earnings history once on mount
   useEffect(() => { fetchEarningsHistory() }, []) // eslint-disable-line
+
+  // Load saved holdings from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('catalyst_holdings')
+      if (saved) setHoldings(JSON.parse(saved))
+    } catch {}
+  }, [])
+
+  // Check if portfolio/T212 were already unlocked this session
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem('catalyst_portfolio_auth') === 'true') setPortfolioUnlocked(true)
+      if (sessionStorage.getItem('catalyst_t212_auth')      === 'true') setT212Unlocked(true)
+    } catch {}
+  }, [])
+
+  // Save holdings to localStorage whenever they change
+  useEffect(() => {
+    try { localStorage.setItem('catalyst_holdings', JSON.stringify(holdings)) } catch {}
+  }, [holdings])
 
   useEffect(() => {
     if (!loaded.current[activeTab] && !loading[activeTab] && !data[activeTab]) {
@@ -1100,6 +1383,583 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
     )
   }
 
+  // ── Portfolio password check ──────────────────────────────────────────────
+  const PORTFOLIO_PASSWORD = process.env.NEXT_PUBLIC_PORTFOLIO_PASSWORD || 'catalyst2026'
+
+  const handlePasswordSubmit = () => {
+    if (passwordInput === PORTFOLIO_PASSWORD) {
+      setPortfolioUnlocked(true)
+      setPasswordError(false)
+      try { sessionStorage.setItem('catalyst_portfolio_auth', 'true') } catch {}
+    } else {
+      setPasswordError(true)
+      setPasswordInput('')
+    }
+  }
+
+  // ── Portfolio render ───────────────────────────────────────────────────────
+  function renderPortfolio() {
+    const result = portfolioResult
+
+    // Show password gate if not unlocked
+    if (!portfolioUnlocked) {
+      return (
+        <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', minHeight:400, padding:24 }}>
+          <div style={{ ...card({ maxWidth:380, width:'100%', textAlign:'center', padding:36 }) }}>
+            <div style={{ fontSize:40, marginBottom:16 }}>🔒</div>
+            <div style={{ color:C.text, fontWeight:800, fontSize:20, marginBottom:8 }}>Portfolio is protected</div>
+            <div style={{ color:C.muted, fontSize:14, marginBottom:24, lineHeight:1.6 }}>
+              This tab contains your personal holdings and Trading 212 data. Enter your password to continue.
+            </div>
+            <input
+              type="password"
+              value={passwordInput}
+              onChange={e => { setPasswordInput(e.target.value); setPasswordError(false) }}
+              onKeyDown={e => e.key === 'Enter' && handlePasswordSubmit()}
+              placeholder="Enter password"
+              autoFocus
+              style={{
+                width:'100%', padding:'12px 16px', borderRadius:10,
+                border: `2px solid ${passwordError ? C.down : C.border}`,
+                fontSize:16, fontFamily:FM, outline:'none',
+                background:C.bg, marginBottom:12, boxSizing:'border-box',
+                textAlign:'center', letterSpacing:4,
+              }}
+            />
+            {passwordError && (
+              <div style={{ color:C.down, fontSize:13, marginBottom:12, fontWeight:600 }}>
+                Incorrect password. Try again.
+              </div>
+            )}
+            <button
+              onClick={handlePasswordSubmit}
+              style={{ appearance:'none', background:C.accent, color:'#fff', border:'none', borderRadius:10, padding:'12px 24px', fontWeight:800, fontSize:15, cursor:'pointer', width:'100%', boxShadow:'0 2px 8px rgba(37,99,235,0.25)' }}
+            >
+              Unlock Portfolio
+            </button>
+            <div style={{ color:C.muted, fontSize:11, marginTop:16, lineHeight:1.5 }}>
+              Session only — you'll need to re-enter when you close the browser.<br/>
+              Set your own password via the NEXT_PUBLIC_PORTFOLIO_PASSWORD environment variable in Vercel.
+            </div>
+          </div>
+        </div>
+      )
+    }
+    const actionColor = (a) => a==='BUY MORE'?C.up : a==='HOLD'?C.accent : a==='TRIM'?C.amber : C.down
+    const actionBg    = (a) => a==='BUY MORE'?C.upBg : a==='HOLD'?C.accentBg : a==='TRIM'?C.amberBg : C.downBg
+    const urgColor    = (u) => u==='NOW'?C.down : u==='THIS WEEK'?C.amber : C.muted
+
+    return (
+      <div>
+        {/* Input form */}
+        <div style={{ ...card({ marginBottom:18 }) }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:4 }}>
+            <div style={{ color:C.text, fontWeight:800, fontSize:18 }}>💼 My Holdings</div>
+            <button
+              onClick={() => {
+                setPortfolioUnlocked(false)
+                setPasswordInput('')
+                try { sessionStorage.removeItem('catalyst_portfolio_auth') } catch {}
+              }}
+              style={{ appearance:'none', background:'none', border:`1px solid ${C.border}`, borderRadius:8, padding:'6px 12px', color:C.muted, fontSize:12, cursor:'pointer', fontWeight:600 }}
+            >
+              🔒 Lock
+            </button>
+          </div>
+          <div style={{ color:C.muted, fontSize:13, marginBottom:18 }}>
+            Enter each stock you own, what you paid, and how many shares. The AI will tell you whether to buy more, hold, trim or sell — based on live prices and upcoming events.
+          </div>
+
+          {/* Add holding row */}
+          <div style={{ display:'grid', gridTemplateColumns: mob ? '1fr 1fr' : '2fr 1.5fr 1fr 1fr auto', gap:10, marginBottom:14, alignItems:'end' }}>
+            <div>
+              <div style={LBL}>TICKER SYMBOL</div>
+              <input
+                value={newTicker}
+                onChange={e => setNewTicker(e.target.value.toUpperCase())}
+                onKeyDown={e => e.key==='Enter' && addHolding()}
+                placeholder="e.g. NVDA"
+                style={{ width:'100%', padding:'10px 12px', borderRadius:8, border:`1.5px solid ${C.border}`, fontSize:15, fontFamily:FM, fontWeight:700, outline:'none', boxSizing:'border-box', background:C.bg }}
+              />
+            </div>
+            <div>
+              <div style={LBL}>PRICE YOU PAID ($)</div>
+              <input
+                value={newBuyPrice}
+                onChange={e => setNewBuyPrice(e.target.value)}
+                onKeyDown={e => e.key==='Enter' && addHolding()}
+                placeholder="e.g. 450.00"
+                type="number"
+                style={{ width:'100%', padding:'10px 12px', borderRadius:8, border:`1.5px solid ${C.border}`, fontSize:15, fontFamily:FM, outline:'none', boxSizing:'border-box', background:C.bg }}
+              />
+            </div>
+            <div>
+              <div style={LBL}>SHARES</div>
+              <input
+                value={newShares}
+                onChange={e => setNewShares(e.target.value)}
+                onKeyDown={e => e.key==='Enter' && addHolding()}
+                placeholder="e.g. 10"
+                type="number"
+                style={{ width:'100%', padding:'10px 12px', borderRadius:8, border:`1.5px solid ${C.border}`, fontSize:15, fontFamily:FM, outline:'none', boxSizing:'border-box', background:C.bg }}
+              />
+            </div>
+            <div>
+              <div style={LBL}>CURRENCY</div>
+              <select
+                value={newCurrency}
+                onChange={e => setNewCurrency(e.target.value)}
+                style={{ width:'100%', padding:'10px 12px', borderRadius:8, border:`1.5px solid ${C.border}`, fontSize:14, fontFamily:FB, outline:'none', background:C.bg }}
+              >
+                <option>USD</option>
+                <option>GBP</option>
+                <option>EUR</option>
+              </select>
+            </div>
+            <button
+              onClick={addHolding}
+              style={{ appearance:'none', background:C.accent, color:'#fff', border:'none', borderRadius:8, padding:'11px 18px', fontWeight:700, fontSize:14, cursor:'pointer', whiteSpace:'nowrap', alignSelf: mob ? 'stretch' : 'end' }}
+            >
+              + Add
+            </button>
+          </div>
+
+          {/* Holdings list */}
+          {holdings.length > 0 && (
+            <div style={{ display:'grid', gap:8, marginBottom:18 }}>
+              {holdings.map((h, i) => {
+                const r = result?.enriched?.find(e => e.ticker === h.ticker)
+                const ai = result?.holdings?.find(x => x.ticker === h.ticker)
+                const gainPct = r?.gainPct
+                const hasGain = gainPct !== null && gainPct !== undefined
+                return (
+                  <div key={i} style={{ display:'flex', alignItems:'center', gap:10, background: hasGain ? (gainPct >= 0 ? C.upBg : C.downBg) : C.bg, borderRadius:10, padding:'10px 14px', flexWrap:'wrap' }}>
+                    {/* Ticker + price paid */}
+                    <span style={{ fontFamily:FM, fontWeight:900, fontSize:17, color:C.text, minWidth:60 }}>{h.ticker}</span>
+                    <span style={{ color:C.muted, fontSize:13 }}>{h.currency}{h.buyPrice} × {h.shares} shares</span>
+
+                    {/* Live price + gain */}
+                    {r?.livePrice && (
+                      <>
+                        <span style={{ color:C.sub, fontSize:13 }}>→ now ${r.livePrice.toFixed(2)}</span>
+                        <span style={{ color: gainPct >= 0 ? C.up : C.down, fontWeight:800, fontSize:14, fontFamily:FM }}>
+                          {gainPct >= 0 ? '+' : ''}{gainPct?.toFixed(1)}%
+                          {r.gainAbs !== null && <span style={{ fontSize:12, fontWeight:600 }}> ({h.currency}{Math.abs(r.gainAbs).toFixed(0)} {r.gainAbs >= 0 ? 'profit' : 'loss'})</span>}
+                        </span>
+                      </>
+                    )}
+
+                    {/* AI action badge */}
+                    {ai && (
+                      <span style={{ background: actionBg(ai.action), color: actionColor(ai.action), borderRadius:8, padding:'4px 12px', fontWeight:800, fontSize:13, fontFamily:FB }}>
+                        {ai.action}
+                      </span>
+                    )}
+
+                    {/* Earnings countdown */}
+                    {r?.earningsDate && r.earningsTradingDaysAway >= 0 && (
+                      <span style={{ color:C.accent, fontSize:12, fontWeight:600 }}>📅 Earnings {r.earningsTradingDaysAway}d</span>
+                    )}
+
+                    <button onClick={() => removeHolding(h.ticker)} style={{ marginLeft:'auto', appearance:'none', background:'none', border:'none', color:C.muted, cursor:'pointer', fontSize:18, padding:'0 4px' }}>×</button>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          {/* Analyse button */}
+          {holdings.length > 0 && (
+            <button
+              onClick={analysePortfolio}
+              disabled={portfolioLoading}
+              style={{ appearance:'none', background: portfolioLoading ? C.border : C.accent, color: portfolioLoading ? C.muted : '#fff', border:'none', borderRadius:10, padding:'12px 24px', fontWeight:800, fontSize:15, cursor: portfolioLoading ? 'not-allowed' : 'pointer', boxShadow: portfolioLoading ? 'none' : '0 2px 8px rgba(37,99,235,0.25)', width: mob ? '100%' : 'auto' }}
+            >
+              {portfolioLoading ? '⟳ Analysing your portfolio…' : '⚡ Analyse my portfolio'}
+            </button>
+          )}
+
+          {portfolioError && (
+            <div style={{ color:C.down, fontSize:13, marginTop:12 }}>Error: {portfolioError}</div>
+          )}
+        </div>
+
+        {/* Results */}
+        {result && (
+          <>
+            {/* Summary bar */}
+            {result.portfolioSummary && (
+              <div style={{ ...card({ marginBottom:14, borderLeft:`4px solid ${C.gold}` }) }}>
+                <div style={{ color:C.gold, fontWeight:800, fontSize:13, marginBottom:10 }}>📊 PORTFOLIO SUMMARY</div>
+                <div style={{ color:C.sub, fontSize:15, lineHeight:1.6, marginBottom:10 }}>{result.portfolioSummary}</div>
+                <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
+                  {result.cashSuggestion && <Pill tone="amber" size="md">💰 {result.cashSuggestion}</Pill>}
+                </div>
+              </div>
+            )}
+
+            {/* Per-holding recommendations */}
+            <div style={{ display:'grid', gridTemplateColumns: mob ? '1fr' : 'repeat(auto-fill, minmax(340px, 1fr))', gap:14 }}>
+              {(result.holdings || []).map((h, i) => {
+                const enriched = result.enriched?.find(e => e.ticker === h.ticker)
+                const gainPct = parseFloat(h.gainLossPct) || enriched?.gainPct
+                return (
+                  <div key={i} style={{ ...card({ borderLeft:`5px solid ${actionColor(h.action)}` }) }}>
+                    {/* Header */}
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:12, flexWrap:'wrap', gap:8 }}>
+                      <div>
+                        <span style={{ fontFamily:FM, fontWeight:900, fontSize:24, color:C.text }}>{h.ticker}</span>
+                        {h.urgency && (
+                          <span style={{ marginLeft:8, fontSize:11, fontWeight:700, color: urgColor(h.urgency) }}>
+                            {h.urgency==='NOW' ? '🔴 ACT NOW' : h.urgency==='THIS WEEK' ? '🟡 THIS WEEK' : ''}
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
+                        {gainPct !== null && gainPct !== undefined && (
+                          <span style={{ color: gainPct >= 0 ? C.up : C.down, fontFamily:FM, fontWeight:800, fontSize:16 }}>
+                            {gainPct >= 0 ? '+' : ''}{gainPct?.toFixed ? gainPct.toFixed(1) : gainPct}%
+                          </span>
+                        )}
+                        <span style={{ background: actionBg(h.action), color: actionColor(h.action), borderRadius:10, padding:'6px 14px', fontWeight:800, fontSize:14 }}>
+                          {h.action}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Price row */}
+                    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12 }}>
+                      <div style={{ background:C.bg, borderRadius:8, padding:'8px 12px' }}>
+                        <div style={LBL}>YOU PAID</div>
+                        <div style={{ ...VAL, fontSize:16, fontFamily:FM }}>{h.buyPrice}</div>
+                      </div>
+                      <div style={{ background:C.bg, borderRadius:8, padding:'8px 12px' }}>
+                        <div style={LBL}>PRICE NOW</div>
+                        <div style={{ ...VAL, fontSize:16, fontFamily:FM, color: gainPct >= 0 ? C.up : C.down }}>{h.currentPrice || enriched?.livePriceFormatted}</div>
+                      </div>
+                      {h.action === 'BUY MORE' && h.entryIfBuyMore && (
+                        <div style={{ background:C.upBg, borderRadius:8, padding:'8px 12px' }}>
+                          <div style={LBL}>BUY MORE AT</div>
+                          <div style={{ color:C.up, fontWeight:800, fontSize:15, fontFamily:FM }}>{h.entryIfBuyMore}</div>
+                        </div>
+                      )}
+                      {(h.action === 'TRIM' || h.action === 'SELL ALL') && h.exitIfSell && (
+                        <div style={{ background:C.amberBg, borderRadius:8, padding:'8px 12px' }}>
+                          <div style={LBL}>{h.action === 'TRIM' ? 'SELL SOME AT' : 'SELL ALL AT'}</div>
+                          <div style={{ color:C.amber, fontWeight:800, fontSize:15, fontFamily:FM }}>{h.exitIfSell}</div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Recommendation */}
+                    <div style={{ color:C.sub, fontSize:14, lineHeight:1.65, marginBottom: enriched?.earningsDate ? 10 : 0 }}>
+                      {h.recommendation}
+                    </div>
+
+                    {/* Earnings alert */}
+                    {enriched?.earningsDate && enriched.earningsTradingDaysAway >= 0 && (
+                      <div style={{ marginTop:10 }}>
+                        <Pill tone={(enriched.earningsTradingDaysAway <= 10) ? 'amber' : 'blue'} size="sm">
+                          📅 Earnings in {enriched.earningsTradingDaysAway}d · {ukDate(enriched.earningsDate)}
+                        </Pill>
+                      </div>
+                    )}
+
+                    {/* Confidence */}
+                    {h.confidence && (
+                      <div style={{ marginTop:10 }}>
+                        <Pill tone={h.confidence==='HIGH'?'green':h.confidence==='MEDIUM'?'amber':'grey'} size="sm">
+                          {h.confidence} confidence
+                        </Pill>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </>
+        )}
+
+        {/* Empty state */}
+        {!holdings.length && (
+          <div style={{ ...card({ textAlign:'center', padding:48 }) }}>
+            <div style={{ fontSize:40, marginBottom:12 }}>💼</div>
+            <div style={{ color:C.text, fontWeight:700, fontSize:18, marginBottom:8 }}>No holdings yet</div>
+            <div style={{ color:C.muted, fontSize:14, maxWidth:340, margin:'0 auto' }}>
+              Add your first stock above — enter the ticker symbol, the price you paid, and how many shares you own. Then click "Analyse my portfolio" for personalised BUY MORE / HOLD / TRIM / SELL recommendations.
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // ── T212 Live render ───────────────────────────────────────────────────────
+  function renderT212() {
+    const PORTFOLIO_PASSWORD = process.env.NEXT_PUBLIC_PORTFOLIO_PASSWORD || 'catalyst2026'
+    const actionColor = a => a==='BUY MORE'?C.up:a==='HOLD'?C.accent:a==='TRIM'?C.amber:C.down
+    const actionBg    = a => a==='BUY MORE'?C.upBg:a==='HOLD'?C.accentBg:a==='TRIM'?C.amberBg:C.downBg
+    const healthColor = h => h==='STRONG'?C.up:h==='GOOD'?C.accent:h==='CAUTION'?C.amber:C.down
+
+    // Password gate
+    if (!t212Unlocked) {
+      return (
+        <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', minHeight:400, padding:24 }}>
+          <div style={{ ...card({ maxWidth:400, width:'100%', textAlign:'center', padding:36 }) }}>
+            <div style={{ fontSize:40, marginBottom:16 }}>🏦</div>
+            <div style={{ color:C.text, fontWeight:800, fontSize:20, marginBottom:8 }}>T212 Live Portfolio</div>
+            <div style={{ color:C.muted, fontSize:14, marginBottom:24, lineHeight:1.6 }}>
+              This tab shows your real Trading 212 positions pulled live from the API. Enter your password to continue.
+            </div>
+            <input
+              type="password"
+              value={t212PwInput}
+              onChange={e => { setT212PwInput(e.target.value); setT212PwError(false) }}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  if (t212PwInput === PORTFOLIO_PASSWORD) {
+                    setT212Unlocked(true); setT212PwError(false)
+                    try { sessionStorage.setItem('catalyst_t212_auth','true') } catch {}
+                  } else { setT212PwError(true); setT212PwInput('') }
+                }
+              }}
+              placeholder="Enter password"
+              autoFocus
+              style={{ width:'100%', padding:'12px 16px', borderRadius:10, border:`2px solid ${t212PwError?C.down:C.border}`, fontSize:16, fontFamily:FM, outline:'none', background:C.bg, marginBottom:12, boxSizing:'border-box', textAlign:'center', letterSpacing:4 }}
+            />
+            {t212PwError && <div style={{ color:C.down, fontSize:13, marginBottom:12, fontWeight:600 }}>Incorrect password.</div>}
+            <button
+              onClick={() => {
+                if (t212PwInput === PORTFOLIO_PASSWORD) {
+                  setT212Unlocked(true); setT212PwError(false)
+                  try { sessionStorage.setItem('catalyst_t212_auth','true') } catch {}
+                } else { setT212PwError(true); setT212PwInput('') }
+              }}
+              style={{ appearance:'none', background:C.accent, color:'#fff', border:'none', borderRadius:10, padding:'12px 24px', fontWeight:800, fontSize:15, cursor:'pointer', width:'100%', boxShadow:'0 2px 8px rgba(37,99,235,0.25)' }}
+            >
+              Unlock
+            </button>
+            <div style={{ color:C.muted, fontSize:11, marginTop:16, lineHeight:1.5 }}>
+              Same password as My Portfolio tab.<br/>Set via NEXT_PUBLIC_PORTFOLIO_PASSWORD in Vercel.
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    return (
+      <div>
+        {/* Header */}
+        <div style={{ ...card({ marginBottom:14, padding:'14px 18px' }), display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:10 }}>
+          <div>
+            <div style={{ color:C.text, fontWeight:800, fontSize:18 }}>🏦 Trading 212 Live Portfolio</div>
+            <div style={{ color:C.muted, fontSize:12, marginTop:2 }}>
+              {t212Data ? `${t212Data.env || 'LIVE'} account · Last fetched ${new Date(t212Data.fetchedAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}` : 'Not yet loaded'}
+            </div>
+          </div>
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+            <button
+              onClick={fetchT212}
+              disabled={t212Loading}
+              style={{ appearance:'none', background:C.accent, color:'#fff', border:'none', borderRadius:8, padding:'9px 16px', fontWeight:700, fontSize:13, cursor:'pointer' }}
+            >
+              {t212Loading ? '⟳ Loading…' : '⟳ Refresh from T212'}
+            </button>
+            {t212Data && !t212AnalysisLoad && (
+              <button
+                onClick={analyseT212}
+                style={{ appearance:'none', background:C.up, color:'#fff', border:'none', borderRadius:8, padding:'9px 16px', fontWeight:700, fontSize:13, cursor:'pointer' }}
+              >
+                ⚡ Analyse portfolio
+              </button>
+            )}
+            {t212AnalysisLoad && (
+              <span style={{ color:C.muted, fontSize:13, padding:'9px 0' }}>⟳ AI analysing…</span>
+            )}
+            <button
+              onClick={() => { setT212Unlocked(false); setT212PwInput(''); try { sessionStorage.removeItem('catalyst_t212_auth') } catch {} }}
+              style={{ appearance:'none', background:'none', border:`1px solid ${C.border}`, borderRadius:8, padding:'9px 12px', color:C.muted, fontSize:12, cursor:'pointer', fontWeight:600 }}
+            >🔒 Lock</button>
+          </div>
+        </div>
+
+        {/* Setup prompt if no API key configured */}
+        {t212Error?.includes('TRADING212_API_KEY') && (
+          <div style={{ ...card({ borderLeft:`4px solid ${C.amber}`, marginBottom:14 }) }}>
+            <div style={{ color:C.amber, fontWeight:800, fontSize:15, marginBottom:8 }}>⚙️ Setup required</div>
+            <div style={{ color:C.sub, fontSize:14, lineHeight:1.7 }}>
+              To connect your Trading 212 account:<br/>
+              1. Open T212 app → <strong>Settings → API (Beta) → Generate API key</strong><br/>
+              2. Select permissions: Account data, Portfolio, Orders (read only)<br/>
+              3. Copy the key<br/>
+              4. Go to <strong>Vercel → Settings → Environment Variables</strong><br/>
+              5. Add: <code style={{ background:C.bg, padding:'2px 6px', borderRadius:4 }}>TRADING212_API_KEY</code> = your key<br/>
+              6. Redeploy
+            </div>
+          </div>
+        )}
+
+        {t212Error && !t212Error.includes('TRADING212_API_KEY') && (
+          <div style={{ ...card({ borderLeft:`4px solid ${C.down}`, marginBottom:14 }), padding:'14px 18px' }}>
+            <div style={{ color:C.down, fontWeight:700 }}>Error: {t212Error}</div>
+          </div>
+        )}
+
+        {/* Not loaded yet */}
+        {!t212Data && !t212Loading && !t212Error && (
+          <div style={{ ...card({ textAlign:'center', padding:48, marginBottom:14 }) }}>
+            <div style={{ fontSize:36, marginBottom:12 }}>🏦</div>
+            <div style={{ color:C.text, fontWeight:700, fontSize:18, marginBottom:8 }}>Ready to connect</div>
+            <div style={{ color:C.muted, fontSize:14, marginBottom:20 }}>Click "Refresh from T212" to load your live positions.</div>
+            <button onClick={fetchT212} style={{ appearance:'none', background:C.accent, color:'#fff', border:'none', borderRadius:10, padding:'12px 24px', fontWeight:800, fontSize:15, cursor:'pointer' }}>
+              Load my T212 portfolio
+            </button>
+          </div>
+        )}
+
+        {t212Loading && (
+          <div style={{ ...card({ textAlign:'center', padding:40 }) }}>
+            <div style={{ color:C.muted, fontSize:14 }}>⟳ Fetching your positions from Trading 212…</div>
+          </div>
+        )}
+
+        {/* Cash summary bar */}
+        {t212Data?.cash && (
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(140px, 1fr))', gap:10, marginBottom:14 }}>
+            {[
+              ['Free Cash',    `£${t212Data.cash.free}`,     C.up],
+              ['Invested',     `£${t212Data.cash.invested}`, C.accent],
+              ['Total Value',  `£${t212Data.cash.total}`,    C.text],
+              ['Total P&L',    `£${t212Data.cash.ppl}`,      parseFloat(t212Data.cash.ppl) >= 0 ? C.up : C.down],
+            ].map(([lbl, val, color]) => (
+              <div key={lbl} style={{ ...card({ padding:14 }) }}>
+                <div style={LBL}>{lbl}</div>
+                <div style={{ color, fontFamily:FM, fontWeight:800, fontSize:20 }}>{val}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* AI analysis summary */}
+        {t212Result && (
+          <div style={{ ...card({ marginBottom:14, borderLeft:`4px solid ${healthColor(t212Result.portfolioHealth)}` }) }}>
+            <div style={{ display:'flex', gap:10, alignItems:'center', marginBottom:12, flexWrap:'wrap' }}>
+              <Pill tone={t212Result.portfolioHealth==='STRONG'?'green':t212Result.portfolioHealth==='GOOD'?'blue':t212Result.portfolioHealth==='CAUTION'?'amber':'red'} size="lg">
+                {t212Result.portfolioHealth || 'ANALYSED'}
+              </Pill>
+              {t212Result.topAction && <span style={{ color:C.sub, fontSize:14, fontWeight:600 }}>→ {t212Result.topAction}</span>}
+            </div>
+            {t212Result.overallSummary && <div style={{ color:C.sub, fontSize:14, lineHeight:1.6, marginBottom:8 }}>{t212Result.overallSummary}</div>}
+            {t212Result.cashAdvice && <div style={{ color:C.muted, fontSize:13 }}>{t212Result.cashAdvice}</div>}
+          </div>
+        )}
+
+        {/* Positions grid */}
+        {t212Data?.positions?.length > 0 && (
+          <div style={{ display:'grid', gridTemplateColumns: mob ? '1fr' : 'repeat(auto-fill, minmax(320px, 1fr))', gap:12, marginBottom:18 }}>
+            {t212Data.positions.map((p, i) => {
+              const ai = t212Result?.holdings?.find(h => h.ticker === p.ticker)
+              const enriched = t212Result?.enriched?.find(e => e.ticker === p.ticker)
+              return (
+                <div key={i} style={{ ...card({ borderLeft:`5px solid ${ai ? actionColor(ai.action) : (p.gainPct >= 0 ? C.up : C.down)}` }) }}>
+                  {/* Header */}
+                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:10 }}>
+                    <div>
+                      <span style={{ fontFamily:FM, fontWeight:900, fontSize:22, color:C.text }}>{p.ticker}</span>
+                      <span style={{ color:C.muted, fontSize:12, marginLeft:8 }}>{p.quantity} shares</span>
+                    </div>
+                    <div style={{ display:'flex', gap:6, alignItems:'center' }}>
+                      <span style={{ color: p.gainPct >= 0 ? C.up : C.down, fontFamily:FM, fontWeight:800, fontSize:15 }}>
+                        {p.gainPct >= 0 ? '+' : ''}{p.gainPct}%
+                      </span>
+                      {ai && (
+                        <span style={{ background: actionBg(ai.action), color: actionColor(ai.action), borderRadius:8, padding:'4px 10px', fontWeight:800, fontSize:12 }}>
+                          {ai.action}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Price row */}
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8, marginBottom:10 }}>
+                    <div style={{ background:C.bg, borderRadius:8, padding:'8px 10px' }}>
+                      <div style={{ ...LBL, fontSize:10 }}>BOUGHT AT</div>
+                      <div style={{ fontFamily:FM, fontWeight:700, fontSize:14 }}>£{p.averagePrice?.toFixed(2)}</div>
+                    </div>
+                    <div style={{ background:C.bg, borderRadius:8, padding:'8px 10px' }}>
+                      <div style={{ ...LBL, fontSize:10 }}>NOW</div>
+                      <div style={{ fontFamily:FM, fontWeight:700, fontSize:14, color: p.gainPct >= 0 ? C.up : C.down }}>£{p.currentPrice?.toFixed(2)}</div>
+                    </div>
+                    <div style={{ background: p.ppl >= 0 ? C.upBg : C.downBg, borderRadius:8, padding:'8px 10px' }}>
+                      <div style={{ ...LBL, fontSize:10 }}>P&L</div>
+                      <div style={{ fontFamily:FM, fontWeight:800, fontSize:14, color: p.ppl >= 0 ? C.up : C.down }}>
+                        {p.ppl >= 0 ? '+' : ''}£{p.ppl}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* AI recommendation */}
+                  {ai?.recommendation && (
+                    <div style={{ color:C.sub, fontSize:13, lineHeight:1.6, marginBottom:8 }}>{ai.recommendation}</div>
+                  )}
+
+                  {/* Entry/exit prices */}
+                  {ai?.action === 'BUY MORE' && ai.entryIfBuyMore && (
+                    <div style={{ background:C.upBg, borderRadius:8, padding:'7px 10px', marginBottom:8 }}>
+                      <span style={{ color:C.up, fontWeight:700, fontSize:13 }}>Buy more at: {ai.entryIfBuyMore}</span>
+                    </div>
+                  )}
+                  {(ai?.action === 'TRIM' || ai?.action === 'SELL ALL') && ai.exitIfSell && (
+                    <div style={{ background:C.amberBg, borderRadius:8, padding:'7px 10px', marginBottom:8 }}>
+                      <span style={{ color:C.amber, fontWeight:700, fontSize:13 }}>{ai.action === 'TRIM' ? 'Trim at:' : 'Sell at:'} {ai.exitIfSell}</span>
+                    </div>
+                  )}
+
+                  {/* Earnings pill */}
+                  {enriched?.earningsDate && enriched.earningsDays >= 0 && (
+                    <Pill tone={enriched.earningsDays <= 10 ? 'amber' : 'blue'} size="sm">
+                      📅 Earnings {enriched.earningsDays}d · {ukDate(enriched.earningsDate)}
+                    </Pill>
+                  )}
+
+                  {/* Urgency */}
+                  {ai?.urgency === 'NOW' && <div style={{ color:C.down, fontSize:12, fontWeight:700, marginTop:6 }}>🔴 ACT NOW</div>}
+                  {ai?.urgency === 'THIS WEEK' && <div style={{ color:C.amber, fontSize:12, fontWeight:700, marginTop:6 }}>🟡 THIS WEEK</div>}
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {/* Pending orders */}
+        {t212Data?.pendingOrders?.length > 0 && (
+          <div style={{ ...card({ marginBottom:14 }) }}>
+            <div style={{ ...LBL, marginBottom:12 }}>⏳ PENDING ORDERS</div>
+            <div style={{ display:'grid', gap:8 }}>
+              {t212Data.pendingOrders.map((o, i) => {
+                const advice = t212Result?.pendingOrdersAdvice?.find(a => a.ticker === o.ticker)
+                const verdictColor = advice?.verdict === 'KEEP' ? C.up : advice?.verdict === 'CANCEL' ? C.down : C.amber
+                return (
+                  <div key={i} style={{ display:'flex', gap:10, alignItems:'center', background:C.bg, borderRadius:8, padding:'10px 14px', flexWrap:'wrap' }}>
+                    <span style={{ background: o.side==='BUY' ? C.upBg : C.amberBg, color: o.side==='BUY' ? C.up : C.amber, borderRadius:6, padding:'3px 8px', fontWeight:800, fontSize:12 }}>{o.side}</span>
+                    <span style={{ fontFamily:FM, fontWeight:800, fontSize:15 }}>{o.ticker}</span>
+                    <span style={{ color:C.sub, fontSize:13 }}>{o.quantity} shares @ £{o.limitPrice}</span>
+                    {advice && (
+                      <>
+                        <span style={{ color: verdictColor, fontWeight:800, fontSize:13 }}>{advice.verdict}</span>
+                        <span style={{ color:C.muted, fontSize:12 }}>{advice.reason}</span>
+                      </>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
   function renderContent() {
     const isLoad = loading[activeTab]
     const err    = errors[activeTab]
@@ -1134,6 +1994,8 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
     )
 
     if (activeTab==='opportunities') return renderOpps()
+    if (activeTab==='portfolio')     return renderPortfolio()
+    if (activeTab==='t212')          return renderT212()
     if (activeTab==='global')        return renderGlobal()
     if (activeTab==='risk')          return renderRisk()
     return null
