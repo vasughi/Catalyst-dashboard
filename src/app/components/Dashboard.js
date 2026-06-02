@@ -241,8 +241,10 @@ function OppCard({ opp, rank, active, onClick, onDeepDive, deepDiveLoading, deep
 
       {/* Price */}
       <div style={{ display:'flex', gap:12, alignItems:'baseline', marginBottom:12, flexWrap:'wrap' }}>
-        <span style={{ color:C.text, fontFamily:FM, fontWeight:900, fontSize:30 }}>{opp.currentPrice||'—'}</span>
-        {opp.change1d && <span style={{ color:opp.direction==='up'?C.up:C.down, fontFamily:FM, fontWeight:700, fontSize:15 }}>{opp.change1d}</span>}
+        <span style={{ color: (!opp.currentPrice || opp.currentPrice==='N/A' || opp.currentPrice==='—') ? C.muted : C.text, fontFamily:FM, fontWeight:900, fontSize:30 }}>
+          {(!opp.currentPrice || opp.currentPrice==='N/A') ? 'Loading…' : opp.currentPrice}
+        </span>
+        {opp.change1d && opp.change1d !== 'N/A' && <span style={{ color:opp.direction==='up'?C.up:C.down, fontFamily:FM, fontWeight:700, fontSize:15 }}>{opp.change1d}</span>}
         {opp.expectedGain && <span style={{ color:C.gold, fontWeight:700, fontSize:14 }}>🎯 {opp.expectedGain}</span>}
       </div>
 
@@ -326,38 +328,71 @@ function EarningsCal({ calendar }) {
 }
 
 // ─── CIO summary ──────────────────────────────────────────────────────────────
-function CIOPanel({ cio, isMobile }) {
-  if (!cio) return null
-  const cells = [
-    ['Best Trade Today',   cio.bestTradeToday,      'green'],
-    ['Best Risk/Reward',   cio.bestRiskReward,       'blue'],
-    ['Final Decision',     cio.finalMarketDecision,  'amber'],
-  ].filter(([,v]) => v)
+function CIOPanel({ cio, marketCondition, vix, vixRegime, sectors, regime, cashPct, cashRecommendation, isMobile }) {
+  const condTone = marketCondition==='BUY AGGRESSIVELY'?'green':marketCondition==='BUY SELECTIVELY'?'blue':marketCondition==='WAIT'?'amber':'red'
+  const vixTone  = vixRegime==='HIGH_FEAR'?'red':vixRegime==='ELEVATED'?'amber':'green'
 
   return (
-    <div style={{ ...card({ marginBottom:14, borderLeft:`4px solid ${C.gold}` }) }}>
-      <div style={{ color:C.gold, fontWeight:800, fontSize:13, letterSpacing:0.5, marginBottom:14 }}>⚡ CIO CALLS</div>
-      <div style={{ display:'grid', gridTemplateColumns:`repeat(auto-fit,minmax(130px,1fr))`, gap:10, marginBottom:14 }}>
-        {cells.map(([l,v,tone]) => (
-          <div key={l} style={{ background:C.bg, borderRadius:10, padding:'10px 12px' }}>
-            <div style={LBL}>{l}</div>
-            <div style={{ color:TONES[tone][0], fontWeight:800, fontSize:16 }}>{v}</div>
-          </div>
+    <div style={{ ...card({ marginBottom:14 }) }}>
+      {/* Row 1 — decision + VIX + sectors */}
+      <div style={{ display:'flex', flexWrap:'wrap', gap:8, alignItems:'center', marginBottom:14, paddingBottom:12, borderBottom:`1px solid ${C.border}` }}>
+        {marketCondition && <Pill tone={condTone} size="lg">{marketCondition}</Pill>}
+        {vix && <Pill tone={vixTone} size="md">VIX {vix} · {vixRegime}</Pill>}
+        {(sectors||[]).map((s,i) => (
+          <Pill key={i} tone={s.direction==='BULLISH'||s.direction==='up'?'green':'red'} size="sm">{s.label} {s.change}</Pill>
         ))}
       </div>
-      {cio.watchList?.length > 0 && (
-        <div style={{ marginBottom:10 }}>
-          <div style={{ ...LBL, marginBottom:8 }}>WATCH</div>
+
+      {/* Row 2 — CIO decision tiles */}
+      {cio && (
+        <div style={{ display:'grid', gridTemplateColumns:isMobile?'1fr 1fr':'repeat(3,1fr)', gap:10, marginBottom:14 }}>
+          {[
+            ['⚡ Best Trade', cio.bestTradeToday, 'green'],
+            ['📐 Best R/R',   cio.bestRiskReward,  'blue'],
+            ['🎯 Decision',   cio.finalMarketDecision, condTone],
+          ].filter(([,v])=>v).map(([l,v,tone])=>(
+            <div key={l} style={{ background:TONES[tone][1], borderRadius:10, padding:'10px 14px', border:`1px solid ${TONES[tone][0]}33` }}>
+              <div style={{ color:C.muted, fontSize:11, fontWeight:600, letterSpacing:0.8, textTransform:'uppercase', marginBottom:4 }}>{l}</div>
+              <div style={{ color:TONES[tone][0], fontWeight:900, fontSize:18, fontFamily:FM }}>{v}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Row 3 — cash + regime */}
+      {(cashRecommendation || regime) && (
+        <div style={{ display:'grid', gridTemplateColumns:isMobile?'1fr':'auto 1fr', gap:10, alignItems:'center', marginBottom:cio?.watchList?.length||cio?.avoidList?.length?12:0, paddingBottom:cio?.watchList?.length||cio?.avoidList?.length?12:0, borderBottom:cio?.watchList?.length||cio?.avoidList?.length?`1px solid ${C.border}`:'none' }}>
+          {cashPct!=null && <Pill tone="amber" size="md">💰 {cashPct}% CASH</Pill>}
+          <span style={{ color:C.sub, fontSize:13 }}>{regime || cashRecommendation}</span>
+        </div>
+      )}
+
+      {/* Row 4 — Watch tiles */}
+      {cio?.watchList?.length > 0 && (
+        <div style={{ marginBottom:cio?.avoidList?.length?10:0 }}>
+          <div style={{ ...LBL, marginBottom:8 }}>👀 WATCH</div>
           <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
-            {cio.watchList.map((w,i) => <Pill key={i} tone="amber" size="sm">{w.ticker||w}{w.reason?` — ${w.reason}`:''}</Pill>)}
+            {cio.watchList.map((w,i)=>(
+              <div key={i} style={{ background:C.amberBg, border:`1px solid ${C.amber}33`, borderRadius:8, padding:'5px 10px' }}>
+                <span style={{ color:C.amber, fontWeight:800, fontFamily:FM, fontSize:13 }}>{w.ticker||w}</span>
+                {w.reason && <span style={{ color:C.sub, fontSize:12 }}> — {w.reason}</span>}
+              </div>
+            ))}
           </div>
         </div>
       )}
-      {cio.avoidList?.length > 0 && (
+
+      {/* Row 5 — Avoid tiles */}
+      {cio?.avoidList?.length > 0 && (
         <div>
-          <div style={{ ...LBL, marginBottom:8 }}>AVOID</div>
+          <div style={{ ...LBL, marginBottom:8 }}>🚫 AVOID</div>
           <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
-            {cio.avoidList.map((w,i) => <Pill key={i} tone="red" size="sm">{w.ticker||w}{w.reason?` — ${w.reason}`:''}</Pill>)}
+            {cio.avoidList.map((w,i)=>(
+              <div key={i} style={{ background:C.downBg, border:`1px solid ${C.down}33`, borderRadius:8, padding:'5px 10px' }}>
+                <span style={{ color:C.down, fontWeight:800, fontFamily:FM, fontSize:13 }}>{w.ticker||w}</span>
+                {w.reason && <span style={{ color:C.sub, fontSize:12 }}> — {w.reason}</span>}
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -522,6 +557,7 @@ MANDATORY RULES — apply every time, no exceptions:
 8. Stocks with earnings in 0-10 days are highest priority for BUY consideration
 9. High-fear VIX (>25): reduce all position sizes, increase cash recommendation
 10. Keep all string values SHORT — max 15 words per field
+10b. currentPrice MUST be the exact price from LIVE PRICES above (e.g. "$323.39") — never write "N/A", never leave blank
 11. INCLUDE top WATCH setups for quality names without near-term catalyst (NVDA, MRVL, AVGO, CRDO) — show entry zone and what trigger to wait for
 12. Rank ALL opportunities by Opportunity Score — BUYs first then WATCHes
 
@@ -537,7 +573,8 @@ Return ONLY this JSON (up to 10 opportunities — all qualifying BUYs plus top W
         return {
           ...o,
           company:                 live.name || o.company || o.ticker,
-          currentPrice:            live.priceFormatted || o.currentPrice,
+          // Always prefer verified live price — never show N/A if we have it
+          currentPrice:            live.priceFormatted || (o.currentPrice && o.currentPrice !== 'N/A' ? o.currentPrice : live.priceFormatted || '—'),
           change1d:                live.change1d || null,
           changePctToday:          live.changePct || 0,
           direction:               live.direction || 'up',
@@ -692,44 +729,27 @@ Label each sentence: FACT / ANALYSIS / OPINION`, 'deepdive')
     const d = data.opportunities
     if (!d) return null
     const opps = d.opportunities||[]
-    const condTone = d.marketCondition==='BUY AGGRESSIVELY'?'green':d.marketCondition==='BUY SELECTIVELY'?'blue':d.marketCondition==='WAIT'?'amber':'red'
-    const vixTone  = d.vixRegime==='HIGH_FEAR'?'red':d.vixRegime==='ELEVATED'?'amber':'green'
+    // condTone and vixTone are now computed inside CIOPanel
 
     return (
       <>
-        {/* Regime bar */}
-        <div style={{ ...card({ marginBottom:14, padding:'12px 18px' }), display:'flex', flexWrap:'wrap', gap:10, alignItems:'center' }}>
-          {d.marketCondition && <Pill tone={condTone} size="lg">{d.marketCondition}</Pill>}
-          {d.vix && <Pill tone={vixTone} size="md">VIX {d.vix} · {d.vixRegime}</Pill>}
-          {(d.sectors||[]).map((s,i) => (
-            <Pill key={i} tone={s.direction==='up'?'green':'red'} size="sm">{s.label} {s.change}</Pill>
-          ))}
-        </div>
+        {/* Unified CIO header — regime, VIX, sectors, decisions, watch, avoid */}
+        <CIOPanel
+          cio={d.cio}
+          marketCondition={d.marketCondition}
+          vix={d.vix}
+          vixRegime={d.vixRegime}
+          sectors={d.sectors}
+          regime={d.regime}
+          cashPct={d.cashPct}
+          cashRecommendation={d.cashRecommendation}
+          isMobile={mob}
+        />
 
-        {/* CIO calls */}
-        <CIOPanel cio={d.cio} isMobile={mob} />
-
-        {/* Regime summary + cash */}
-        {(d.regime || d.cashRecommendation) && (
-          <div style={{ ...card({ marginBottom:14, padding:'12px 18px' }), display:'grid', gridTemplateColumns:mob?'1fr':'1fr 1fr', gap:12 }}>
-            {d.regime && (
-              <div>
-                <div style={LBL}>MARKET REGIME</div>
-                <div style={{ color:C.sub, fontSize:14 }}>{d.regime}</div>
-              </div>
-            )}
-            {d.cashRecommendation && (
-              <div style={{ display:'flex', gap:10, alignItems:'center' }}>
-                <Pill tone="amber" size="md">💰 {d.cashPct!=null?`${d.cashPct}% CASH`:'CASH'}</Pill>
-                <span style={{ color:C.sub, fontSize:14 }}>{d.cashRecommendation}</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Two-col on desktop, single on mobile */}
-        <div style={{ display:'grid', gridTemplateColumns:mob?'1fr':'minmax(0,1.45fr) minmax(310px,0.85fr)', gap:18, alignItems:'start' }}>
-          <div style={{ display:'grid', gap:14 }}>
+        {/* Opportunity tiles: 2-col grid on desktop, 1-col on mobile; side panel on right */}
+        <div style={{ display:'grid', gridTemplateColumns:mob?'1fr':'minmax(0,1fr) minmax(310px,340px)', gap:18, alignItems:'start' }}>
+          <div>
+            <div style={{ display:'grid', gridTemplateColumns:mob?'1fr':opps.length>3?'repeat(2,1fr)':'1fr', gap:14 }}>
             {opps.length
               ? opps.map((o,i) => <OppCard key={`${o.ticker}-${i}`} opp={o} rank={i+1} active={selected?.ticker===o.ticker} onClick={handleClick} onDeepDive={handleCardDive} deepDiveLoading={!!cardDrillLoad[o.ticker]} deepDiveContent={cardDrills[o.ticker]} />)
               : (
@@ -740,6 +760,7 @@ Label each sentence: FACT / ANALYSIS / OPINION`, 'deepdive')
                 </div>
               )
             }
+            </div>
             <EarningsCal calendar={d.earningsCalendar} />
           </div>
 
