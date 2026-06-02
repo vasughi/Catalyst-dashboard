@@ -118,29 +118,47 @@ const COMPANY_NAMES = {
 // ── Fallback earnings dates ───────────────────────────────────────────────────
 // Finnhub confirmed dates take priority. These fill the gaps.
 // AUDIT LOG (02 Jun 2026):
-//   META: 29 Jul 2026 CONFIRMED (TipRanks/Catacal)
-//   VRT:  05 Aug 2026 CONFIRMED (TipRanks/Investing.com)
-//   AMD:  29 Jul 2026 estimate
-//   NVDA: 27 Aug 2026 estimate
-//   PLTR: 04 Aug 2026 estimate
-//   CRWD: 26 Aug 2026 estimate
-//   SMCI: 05 Aug 2026 estimate
-//   ANET: 29 Jul 2026 estimate
-//   GEV:  23 Jul 2026 estimate
-//   NOW:  23 Jul 2026 estimate
+//   META: 29 Jul 2026 CONFIRMED (TipRanks)
+//   VRT:  05 Aug 2026 CONFIRMED (TipRanks/Investing.com) — NOT 28 Jul
+//   MRVL: 20 Aug 2026 CONFIRMED (TipRanks/Investing.com) — reports after close
+//   GEV:  23 Jul 2026 estimated (multiple sources)
+//   NOW:  23 Jul 2026 estimated
+//   GOOGL:22 Jul 2026 estimated
+//   MSFT: 28 Jul 2026 estimated
+//   AMD:  29 Jul 2026 estimated
+//   NVDA: 27 Aug 2026 estimated
+//   PLTR: 04 Aug 2026 estimated
+//   CRWD: 26 Aug 2026 estimated
+//   SMCI: 05 Aug 2026 estimated
+//   ANET: 29 Jul 2026 estimated
+//   AVGO: 11 Sep 2026 estimated (fiscal year end Dec, reports ~Sep)
+//   CRDO: 27 Aug 2026 estimated
+//   VST:  07 Aug 2026 estimated
+//   CEG:  07 Aug 2026 estimated
+//   FCX:  22 Jul 2026 estimated
+//   CCJ:  07 Aug 2026 estimated
 const FALLBACK_EARNINGS = {
-  META: { date: '2026-07-29', note: 'confirmed' },   // CONFIRMED
-  VRT:  { date: '2026-08-05', note: 'confirmed' },   // CONFIRMED
-  AMD:  { date: '2026-07-29', note: 'est' },
-  NVDA: { date: '2026-08-27', note: 'est' },
-  PLTR: { date: '2026-08-04', note: 'est' },
-  CRWD: { date: '2026-08-26', note: 'est' },
-  SMCI: { date: '2026-08-05', note: 'est' },
-  ANET: { date: '2026-07-29', note: 'est' },
+  // CONFIRMED dates
+  META: { date: '2026-07-29', note: 'confirmed' },
+  VRT:  { date: '2026-08-05', note: 'confirmed' },
+  MRVL: { date: '2026-08-20', note: 'confirmed' },
+  // Estimated dates
   GEV:  { date: '2026-07-23', note: 'est' },
   NOW:  { date: '2026-07-23', note: 'est' },
-  MSFT: { date: '2026-07-28', note: 'est' },
+  FCX:  { date: '2026-07-22', note: 'est' },
   GOOGL:{ date: '2026-07-22', note: 'est' },
+  MSFT: { date: '2026-07-28', note: 'est' },
+  AMD:  { date: '2026-07-29', note: 'est' },
+  ANET: { date: '2026-07-29', note: 'est' },
+  PLTR: { date: '2026-08-04', note: 'est' },
+  SMCI: { date: '2026-08-05', note: 'est' },
+  VST:  { date: '2026-08-07', note: 'est' },
+  CEG:  { date: '2026-08-07', note: 'est' },
+  CCJ:  { date: '2026-08-07', note: 'est' },
+  NVDA: { date: '2026-08-27', note: 'est' },
+  CRDO: { date: '2026-08-27', note: 'est' },
+  CRWD: { date: '2026-08-26', note: 'est' },
+  AVGO: { date: '2026-09-10', note: 'est' },
 }
 
 // ─── Route ────────────────────────────────────────────────────────────────────
@@ -157,26 +175,26 @@ export async function GET(request) {
     // ── OPPORTUNITIES ──────────────────────────────────────────────────────
     if (type === 'opportunities') {
       const UNIVERSE = [
-        // AI silicon / semis
-        'NVDA','AMD','AVGO','TSM','MRVL','ARM','QCOM',
-        // Networking / AI infra
-        'ANET','CRDO',
+        // AI silicon / semis (highest priority — largest earnings movers)
+        'NVDA','AMD','AVGO','TSM','MRVL','ARM','QCOM','INTC',
+        // Networking / AI infra (high earnings velocity)
+        'ANET','CRDO','CIEN',
         // Big tech / AI software
         'MSFT','GOOGL','META','PLTR','NOW',
         // Servers / storage
-        'DELL','SMCI',
+        'DELL','SMCI','HPE',
         // Cybersecurity
-        'CRWD','PANW','ZS',
+        'CRWD','PANW','ZS','S',
         // Defence / aerospace
-        'LMT','RTX','NOC','AXON','GD',
+        'LMT','RTX','NOC','AXON','GD','HII',
         // Space / drones / autonomy
-        'RKLB','LUNR',
-        // Power / grid / nuclear
-        'VRT','ETN','CEG','VST','GEV',
+        'RKLB','LUNR','ACHR',
+        // Power / grid / nuclear (AI infrastructure beneficiaries)
+        'VRT','ETN','CEG','VST','GEV','NRG',
         // Solar / clean energy
-        'FSLR',
-        // Critical minerals
-        'FCX','CCJ',
+        'FSLR','ENPH',
+        // Critical minerals / supply chain choke points
+        'FCX','CCJ','MP',
       ]
 
       const today    = new Date()
