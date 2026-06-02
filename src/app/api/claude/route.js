@@ -51,7 +51,7 @@ RULES:
       messages.push({ role: 'assistant', content: '{' })
     }
 
-    const tokenMap = { cio: 8000, deepdive: 800, json: 2000 }
+    const tokenMap = { cio: 4000, deepdive: 800, json: 2000 }  // 4000 is enough for 10 cards
 
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
