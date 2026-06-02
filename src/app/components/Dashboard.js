@@ -704,16 +704,12 @@ export default function Dashboard() {
             : 'NO_EARNINGS',
           s.bigMoverToday ? 'GAP_UP>8%_APPLY_PENALTY' : '',
           hist ? 'HIST:'+hist.label+(hist.live?' [LIVE]':'') : '',
-          // Use techMap (background fetch) over stock-level data
-          (()=>{const t=techMap[s.ticker]; return[
-            t?.trend         ? 'TREND:'+t.trend         : (s.trend?'TREND:'+s.trend:''),
-            t?.setup         ? 'SETUP:'+t.setup         : (s.setup?'SETUP:'+s.setup:''),
-            t?.entryQuality  ? 'ENTRY:'+t.entryQuality  : (s.entryQuality?'ENTRY:'+s.entryQuality:''),
-            t?.sma200        ? 'SMA200:$'+t.sma200+(t.pctAbove200!==null?'('+(t.pctAbove200>=0?'+':'')+t.pctAbove200+'%)':'')
-              : s.sma200     ? 'SMA200:$'+s.sma200                                                  : 'NO_SMA_DATA',
-            t?.sma50         ? 'SMA50:$'+t.sma50+(t.pctAbove50!==null?'('+(t.pctAbove50>=0?'+':'')+t.pctAbove50+'%)':'')   : '',
-            t?.nearestSupport    ? 'SUPPORT:'+t.nearestSupport    : '',
-            t?.suggestedStopLoss ? 'CALC_STOP:$'+t.suggestedStopLoss+'('+t.distToStopPct+'%_below)' : '',
+          // Technicals — use live techMap if available
+          (()=>{const t=techMap[s.ticker]||{}; return[
+            t.trend             ? 'TREND:'+t.trend                                                  : '',
+            t.entryQuality      ? 'ENTRY:'+t.entryQuality                                           : '',
+            t.pctAbove200!=null ? 'vs200SMA:'+(t.pctAbove200>=0?'+':'')+t.pctAbove200+'%'          : '',
+            t.suggestedStopLoss ? 'STOP:$'+t.suggestedStopLoss                                      : '',
           ].filter(Boolean).join(' | ')})(),
         ]
         return parts.filter(Boolean).join(' | ')
@@ -764,13 +760,11 @@ ${Object.keys(liveEH).length > 0 ? "["+Object.keys(liveEH).length+" stocks have 
 LIVE COMPANY NEWS (fetched automatically from Finnhub — last 5 days):
 ${liveNewsLines || 'No significant news detected'}
 
-MANUALLY NOTED EVENTS (may be stale — cross-check with live news above):
-- CRDO (Credo Technology): Reported Q4 on 1 Jun 2026 — EPS $1.16 beat, revenue $437M beat, FY2027 guided >80% growth. BUT stock fell 14-15% after-hours because guidance was only inline with (not above) elevated expectations. Post-Catalyst Chase Rule applies — WATCH until price stabilises. Multiple analysts raised targets: Jefferies $270, JPMorgan $250, Goldman $250. A pullback to $190-$210 range could be a BUY entry for FY2027 catalyst.
-- AVGO (Broadcom): Reports earnings TODAY 3 Jun 2026 after close — AI chip revenue guided at $10.7B (up 140% YoY). EPS estimate $2.40 on $22B revenue. 37 analysts covering. HIGHEST PRIORITY — watch for post-close result. If beats and guidance strong, upgrade to STRONG BUY entry.
-- GOOGL: Announced $80 billion new share issue on 1 Jun 2026. More shares issued = dilution = negative for existing holders. Max GOOGL rating = WATCH.
-- GOOGL: HSBC cut price target from $435 to $420 today.
-- FCX (Freeport-McMoRan): Stock fell 12% after Q1 beat because Grasberg mine production was cut from 100,000 to 60,000 tons/day. Fundamental problem — max FCX rating = WATCH.
-- VRT (Vertiv): Next earnings window is 24-29 Jul 2026 (not yet officially confirmed).
+KEY EVENTS (update when major news breaks):
+- CRDO: Reported 1 Jun, beat EPS/revenue, fell 14% — WATCH until $190-210 stabilises
+- AVGO: Reports today 3 Jun after close — HIGHEST PRIORITY
+- GOOGL: $80B share issue = dilution = max WATCH
+- FCX: Grasberg mine cut 100k→60k tons/day = fundamental problem = max WATCH
 
 RULES — apply every time:
 1. Only use earnings dates from the calendar above — never guess dates
@@ -787,37 +781,34 @@ RULES — apply every time:
 12. Sort by score — BUYs first, WATCHes after
 13. RETURN GATE: if average past earnings reaction below 10%, mark CONDITIONAL PASS not PASS
 
-TECHNICAL RULES — use the SMA/trend data provided for each stock:
-14. TREND=DOWNTREND (below 200 SMA): maximum rating WATCH regardless of earnings — do not recommend BUY for stocks in downtrend
-15. TREND=PULLBACK IN UPTREND or SETUP=PULLBACK: this is the IDEAL entry — prioritise these for BUY
-16. SETUP=EXTENDED (stock far above 50 SMA): reduce entry quality score, warn it may pull back before moving higher
-17. Use CALC_STOP as the stop loss price — this is calculated from the actual nearest support level, not guessed
-18. Entry zone should be near current price for PULLBACK setups, or wait for pullback to SMA50 for EXTENDED setups
-19. Risk/Reward: calculate using (takeProfit - entry) / (entry - stopLoss) using CALC_STOP
-20. For stocks with ENTRY_QUALITY=EXCELLENT: these are your best setups — prioritise in ranking
-21. For stocks with ENTRY_QUALITY=POOR: cap at WATCH unless earnings catalyst is within 5 days
-22. SMA filter: only recommend BUY for stocks with SMA200 data showing price ABOVE 200 SMA (above200=true)
+TECHNICAL RULES:
+14. DOWNTREND (below 200 SMA) = max WATCH, never BUY
+15. PULLBACK IN UPTREND or SETUP=PULLBACK = ideal entry, prioritise for BUY
+16. SETUP=EXTENDED = warn, poor entry
+17. Use CALC_STOP for stop loss. Calculate R/R from real numbers.
+18. ENTRY_QUALITY=POOR = max WATCH unless earnings within 5 days
 
-LANGUAGE RULES — very important:
-- Write as if explaining to someone who has never traded before
-- No jargon. Instead of "catalyst" say "upcoming event". Instead of "thesis" say "why we like it".
-- Instead of "invalidation" say "what would make us sell immediately"
-- Instead of "pullback to support" say "price drops back to a good entry level around $X"
-- Instead of "bullish" say "moving up" or "looks strong". Instead of "bearish" say "moving down" or "looks weak"
-- Instead of "capex" say "investment spending". Instead of "secular tailwind" say "long-term growth trend"
-- Instead of "beat-and-raise" say "beat expectations and raised their forecast"
-- Keep every sentence under 20 words. Plain English only.
+LANGUAGE: Plain English only. Short sentences. No jargon. Write for a complete beginner.
 
-COVERAGE REQUIREMENT — you MUST classify every single stock from LIVE STOCK PRICES above:
-- Every stock must appear in EITHER opportunities OR watchList OR avoidList
-- Do not silently ignore any stock — if you have nothing to say, put it in watchList with reason "no catalyst in window"
-- watchList = stocks worth monitoring but not ready to buy yet (include ALL stocks not in opportunities or avoidList)
-- avoidList = stocks to actively avoid right now (gap-up today, downtrend, broken thesis, dilution, production cuts)
+COVERAGE:
+- watchList: include any notable stocks NOT in opportunities that are worth monitoring (5-8 max, most interesting ones)
+- avoidList: include stocks to actively avoid — gap-up today, downtrend, broken thesis (5-8 max)
+- Do NOT try to cover every single stock — focus on the most actionable ones only
 
-Return ONLY this JSON (up to 10 opportunity cards, but watchList and avoidList must cover ALL remaining stocks):
+Return ONLY this JSON (up to 10 opportunity cards):
 {"marketCondition":"BUY AGGRESSIVELY|BUY SELECTIVELY|WAIT|HOLD CASH","cashRecommendation":"one plain-English sentence","cashPct":30,"regime":"one plain-English sentence describing what the market is doing today","cio":{"bestTradeToday":"TICKER or NONE","bestRiskReward":"TICKER or NONE","finalMarketDecision":"BUY AGGRESSIVELY|BUY SELECTIVELY|WAIT|HOLD CASH","watchList":[{"ticker":"","reason":"plain English max 10 words — why watching not buying yet"}],"avoidList":[{"ticker":"","reason":"plain English max 10 words — specific reason to avoid right now"}]},"opportunities":[{"ticker":"","company":"","action":"STRONG BUY|BUY|WATCH|AVOID","currentPrice":"","entryZone":"$X-$Y","stopLoss":"use CALC_STOP from data","takeProfit":"$X","expectedGain":"15-20%","riskReward":"calculated e.g. 3:1","allocation":"10%","whyWeLikeIt":"plain English, max 20 words","whatCouldGoWrong":"plain English, max 15 words","upcomingEvent":"event name","eventDate":"DD Mon YYYY","trend":"from data","setup":"from data","entryQuality":"EXCELLENT|GOOD|AVERAGE|POOR","trendComment":"one plain sentence on chart","returnGate":"PASS|CONDITIONAL PASS|FAIL","cashChallenge":"PASS|FAIL","opportunityScore":75}]}`
 
-      const ai = repairJSON(await claude(prompt, 'cio'))
+      // Timeout wrapper — Vercel hobby: 10s, Pro: 30s. Give Claude 28s max.
+      let aiText
+      try {
+        const timeout = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('AI analysis timed out — click Retry to try again')), 28000)
+        )
+        aiText = await Promise.race([claude(prompt, 'cio'), timeout])
+      } catch (e) {
+        throw new Error(e.message || 'AI analysis timed out — click Retry')
+      }
+      const ai = repairJSON(aiText)
 
       // Ground all prices with verified live data
       const pm = Object.fromEntries((stocks||[]).map(s=>[s.ticker,s]))
