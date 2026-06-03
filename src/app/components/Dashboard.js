@@ -876,9 +876,9 @@ RULES:
 7. Plain English only. Short sentences. No jargon.
 8. watchList: 5-8 most interesting. avoidList: 5-8 to avoid.
 
-EXACTLY 15 entries. COMPACT JSON, no spaces. Max 10 words per string. Start with opportunities array. Rank all stocks, best 15. Count them. If you have fewer than 10 BUYs, fill remaining slots with WATCH cards for: NVDA, MRVL, AVGO, GEV, FSLR, ETN, CEG, PLTR — whatever is needed to reach 10.
+EXACTLY 10 entries. COMPACT JSON, no spaces. Max 10 words per string. Start with opportunities array. Rank all stocks, best 10. Count them. If you have fewer than 10 BUYs, fill remaining slots with WATCH cards for: NVDA, MRVL, AVGO, GEV, FSLR, ETN, CEG, PLTR — whatever is needed to reach 10.
 
-Return ONLY this JSON (EXACTLY 15 opportunity cards — rank all universe stocks, best 15 only):
+Return ONLY this JSON (EXACTLY 10 opportunity cards — rank all universe stocks, best 10 only):
 {"opportunities":[{"ticker":"","company":"","action":"BUY","currentPrice":"","entryZone":"$X-$Y","stopLoss":"$X","takeProfit":"$X","expectedGain":"15%","riskReward":"3:1","allocation":"10%","whyWeLikeIt":"max 10 words","whatCouldGoWrong":"max 8 words","upcomingEvent":"","eventDate":"DD Mon YYYY","trend":"","entryQuality":"GOOD","returnGate":"PASS","cashChallenge":"PASS","opportunityScore":75}],"marketCondition":"BUY SELECTIVELY","cashRecommendation":"one sentence","cashPct":30,"regime":"one sentence","cio":{"bestTradeToday":"TICKER","bestRiskReward":"TICKER","finalMarketDecision":"BUY SELECTIVELY","watchList":[{"ticker":"","reason":"max 6 words"}],"avoidList":[{"ticker":"","reason":"max 6 words"}]}}`
 
 
@@ -1483,7 +1483,7 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
     const d = data.opportunities
     if (!d) return null
     const opps = d.opportunities||[]
-    const visibleOpps = showAllOpps ? opps : opps.slice(0, 8)
+    const visibleOpps = showAllOpps ? opps : opps.slice(0, 8)  // show 8, button reveals remaining
 
     return (
       <>
