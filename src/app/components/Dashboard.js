@@ -675,7 +675,8 @@ export default function Dashboard() {
   const [drillLoad,   setDrillLoad]   = useState(false)
   const [lastUp,      setLastUp]      = useState({})
   const [showOverlay, setShowOverlay] = useState(false)
-  const [showAllOpps, setShowAllOpps] = useState(false)
+  const [showAllOpps,        setShowAllOpps]        = useState(false)
+  const [expandedWatchlist,  setExpandedWatchlist]  = useState(false)
   // Portfolio password gate — stored in sessionStorage (cleared on browser close)
   const [portfolioUnlocked, setPortfolioUnlocked] = useState(false)
   const [loadingStep, setLoadingStep] = useState('')
@@ -1524,24 +1525,24 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
   }
 
   // ── Core Watchlist Panel ──────────────────────────────────────────────────
+  // expandedWatchlist state lives at Dashboard level to avoid hooks-in-nested-fn error
   function CoreWatchlistPanel({ priceMap }) {
-    const [expanded, setExpanded] = React.useState(false)
     if (!priceMap || !Object.keys(priceMap).length) return null
 
     return (
       <div style={{ ...card({ marginBottom:14 }), padding:'12px 16px' }}>
         <button
-          onClick={() => setExpanded(e => !e)}
+          onClick={() => setExpandedWatchlist(e => !e)}
           style={{ appearance:'none', background:'none', border:'none', cursor:'pointer', width:'100%', textAlign:'left', padding:0, display:'flex', justifyContent:'space-between', alignItems:'center' }}
         >
           <div style={{ display:'flex', alignItems:'center', gap:8 }}>
             <span style={{ fontSize:14, fontWeight:800, color:C.accent }}>📌 CORE WATCHLIST</span>
             <span style={{ color:C.muted, fontSize:12 }}>Your mandatory stocks — always visible</span>
           </div>
-          <span style={{ color:C.muted, fontSize:16 }}>{expanded ? '▲' : '▼'}</span>
+          <span style={{ color:C.muted, fontSize:16 }}>{expandedWatchlist ? '▲' : '▼'}</span>
         </button>
 
-        {expanded && (
+        {expandedWatchlist && (
           <div style={{ marginTop:12, display:'grid', gap:10 }}>
             {Object.entries(CORE_WATCHLIST).map(([group, tickers]) => (
               <div key={group}>
