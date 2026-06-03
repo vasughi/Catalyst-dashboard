@@ -1192,4 +1192,827 @@ COVERAGE:
 LANGUAGE: Plain English, short sentences, beginner-friendly.
 
 Return ONLY this JSON (up to 10 cards):
-{"marketCondition":"BUY SELECTIVELY","cashRecommendation":"one sentence","cashPct":30,"regime":"one sentence","cio":{"bestTradeToday":"TICKER","bestRiskReward":"TICKER","finalMarketDecision":"BUY SELECTIVELY","watchList":[{"ticker":"","reason":"max 8 words"}],"avoidList":[{"ticker":"","reason":"max 8 words"}]},"opportunities":[{"ticker":"","company":"","action":"BUY","currentPrice":"","entryZone":"$X-$Y","stopLoss":"$X","takeProfit":"$X","expectedGain":"15%","riskReward":"3:1","allocation":"10%","whyWeLikeIt":"max 15 words","whatCouldGoWrong":"max 10 words","upcomingEvent":"","eventDate":"DD Mon YYYY","trend":"","entryQuality":"GOOD","returnGate":"PASS","cashChallenge":"PASS","opportunityScore":75}]}`
+{"marketCondition":"BUY SELECTIVELY","cashRecommendation":"one sentence","cashPct":30,"regime":"one sentence","cio":{"bestTradeToday":"TICKER","bestRiskReward":"TICKER","finalMarketDecision":"BUY SELECTIVELY","watchList":[{"ticker":"","reason":"max 8 words"}],"avoidList":[{"ticker":"","reason":"max 8 words"}]},"opportunities":[{"ticker":"","company":"","action":"BUY","currentPrice":"","entryZone":"$X-$Y","stopLoss":"$X","takeProfit":"$X","expectedGain":"15%","riskReward":"3:1","allocation":"10%","whyWeLikeIt":"max 15 words","whatCouldGoWrong":"max 10 words","upcomingEvent":"","eventDate":"DD Mon YYYY","trend":"","entryQuality":"GOOD","returnGate":"PASS","cashChallenge":"PASS","opportunityScore":75}]}` 
+
+      const res = await fetch('/api/claude', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, mode: 'cio' }),
+      })
+      const aiData = await res.json()
+      const tb = aiData.content?.find(b => b.type === 'text')
+      if (!tb) throw new Error('No response from AI')
+
+      let parsed
+      try {
+        let s = tb.text.replace(/```json|```/g, '').trim()
+        const i = s.indexOf('{'); if (i > 0) s = s.slice(i)
+        parsed = JSON.parse(s)
+      } catch {
+        const s = tb.text.replace(/```json|```/g, '').trim()
+        parsed = { portfolioSummary: s, holdings: [] }
+      }
+
+      setT212Result({ ...parsed, enriched, raw: t212Data })
+    } catch (e) {
+      setT212Error(e.message)
+    } finally {
+      setT212AnalysisLoad(false)
+    }
+  }, [t212Data, getEH])
+
+  const loaders = { opportunities:loadOpps, global:loadGlobal, risk:loadRisk }
+
+  // Per-card deep dive state
+  const [cardDrills, setCardDrills]       = useState({})
+  const [cardDrillLoad, setCardDrillLoad] = useState({})
+
+  const handleCardDive = useCallback(async (opp) => {
+    if (cardDrills[opp.ticker]) return
+    setCardDrillLoad(p => ({ ...p, [opp.ticker]: true }))
+    try {
+      const hist = getEH(opp.ticker)
+      const text = await claude(`Today: ${new Date().toDateString()}
+Stock: ${opp.ticker} — ${opp.company}
+Current price: ${opp.currentPrice}
+Next earnings: ${opp.earningsDate ? ukDate(opp.earningsDate) : 'not yet confirmed'} (${opp.earningsTradingDaysAway??'?'} trading days away)
+Why we like it: ${opp.thesis}
+Upcoming event: ${opp.catalyst||'N/A'}
+Past reactions: ${hist ? hist.label : 'not available'}
+Buy range: ${opp.entryZone||'N/A'} · Exit if below: ${opp.stopLoss||'N/A'} · Target: ${opp.takeProfit||opp.expectedGain||'N/A'}
+
+Write a simple, clear analysis for a beginner investor. Short sentences. No jargon.
+
+WHY BUY NOW
+2-3 sentences on why this is a good moment to consider buying.
+
+THE UPSIDE
+2-3 sentences on what the best case looks like and how much the price could rise.
+
+THE RISK
+2-3 sentences on what could go wrong.
+
+WHEN TO BUY
+1-2 sentences on the exact price or situation to wait for before buying.
+
+Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'deepdive')
+      setCardDrills(p => ({ ...p, [opp.ticker]: text }))
+    } catch(e) {
+      setCardDrills(p => ({ ...p, [opp.ticker]: `Error: ${e.message}` }))
+    } finally {
+      setCardDrillLoad(p => ({ ...p, [opp.ticker]: false }))
+    }
+  }, [claude, cardDrills, getEH])
+
+  useEffect(() => { fetchEarningsHistory() }, []) // eslint-disable-line
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem('catalyst_portfolio_auth') === 'true') setPortfolioUnlocked(true)
+      if (sessionStorage.getItem('catalyst_t212_auth')      === 'true') setT212Unlocked(true)
+    } catch {}
+  }, [])
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('catalyst_holdings')
+      if (saved) setHoldings(JSON.parse(saved))
+    } catch {}
+  }, [])
+  useEffect(() => {
+    try { localStorage.setItem('catalyst_holdings', JSON.stringify(holdings)) } catch {}
+  }, [holdings])
+  useEffect(() => {
+    if (!loaded.current[activeTab] && !loading[activeTab] && !data[activeTab]) {
+      loaded.current[activeTab] = true
+      loaders[activeTab]?.()
+    }
+  }, [activeTab]) // eslint-disable-line
+
+  const handleClick = useCallback((opp) => {
+    setSelected(opp); setDrill(null); setShowOverlay(true)
+    deepDive(opp)
+  }, [deepDive])
+
+  const refresh = useCallback(() => {
+    loaded.current[activeTab] = true
+    loaders[activeTab]?.()
+  }, [activeTab]) // eslint-disable-line
+
+  // ── CIO panel ──────────────────────────────────────────────────────────────
+  function CIOPanelInner({ cio, marketCondition, vix, vixRegime, sectors, regime, cashPct, cashRecommendation }) {
+    const condTone = marketCondition==='BUY AGGRESSIVELY'?'green':marketCondition==='BUY SELECTIVELY'?'blue':marketCondition==='WAIT'?'amber':'red'
+    const vixTone  = vixRegime==='HIGH_FEAR'?'red':vixRegime==='ELEVATED'?'amber':'green'
+    return (
+      <div style={{ ...card({ marginBottom:14 }) }}>
+        <div style={{ display:'flex', flexWrap:'wrap', gap:8, alignItems:'center', marginBottom:14, paddingBottom:12, borderBottom:`1px solid ${C.border}` }}>
+          {marketCondition && <Pill tone={condTone} size="lg">{marketCondition}</Pill>}
+          {vix && <Pill tone={vixTone} size="md">VIX {vix} · {vixRegime}</Pill>}
+          {(sectors||[]).map((s,i) => <Pill key={i} tone={s.direction==='BULLISH'||s.direction==='up'?'green':'red'} size="sm">{s.label} {s.change}</Pill>)}
+        </div>
+        {cio && (
+          <div style={{ display:'grid', gridTemplateColumns:mob?'1fr 1fr':'repeat(3,1fr)', gap:10, marginBottom:14 }}>
+            {[['⚡ Best Buy Today',cio.bestTradeToday,'green'],['📐 Best Value Setup',cio.bestRiskReward,'blue'],['🎯 Overall Advice',cio.finalMarketDecision,condTone]].filter(([,v])=>v).map(([l,v,tone])=>(
+              <div key={l} style={{ background:TONES[tone][1], borderRadius:10, padding:'10px 14px', border:`1px solid ${TONES[tone][0]}33` }}>
+                <div style={{ color:C.muted, fontSize:11, fontWeight:600, letterSpacing:0.8, textTransform:'uppercase', marginBottom:4 }}>{l}</div>
+                <div style={{ color:TONES[tone][0], fontWeight:900, fontSize:18, fontFamily:FM }}>{v}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        {(cashRecommendation || regime) && (
+          <div style={{ display:'flex', gap:10, alignItems:'center', marginBottom:cio?.watchList?.length||cio?.avoidList?.length?12:0, paddingBottom:cio?.watchList?.length||cio?.avoidList?.length?12:0, borderBottom:cio?.watchList?.length||cio?.avoidList?.length?`1px solid ${C.border}`:'none', flexWrap:'wrap' }}>
+            {cashPct!=null && <Pill tone="amber" size="md">💰 {cashPct}% CASH</Pill>}
+            <span style={{ color:C.sub, fontSize:13 }}>{regime || cashRecommendation}</span>
+          </div>
+        )}
+        {cio?.watchList?.length > 0 && (
+          <div style={{ marginBottom:cio?.avoidList?.length?10:0 }}>
+            <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8 }}>
+              <div style={LBL}>👀 KEEP AN EYE ON THESE</div>
+              <span style={{ color:C.muted, fontSize:11 }}>({cio.watchList.length} stocks)</span>
+            </div>
+            <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+              {cio.watchList.map((w,i)=>(
+                <div key={i} style={{ background:C.amberBg, border:`1px solid ${C.amber}33`, borderRadius:8, padding:'5px 10px' }}>
+                  <span style={{ color:C.amber, fontWeight:800, fontFamily:FM, fontSize:13 }}>{w.ticker||w}</span>
+                  {w.reason && <span style={{ color:C.sub, fontSize:12 }}> — {w.reason}</span>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {cio?.avoidList?.length > 0 && (
+          <div>
+            <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8 }}>
+              <div style={LBL}>🚫 DON'T BUY THESE NOW</div>
+              <span style={{ color:C.muted, fontSize:11 }}>({cio.avoidList.length} stocks)</span>
+            </div>
+            <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+              {cio.avoidList.map((w,i)=>(
+                <div key={i} style={{ background:C.downBg, border:`1px solid ${C.down}33`, borderRadius:8, padding:'5px 10px' }}>
+                  <span style={{ color:C.down, fontWeight:800, fontFamily:FM, fontSize:13 }}>{w.ticker||w}</span>
+                  {w.reason && <span style={{ color:C.sub, fontSize:12 }}> — {w.reason}</span>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // ── Earnings calendar ──────────────────────────────────────────────────────
+  function EarningsCalendar({ calendar }) {
+    if (!calendar?.length) return null
+    const items = calendar.filter(e => (e.tradingDaysAway??-1) >= 0).slice(0,12)
+    if (!items.length) return null
+    return (
+      <div style={{ ...card({ marginTop:18 }) }}>
+        <div style={{ ...LBL, marginBottom:4 }}>📅 UPCOMING EARNINGS RESULTS — NEXT 60 DAYS</div>
+        <div style={{ color:C.muted, fontSize:12, marginBottom:12 }}>Companies below are reporting their financial results soon. This is when big price moves happen.</div>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(150px,1fr))', gap:10 }}>
+          {items.map((e,i) => {
+            const t = e.tradingDaysAway<=3?'red':e.tradingDaysAway<=10?'amber':'blue'
+            const hist = EH[e.ticker]
+            return (
+              <div key={i} style={{ ...card({ padding:12, borderTop:`3px solid ${TONES[t][0]}` }) }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:4 }}>
+                  <span style={{ fontFamily:FM, fontWeight:800, fontSize:17, color:C.text }}>{e.ticker}</span>
+                  <Pill tone={t} size="sm">{e.tradingDaysAway===0?'TODAY':`${e.tradingDaysAway}d`}</Pill>
+                </div>
+                <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+                  <span style={{ color:C.sub, fontSize:13, fontWeight:700 }}>{ukDate(e.date)}</span>
+                  {e.source==='confirmed'  && <span style={{ background:C.upBg,    color:C.up,    fontSize:10, fontWeight:700, padding:'1px 5px', borderRadius:4 }}>✓</span>}
+                  {e.source==='estimate'   && <span style={{ background:C.amberBg, color:C.amber, fontSize:10, fontWeight:700, padding:'1px 5px', borderRadius:4 }}>EST</span>}
+                  {e.source==='conflicted' && <span style={{ background:C.downBg,  color:C.down,  fontSize:10, fontWeight:700, padding:'1px 5px', borderRadius:4 }}>⚠</span>}
+                </div>
+                {hist && <div style={{ color:C.purple, fontSize:11, fontWeight:600, marginTop:4 }}>{hist.label}</div>}
+                {e.epsEstimate!=null && <div style={{ color:C.muted, fontSize:11, marginTop:2 }}>EPS est: ${e.epsEstimate}</div>}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
+  // ── renderOpps ─────────────────────────────────────────────────────────────
+  function renderOpps() {
+    const d = data.opportunities
+    if (!d) return null
+    const opps = d.opportunities||[]
+    const visibleOpps = showAllOpps ? opps : opps.slice(0, 10)
+
+    return (
+      <>
+        <CIOPanelInner cio={d.cio} marketCondition={d.marketCondition} vix={d.vix} vixRegime={d.vixRegime} sectors={d.sectors} regime={d.regime} cashPct={d.cashPct} cashRecommendation={d.cashRecommendation} />
+        <div style={{ display:'grid', gridTemplateColumns:mob?'1fr':'minmax(0,1fr) minmax(310px,340px)', gap:18, alignItems:'start' }}>
+          <div>
+            <div style={{ display:'grid', gridTemplateColumns:mob?'1fr':opps.length>3?'repeat(2,1fr)':'1fr', gap:14 }}>
+              {visibleOpps.length
+                ? visibleOpps.map((o,i) => <OppCard key={o.ticker+i} opp={o} rank={i+1} active={selected?.ticker===o.ticker} onClick={handleClick} onDeepDive={handleCardDive} deepDiveLoading={!!cardDrillLoad[o.ticker]} deepDiveContent={cardDrills[o.ticker]} getEH={getEH} techMap={techMap} />)
+                : (
+                  <div style={{ ...card({ textAlign:'center', padding:48, gridColumn:'1/-1' }) }}>
+                    <div style={{ fontSize:36, marginBottom:12 }}>💵</div>
+                    <div style={{ color:C.text, fontWeight:700, fontSize:18, marginBottom:8 }}>No qualifying opportunities</div>
+                    <div style={{ color:C.muted, fontSize:14, maxWidth:380, margin:'0 auto' }}>All candidates failed Return Gate or Cash Challenge. The AI recommends holding cash — this is a valid and correct outcome.</div>
+                  </div>
+                )
+              }
+            </div>
+            {opps.length > 10 && (
+              <button onClick={() => setShowAllOpps(s=>!s)} style={{ appearance:'none', background:C.card, border:'1.5px solid '+(showAllOpps?C.border:C.accent), color:showAllOpps?C.muted:C.accent, borderRadius:10, padding:'12px 24px', fontWeight:700, fontSize:14, cursor:'pointer', width:'100%', marginTop:14, marginBottom:4 }}>
+                {showAllOpps ? '▲ Show less' : '▼ Show '+(opps.length-10)+' more opportunities'}
+              </button>
+            )}
+            <EarningsCalendar calendar={d.earningsCalendar} />
+          </div>
+          {!mob && (
+            <div style={{ ...card({ position:'sticky', top:16 }) }}>
+              <div style={{ ...LBL, marginBottom:14 }}>SELECTED SETUP</div>
+              {selected ? (
+                <>
+                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:14 }}>
+                    <div>
+                      <div style={{ fontFamily:FM, fontWeight:900, fontSize:28, color:C.text }}>{selected.ticker}</div>
+                      <div style={{ color:C.muted, fontSize:13 }}>{selected.company}</div>
+                    </div>
+                    <ActionBadge action={selected.action} size="lg" />
+                  </div>
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:14 }}>
+                    {[['Current Price',selected.currentPrice],['Target Price',selected.takeProfit||selected.expectedGain],['Exit if below',selected.stopLoss],['Reward vs Risk',selected.riskReward],['Buy between',selected.entryZone],['Portfolio %',selected.allocation]].map(([l,v]) => v ? (
+                      <div key={l} style={{ background:C.bg, borderRadius:10, padding:'10px 12px' }}>
+                        <div style={LBL}>{l}</div>
+                        <div style={{ ...VAL, fontSize:14 }}>{v}</div>
+                      </div>
+                    ) : null)}
+                  </div>
+                  {selected.earningsDate && (
+                    <div style={{ background:C.amberBg, borderRadius:10, padding:'10px 14px', marginBottom:10 }}>
+                      <div style={LBL}>EARNINGS DATE{selected.earningsSource==='estimate'?' (EST)':' (VERIFIED)'}</div>
+                      <div style={{ color:C.amber, fontWeight:900, fontSize:18, fontFamily:FM }}>{ukDate(selected.earningsDate)}</div>
+                      <div style={{ color:C.amber, fontSize:13, marginTop:2 }}>{selected.earningsTradingDaysAway} trading days away</div>
+                    </div>
+                  )}
+                  {selected.catalyst && (
+                    <div style={{ marginBottom:10 }}>
+                      <div style={LBL}>UPCOMING EVENT</div>
+                      <div style={{ ...VAL, fontSize:14 }}>{selected.catalyst}</div>
+                    </div>
+                  )}
+                  {selected.invalidation && (
+                    <div style={{ background:C.downBg, borderRadius:10, padding:'10px 14px', marginBottom:14 }}>
+                      <div style={LBL}>🚨 SELL IMMEDIATELY IF...</div>
+                      <div style={{ color:C.down, fontSize:13, fontWeight:600 }}>{selected.invalidation}</div>
+                    </div>
+                  )}
+                  <div style={{ height:1, background:C.border, margin:'12px 0' }} />
+                  <div style={{ ...LBL, marginBottom:10 }}>DEEP DIVE ANALYSIS</div>
+                  {drillLoad
+                    ? <div style={{ color:C.muted, fontSize:13 }}>Analysing {selected.ticker}…</div>
+                    : drill
+                      ? <div style={{ color:C.sub, fontSize:14, lineHeight:1.75, whiteSpace:'pre-wrap' }}>{drill}</div>
+                      : <button onClick={() => selected && deepDive(selected)} style={{ appearance:'none', background:C.accent, color:'#fff', border:'none', borderRadius:10, padding:'10px 18px', fontWeight:700, fontSize:14, cursor:'pointer' }}>▶ Run deep dive</button>
+                  }
+                </>
+              ) : <div style={{ color:C.muted, fontSize:14 }}>Tap an opportunity to see details.</div>}
+            </div>
+          )}
+        </div>
+        {mob && showOverlay && selected && (
+          <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.55)', zIndex:200, overflowY:'auto', padding:16 }} onClick={e => { if(e.target===e.currentTarget) setShowOverlay(false) }}>
+            <div style={{ maxWidth:500, margin:'0 auto' }}>
+              <button onClick={() => setShowOverlay(false)} style={{ width:'100%', marginBottom:10, padding:'12px', background:C.card, border:`1px solid ${C.border}`, borderRadius:10, fontWeight:700, fontSize:14, cursor:'pointer', color:C.sub, appearance:'none' }}>← Back</button>
+              <div style={{ ...card() }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
+                  <span style={{ fontFamily:FM, fontWeight:900, fontSize:24 }}>{selected.ticker}</span>
+                  <ActionBadge action={selected.action} size="lg" />
+                </div>
+                {drillLoad ? <div style={{ color:C.muted }}>Analysing…</div> : drill ? <div style={{ color:C.sub, fontSize:13, lineHeight:1.7, whiteSpace:'pre-wrap' }}>{drill}</div> : <button onClick={() => deepDive(selected)} style={{ appearance:'none', background:C.accent, color:'#fff', border:'none', borderRadius:10, padding:'10px 18px', fontWeight:700, fontSize:14, cursor:'pointer' }}>▶ Deep dive</button>}
+              </div>
+            </div>
+          </div>
+        )}
+      </>
+    )
+  }
+
+  // ── renderGlobal ───────────────────────────────────────────────────────────
+  function renderGlobal() {
+    const d = data.global
+    if (!d) return null
+    const sentTone = d.sentiment==='RISK ON'?'green':d.sentiment==='RISK OFF'?'red':'grey'
+    const vixTone  = d.vixRegime==='HIGH_FEAR'?'red':d.vixRegime==='ELEVATED'?'amber':'green'
+    return (
+      <>
+        <div style={{ ...card({ marginBottom:14 }), display:'grid', gridTemplateColumns:mob?'1fr':'repeat(auto-fit,minmax(220px,1fr))', gap:12 }}>
+          <div>
+            <Pill tone={sentTone} size="lg" style={{ marginBottom:8 }}>{d.sentiment||'NEUTRAL'}</Pill>
+            <div style={{ color:C.sub, fontSize:14, marginTop:8 }}>{d.sentimentReason}</div>
+            {d.regimeAdvice && <div style={{ color:C.muted, fontSize:13, marginTop:6, fontStyle:'italic' }}>{d.regimeAdvice}</div>}
+          </div>
+          {d.vix && <div style={{ background:C.bg, borderRadius:12, padding:'12px 14px' }}><div style={LBL}>VIX</div><Pill tone={vixTone} size="lg">{d.vix} — {d.vixRegime}</Pill></div>}
+          {d.keyRisk && <div style={{ background:C.downBg, borderRadius:12, padding:'12px 14px' }}><div style={LBL}>KEY RISK</div><div style={{ color:C.down, fontSize:13, fontWeight:600 }}>{d.keyRisk}</div></div>}
+          {d.keyOpportunity && <div style={{ background:C.upBg, borderRadius:12, padding:'12px 14px' }}><div style={LBL}>KEY OPPORTUNITY</div><div style={{ color:C.up, fontSize:13, fontWeight:600 }}>{d.keyOpportunity}</div></div>}
+        </div>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))', gap:10, marginBottom:18 }}>
+          {(d.indices||[]).map((m,i) => (
+            <div key={i} style={{ ...card({ padding:14 }) }}>
+              <div style={LBL}>{m.name}</div>
+              <div style={{ color:C.text, fontFamily:FM, fontWeight:800, fontSize:19 }}>{m.value}</div>
+              <div style={{ color:m.direction==='up'?C.up:C.down, fontFamily:FM, fontWeight:700, fontSize:13, marginTop:2 }}>{m.change}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ display:'grid', gridTemplateColumns:mob?'1fr':'repeat(auto-fit,minmax(280px,1fr))', gap:18 }}>
+          <div style={card()}>
+            <div style={{ ...LBL, marginBottom:14 }}>SECTOR PERFORMANCE TODAY</div>
+            {(d.sectors||[]).map((s,i) => (
+              <div key={i} style={{ display:'flex', justifyContent:'space-between', padding:'8px 0', borderBottom:i<d.sectors.length-1?`1px solid ${C.border}`:'none' }}>
+                <span style={{ color:C.sub, fontSize:14 }}>{s.label}</span>
+                <span style={{ color:s.direction==='up'?C.up:C.down, fontFamily:FM, fontWeight:700, fontSize:14 }}>{s.change}</span>
+              </div>
+            ))}
+          </div>
+          <div style={card()}>
+            <div style={{ ...LBL, marginBottom:14 }}>COMMODITIES</div>
+            {(d.commodities||[]).map((c,i) => (
+              <div key={i} style={{ display:'flex', justifyContent:'space-between', padding:'8px 0', borderBottom:i<d.commodities.length-1?`1px solid ${C.border}`:'none' }}>
+                <span style={{ color:C.sub, fontSize:14 }}>{c.name}</span>
+                <span style={{ color:c.direction==='up'?C.up:C.down, fontFamily:FM, fontWeight:700 }}>{c.value} {c.change}</span>
+              </div>
+            ))}
+            {d.currencies?.length>0 && (<>
+              <div style={{ height:1, background:C.border, margin:'12px 0' }} />
+              <div style={{ ...LBL, marginBottom:10 }}>FX</div>
+              {d.currencies.map((c,i) => (
+                <div key={i} style={{ display:'flex', justifyContent:'space-between', padding:'8px 0' }}>
+                  <span style={{ color:C.sub, fontSize:14, fontWeight:600 }}>{c.pair}</span>
+                  <span style={{ color:C.text, fontFamily:FM, fontWeight:700 }}>{c.value} <span style={{ color:C.muted, fontSize:12 }}>{c.change}</span></span>
+                </div>
+              ))}
+            </>)}
+          </div>
+          {d.macroEvents?.length>0 && (
+            <div style={card()}>
+              <div style={{ ...LBL, marginBottom:14 }}>MACRO EVENTS</div>
+              {d.macroEvents.map((e,i) => (
+                <div key={i} style={{ marginBottom:12 }}>
+                  <div style={{ color:C.text, fontWeight:700, fontSize:14 }}>{e.event}</div>
+                  {e.detail && <div style={{ color:C.muted, fontSize:13, marginTop:3 }}>{e.detail}</div>}
+                  <div style={{ marginTop:6 }}><Pill tone={e.impact==='HIGH'?'red':e.impact==='MEDIUM'?'amber':'grey'} size="sm">{e.impact}</Pill></div>
+                  {i<d.macroEvents.length-1 && <div style={{ height:1, background:C.border, margin:'12px 0' }} />}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </>
+    )
+  }
+
+  // ── renderRisk ─────────────────────────────────────────────────────────────
+  function renderRisk() {
+    const d = data.risk
+    if (!d) return null
+    const riskTone = d.overallRisk==='LOW'?'green':d.overallRisk==='MODERATE'?'amber':'red'
+    const vixTone  = d.vixRegime==='HIGH_FEAR'?'red':d.vixRegime==='ELEVATED'?'amber':'green'
+    return (
+      <>
+        <div style={{ ...card({ marginBottom:14, padding:'14px 18px' }), display:'flex', flexWrap:'wrap', gap:10, alignItems:'center' }}>
+          <Pill tone={riskTone} size="lg">RISK: {d.overallRisk||'MODERATE'}</Pill>
+          {d.vix && <Pill tone={vixTone} size="md">VIX {d.vix} · {d.vixRegime}</Pill>}
+          {d.cashSuggestion && <Pill tone="amber" size="md">💰 Hold {d.cashSuggestion} cash</Pill>}
+          {d.positionSizingAdvice && <span style={{ color:C.sub, fontSize:14 }}>{d.positionSizingAdvice}</span>}
+        </div>
+        {(d.bestEnvironmentFor?.length||d.hedgeIdeas?.length) && (
+          <div style={{ display:'grid', gridTemplateColumns:mob?'1fr':'1fr 1fr', gap:14, marginBottom:18 }}>
+            {d.bestEnvironmentFor?.length>0 && <div style={{ ...card({ borderLeft:`3px solid ${C.up}` }) }}><div style={{ ...LBL, marginBottom:10 }}>✅ WORKS BEST NOW</div>{d.bestEnvironmentFor.map((t,i)=><div key={i} style={{ color:C.up, fontSize:14, fontWeight:600, marginBottom:6 }}>• {t}</div>)}</div>}
+            {d.hedgeIdeas?.length>0 && <div style={{ ...card({ borderLeft:`3px solid ${C.amber}` }) }}><div style={{ ...LBL, marginBottom:10 }}>🛡 HEDGE IDEAS</div>{d.hedgeIdeas.map((h,i)=><div key={i} style={{ color:C.sub, fontSize:14, marginBottom:6 }}>• {h}</div>)}</div>}
+          </div>
+        )}
+        <div style={{ display:'grid', gridTemplateColumns:mob?'1fr':'repeat(auto-fit,minmax(300px,1fr))', gap:18 }}>
+          {[['⚠️ Macro Risks',d.macroRisks,r=>r.risk,r=>r.detail,r=>r.severity,r=>r.action],['🌍 Geopolitical',d.geopoliticalRisks,r=>r.risk,r=>r.detail,r=>r.severity,r=>r.action],['📊 Sector Risks',d.sectorRisks,r=>r.sector,r=>r.risk,r=>r.severity,r=>r.action]].map(([title,items,tFn,dFn,sFn,aFn])=>(
+            <div key={title} style={card()}>
+              <div style={{ ...LBL, marginBottom:14 }}>{title}</div>
+              {!(items?.length) && <div style={{ color:C.muted, fontSize:13 }}>None identified</div>}
+              {(items||[]).map((r,i)=>(
+                <div key={i} style={{ marginBottom:12 }}>
+                  <div style={{ color:C.text, fontWeight:700, fontSize:14 }}>{tFn(r)}</div>
+                  <div style={{ color:C.muted, fontSize:13, marginTop:3 }}>{dFn(r)}</div>
+                  {aFn(r) && <div style={{ color:C.accent, fontSize:13, marginTop:4, fontWeight:600 }}>→ {aFn(r)}</div>}
+                  <div style={{ marginTop:6 }}><Pill tone={sFn(r)==='HIGH'?'red':sFn(r)==='MEDIUM'?'amber':'grey'} size="sm">{sFn(r)}</Pill></div>
+                  {i<(items?.length||0)-1 && <div style={{ height:1, background:C.border, margin:'12px 0' }} />}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </>
+    )
+  }
+
+  // ── renderPortfolio ────────────────────────────────────────────────────────
+  function renderPortfolio() {
+    if (!portfolioUnlocked) {
+      return (
+        <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', minHeight:400, padding:24 }}>
+          <div style={{ ...card({ maxWidth:380, width:'100%', textAlign:'center', padding:36 }) }}>
+            <div style={{ fontSize:40, marginBottom:16 }}>🔒</div>
+            <div style={{ color:C.text, fontWeight:800, fontSize:20, marginBottom:8 }}>Portfolio is protected</div>
+            <div style={{ color:C.muted, fontSize:14, marginBottom:24, lineHeight:1.6 }}>Enter your password to continue.</div>
+            <input type="password" value={passwordInput} onChange={e=>{setPasswordInput(e.target.value);setPasswordError(false)}} onKeyDown={e=>e.key==='Enter'&&handlePasswordSubmit()} placeholder="Enter password" autoFocus style={{ width:'100%', padding:'12px 16px', borderRadius:10, border:`2px solid ${passwordError?C.down:C.border}`, fontSize:16, fontFamily:FM, outline:'none', background:C.bg, marginBottom:12, boxSizing:'border-box', textAlign:'center', letterSpacing:4 }} />
+            {passwordError && <div style={{ color:C.down, fontSize:13, marginBottom:12, fontWeight:600 }}>Incorrect password.</div>}
+            <button onClick={handlePasswordSubmit} style={{ appearance:'none', background:C.accent, color:'#fff', border:'none', borderRadius:10, padding:'12px 24px', fontWeight:800, fontSize:15, cursor:'pointer', width:'100%' }}>Unlock Portfolio</button>
+          </div>
+        </div>
+      )
+    }
+    const result = portfolioResult
+    const actionColor = a => a==='BUY MORE'?C.up:a==='HOLD'?C.accent:a==='TRIM'?C.amber:C.down
+    const actionBg    = a => a==='BUY MORE'?C.upBg:a==='HOLD'?C.accentBg:a==='TRIM'?C.amberBg:C.downBg
+    return (
+      <div>
+        <div style={{ ...card({ marginBottom:18 }) }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:4 }}>
+            <div style={{ color:C.text, fontWeight:800, fontSize:18 }}>💼 My Holdings</div>
+            <button onClick={()=>{setPortfolioUnlocked(false);setPasswordInput('');try{sessionStorage.removeItem('catalyst_portfolio_auth')}catch{}}} style={{ appearance:'none', background:'none', border:`1px solid ${C.border}`, borderRadius:8, padding:'6px 12px', color:C.muted, fontSize:12, cursor:'pointer', fontWeight:600 }}>🔒 Lock</button>
+          </div>
+          <div style={{ color:C.muted, fontSize:13, marginBottom:18 }}>Enter each stock you own, what you paid, and how many shares.</div>
+          <div style={{ display:'grid', gridTemplateColumns: mob ? '1fr 1fr' : '2fr 1.5fr 1fr 1fr auto', gap:10, marginBottom:14, alignItems:'end' }}>
+            <div><div style={LBL}>TICKER</div><input value={newTicker} onChange={e=>setNewTicker(e.target.value.toUpperCase())} onKeyDown={e=>e.key==='Enter'&&addHolding()} placeholder="e.g. NVDA" style={{ width:'100%', padding:'10px 12px', borderRadius:8, border:`1.5px solid ${C.border}`, fontSize:15, fontFamily:FM, fontWeight:700, outline:'none', boxSizing:'border-box', background:C.bg }} /></div>
+            <div><div style={LBL}>PRICE PAID ($)</div><input value={newBuyPrice} onChange={e=>setNewBuyPrice(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addHolding()} placeholder="450.00" type="number" style={{ width:'100%', padding:'10px 12px', borderRadius:8, border:`1.5px solid ${C.border}`, fontSize:15, fontFamily:FM, outline:'none', boxSizing:'border-box', background:C.bg }} /></div>
+            <div><div style={LBL}>SHARES</div><input value={newShares} onChange={e=>setNewShares(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addHolding()} placeholder="10" type="number" style={{ width:'100%', padding:'10px 12px', borderRadius:8, border:`1.5px solid ${C.border}`, fontSize:15, fontFamily:FM, outline:'none', boxSizing:'border-box', background:C.bg }} /></div>
+            <div><div style={LBL}>CURRENCY</div><select value={newCurrency} onChange={e=>setNewCurrency(e.target.value)} style={{ width:'100%', padding:'10px 12px', borderRadius:8, border:`1.5px solid ${C.border}`, fontSize:14, fontFamily:FB, outline:'none', background:C.bg }}><option>USD</option><option>GBP</option><option>EUR</option></select></div>
+            <button onClick={addHolding} style={{ appearance:'none', background:C.accent, color:'#fff', border:'none', borderRadius:8, padding:'11px 18px', fontWeight:700, fontSize:14, cursor:'pointer' }}>+ Add</button>
+          </div>
+          {holdings.length > 0 && (
+            <div style={{ display:'grid', gap:8, marginBottom:18 }}>
+              {holdings.map((h,i) => {
+                const r = result?.enriched?.find(e=>e.ticker===h.ticker)
+                const ai = result?.holdings?.find(x=>x.ticker===h.ticker)
+                const gainPct = r?.gainPct
+                return (
+                  <div key={i} style={{ display:'flex', alignItems:'center', gap:10, background: gainPct!=null?(gainPct>=0?C.upBg:C.downBg):C.bg, borderRadius:10, padding:'10px 14px', flexWrap:'wrap' }}>
+                    <span style={{ fontFamily:FM, fontWeight:900, fontSize:17, color:C.text, minWidth:60 }}>{h.ticker}</span>
+                    <span style={{ color:C.muted, fontSize:13 }}>{h.currency}{h.buyPrice} × {h.shares}</span>
+                    {r?.livePrice && <><span style={{ color:C.sub, fontSize:13 }}>→ ${r.livePrice.toFixed(2)}</span><span style={{ color:gainPct>=0?C.up:C.down, fontWeight:800, fontSize:14, fontFamily:FM }}>{gainPct>=0?'+':''}{gainPct?.toFixed(1)}%</span></>}
+                    {ai && <span style={{ background:actionBg(ai.action), color:actionColor(ai.action), borderRadius:8, padding:'4px 12px', fontWeight:800, fontSize:13 }}>{ai.action}</span>}
+                    <button onClick={()=>removeHolding(h.ticker)} style={{ marginLeft:'auto', appearance:'none', background:'none', border:'none', color:C.muted, cursor:'pointer', fontSize:18, padding:'0 4px' }}>×</button>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+          {holdings.length > 0 && <button onClick={analysePortfolio} disabled={portfolioLoading} style={{ appearance:'none', background:portfolioLoading?C.border:C.accent, color:portfolioLoading?C.muted:'#fff', border:'none', borderRadius:10, padding:'12px 24px', fontWeight:800, fontSize:15, cursor:portfolioLoading?'not-allowed':'pointer', width:mob?'100%':'auto' }}>{portfolioLoading?'⟳ Analysing…':'⚡ Analyse my portfolio'}</button>}
+          {portfolioError && <div style={{ color:C.down, fontSize:13, marginTop:12 }}>Error: {portfolioError}</div>}
+        </div>
+        {result && (
+          <>
+            {result.portfolioSummary && <div style={{ ...card({ marginBottom:14, borderLeft:`4px solid ${C.gold}` }) }}><div style={{ color:C.gold, fontWeight:800, fontSize:13, marginBottom:10 }}>📊 PORTFOLIO SUMMARY</div><div style={{ color:C.sub, fontSize:15, lineHeight:1.6, marginBottom:10 }}>{result.portfolioSummary}</div>{result.cashSuggestion && <Pill tone="amber" size="md">💰 {result.cashSuggestion}</Pill>}</div>}
+            <div style={{ display:'grid', gridTemplateColumns:mob?'1fr':'repeat(auto-fill,minmax(340px,1fr))', gap:14 }}>
+              {(result.holdings||[]).map((h,i)=>{
+                const enriched = result.enriched?.find(e=>e.ticker===h.ticker)
+                const gainPct = parseFloat(h.gainLossPct)||enriched?.gainPct
+                return (
+                  <div key={i} style={{ ...card({ borderLeft:`5px solid ${actionColor(h.action)}` }) }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:12, flexWrap:'wrap', gap:8 }}>
+                      <div><span style={{ fontFamily:FM, fontWeight:900, fontSize:24, color:C.text }}>{h.ticker}</span>{h.urgency==='NOW'&&<span style={{ marginLeft:8, fontSize:11, fontWeight:700, color:C.down }}>🔴 ACT NOW</span>}{h.urgency==='THIS WEEK'&&<span style={{ marginLeft:8, fontSize:11, fontWeight:700, color:C.amber }}>🟡 THIS WEEK</span>}</div>
+                      <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                        {gainPct!=null&&<span style={{ color:gainPct>=0?C.up:C.down, fontFamily:FM, fontWeight:800, fontSize:16 }}>{gainPct>=0?'+':''}{typeof gainPct==='number'?gainPct.toFixed(1):gainPct}%</span>}
+                        <span style={{ background:actionBg(h.action), color:actionColor(h.action), borderRadius:10, padding:'6px 14px', fontWeight:800, fontSize:14 }}>{h.action}</span>
+                      </div>
+                    </div>
+                    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12 }}>
+                      {[['You Paid',h.buyPrice],['Price Now',h.currentPrice||enriched?.livePriceFormatted]].map(([l,v])=>v?<div key={l} style={{ background:C.bg, borderRadius:8, padding:'8px 12px' }}><div style={LBL}>{l}</div><div style={{ ...VAL, fontSize:14 }}>{v}</div></div>:null)}
+                      {h.action==='BUY MORE'&&h.entryIfBuyMore&&<div style={{ background:C.upBg, borderRadius:8, padding:'8px 12px' }}><div style={LBL}>BUY MORE AT</div><div style={{ color:C.up, fontWeight:800, fontSize:15 }}>{h.entryIfBuyMore}</div></div>}
+                      {(h.action==='TRIM'||h.action==='SELL ALL')&&h.exitIfSell&&<div style={{ background:C.amberBg, borderRadius:8, padding:'8px 12px' }}><div style={LBL}>{h.action==='TRIM'?'SELL SOME AT':'SELL ALL AT'}</div><div style={{ color:C.amber, fontWeight:800, fontSize:15 }}>{h.exitIfSell}</div></div>}
+                    </div>
+                    <div style={{ color:C.sub, fontSize:14, lineHeight:1.65, marginBottom:enriched?.earningsDate?10:0 }}>{h.recommendation}</div>
+                    {enriched?.earningsDate&&enriched.earningsTradingDaysAway>=0&&<Pill tone={enriched.earningsTradingDaysAway<=10?'amber':'blue'} size="sm">📅 Earnings in {enriched.earningsTradingDaysAway}d · {ukDate(enriched.earningsDate)}</Pill>}
+                    {h.confidence&&<div style={{ marginTop:10 }}><Pill tone={h.confidence==='HIGH'?'green':h.confidence==='MEDIUM'?'amber':'grey'} size="sm">{h.confidence} confidence</Pill></div>}
+                  </div>
+                )
+              })}
+            </div>
+          </>
+        )}
+        {!holdings.length && <div style={{ ...card({ textAlign:'center', padding:48 }) }}><div style={{ fontSize:40, marginBottom:12 }}>💼</div><div style={{ color:C.text, fontWeight:700, fontSize:18, marginBottom:8 }}>No holdings yet</div><div style={{ color:C.muted, fontSize:14, maxWidth:340, margin:'0 auto' }}>Add your first stock above — enter the ticker, price paid and shares, then click Analyse.</div></div>}
+      </div>
+    )
+  }
+
+  // ── renderT212 ─────────────────────────────────────────────────────────────
+  function renderT212() {
+    const actionColor = a => a==='BUY MORE'?C.up:a==='HOLD'?C.accent:a==='TRIM'?C.amber:C.down
+    const actionBg    = a => a==='BUY MORE'?C.upBg:a==='HOLD'?C.accentBg:a==='TRIM'?C.amberBg:C.downBg
+    const healthColor = h => h==='STRONG'?C.up:h==='GOOD'?C.accent:h==='CAUTION'?C.amber:C.down
+
+    if (!t212Unlocked) {
+      return (
+        <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', minHeight:400, padding:24 }}>
+          <div style={{ ...card({ maxWidth:400, width:'100%', textAlign:'center', padding:36 }) }}>
+            <div style={{ fontSize:40, marginBottom:16 }}>🏦</div>
+            <div style={{ color:C.text, fontWeight:800, fontSize:20, marginBottom:8 }}>T212 Live Portfolio</div>
+            <div style={{ color:C.muted, fontSize:14, marginBottom:24, lineHeight:1.6 }}>Enter your password to view live positions.</div>
+            <input type="password" value={t212PwInput} onChange={e=>{setT212PwInput(e.target.value);setT212PwError(false)}} onKeyDown={e=>{if(e.key==='Enter'){if(t212PwInput===PORTFOLIO_PASSWORD){setT212Unlocked(true);setT212PwError(false);try{sessionStorage.setItem('catalyst_t212_auth','true')}catch{}}else{setT212PwError(true);setT212PwInput('')}}}} placeholder="Enter password" autoFocus style={{ width:'100%', padding:'12px 16px', borderRadius:10, border:`2px solid ${t212PwError?C.down:C.border}`, fontSize:16, fontFamily:FM, outline:'none', background:C.bg, marginBottom:12, boxSizing:'border-box', textAlign:'center', letterSpacing:4 }} />
+            {t212PwError && <div style={{ color:C.down, fontSize:13, marginBottom:12, fontWeight:600 }}>Incorrect password.</div>}
+            <button onClick={()=>{if(t212PwInput===PORTFOLIO_PASSWORD){setT212Unlocked(true);try{sessionStorage.setItem('catalyst_t212_auth','true')}catch{}}else{setT212PwError(true);setT212PwInput('')}}} style={{ appearance:'none', background:C.accent, color:'#fff', border:'none', borderRadius:10, padding:'12px 24px', fontWeight:800, fontSize:15, cursor:'pointer', width:'100%' }}>Unlock</button>
+          </div>
+        </div>
+      )
+    }
+
+    return (
+      <div>
+        <div style={{ ...card({ marginBottom:14, padding:'14px 18px' }), display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:10 }}>
+          <div>
+            <div style={{ color:C.text, fontWeight:800, fontSize:18 }}>🏦 Trading 212 Live Portfolio</div>
+            <div style={{ color:C.muted, fontSize:12, marginTop:2 }}>{t212Data ? `${t212Data.env||'LIVE'} · Updated ${new Date(t212Data.fetchedAt).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}` : 'Not loaded'}</div>
+          </div>
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+            <button onClick={fetchT212} disabled={t212Loading} style={{ appearance:'none', background:C.accent, color:'#fff', border:'none', borderRadius:8, padding:'9px 16px', fontWeight:700, fontSize:13, cursor:'pointer' }}>{t212Loading?'⟳ Loading…':'⟳ Refresh'}</button>
+            {t212Data && !t212AnalysisLoad && <button onClick={analyseT212} style={{ appearance:'none', background:C.up, color:'#fff', border:'none', borderRadius:8, padding:'9px 16px', fontWeight:700, fontSize:13, cursor:'pointer' }}>⚡ Analyse</button>}
+            {t212AnalysisLoad && <span style={{ color:C.muted, fontSize:13, padding:'9px 0' }}>⟳ Analysing…</span>}
+            <button onClick={()=>{setT212Unlocked(false);setT212PwInput('');try{sessionStorage.removeItem('catalyst_t212_auth')}catch{}}} style={{ appearance:'none', background:'none', border:`1px solid ${C.border}`, borderRadius:8, padding:'9px 12px', color:C.muted, fontSize:12, cursor:'pointer', fontWeight:600 }}>🔒 Lock</button>
+          </div>
+        </div>
+
+        {t212Error?.includes('credentials not configured') && (
+          <div style={{ ...card({ borderLeft:`4px solid ${C.amber}`, marginBottom:14 }) }}>
+            <div style={{ color:C.amber, fontWeight:800, fontSize:15, marginBottom:8 }}>⚙️ Setup required</div>
+            <div style={{ color:C.sub, fontSize:14, lineHeight:1.85 }}>
+              Trading 212 requires two credentials — a Key and a Secret.<br/><br/>
+              <strong>Step 1:</strong> T212 app → Settings → API (Beta) → Generate API key<br/>
+              <strong>Step 2:</strong> Copy BOTH the Key and Secret (secret shown only once)<br/>
+              <strong>Step 3:</strong> Vercel → Environment Variables:<br/>
+              <code style={{ background:C.bg, padding:'2px 6px', borderRadius:4, display:'block', margin:'4px 0' }}>TRADING212_API_KEY = your key</code>
+              <code style={{ background:C.bg, padding:'2px 6px', borderRadius:4, display:'block', margin:'4px 0' }}>TRADING212_API_SECRET = your secret</code>
+              <strong>Step 4:</strong> Redeploy
+            </div>
+          </div>
+        )}
+
+        {t212Error && !t212Error.includes('credentials') && <div style={{ ...card({ borderLeft:`4px solid ${C.down}`, marginBottom:14 }), padding:'14px 18px' }}><div style={{ color:C.down, fontWeight:700 }}>Error: {t212Error}</div></div>}
+
+        {!t212Data && !t212Loading && !t212Error && (
+          <div style={{ ...card({ textAlign:'center', padding:48 }) }}>
+            <div style={{ fontSize:36, marginBottom:12 }}>🏦</div>
+            <div style={{ color:C.text, fontWeight:700, fontSize:18, marginBottom:8 }}>Ready to connect</div>
+            <button onClick={fetchT212} style={{ appearance:'none', background:C.accent, color:'#fff', border:'none', borderRadius:10, padding:'12px 24px', fontWeight:800, fontSize:15, cursor:'pointer' }}>Load my T212 portfolio</button>
+          </div>
+        )}
+
+        {t212Loading && <div style={{ ...card({ textAlign:'center', padding:40 }) }}><div style={{ color:C.muted, fontSize:14 }}>⟳ Fetching positions from Trading 212…</div></div>}
+
+        {t212Data?.cash && (
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))', gap:10, marginBottom:14 }}>
+            {[['Free Cash',`£${t212Data.cash.free}`,C.up],['Invested',`£${t212Data.cash.invested}`,C.accent],['Total Value',`£${t212Data.cash.total}`,C.text],['Total P&L',`£${t212Data.cash.ppl}`,parseFloat(t212Data.cash.ppl)>=0?C.up:C.down]].map(([lbl,val,color])=>(
+              <div key={lbl} style={{ ...card({ padding:14 }) }}><div style={LBL}>{lbl}</div><div style={{ color, fontFamily:FM, fontWeight:800, fontSize:20 }}>{val}</div></div>
+            ))}
+          </div>
+        )}
+
+        {t212Result && (
+          <div style={{ ...card({ marginBottom:14, borderLeft:`4px solid ${healthColor(t212Result.portfolioHealth)}` }) }}>
+            <div style={{ display:'flex', gap:10, alignItems:'center', marginBottom:12, flexWrap:'wrap' }}>
+              <Pill tone={t212Result.portfolioHealth==='STRONG'?'green':t212Result.portfolioHealth==='GOOD'?'blue':t212Result.portfolioHealth==='CAUTION'?'amber':'red'} size="lg">{t212Result.portfolioHealth||'ANALYSED'}</Pill>
+              {t212Result.topAction && <span style={{ color:C.sub, fontSize:14, fontWeight:600 }}>→ {t212Result.topAction}</span>}
+            </div>
+            {t212Result.overallSummary && <div style={{ color:C.sub, fontSize:14, lineHeight:1.6, marginBottom:8 }}>{t212Result.overallSummary}</div>}
+            {t212Result.cashAdvice && <div style={{ color:C.muted, fontSize:13 }}>{t212Result.cashAdvice}</div>}
+          </div>
+        )}
+
+        {t212Data?.positions?.length > 0 && (
+          <>
+            <div style={{ display:'flex', gap:8, marginBottom:14, alignItems:'center' }}>
+              <span style={{ color:C.muted, fontSize:13, fontWeight:600 }}>View:</span>
+              {['pies','stocks'].map(mode => (
+                <button key={mode} onClick={() => setT212ViewMode(mode)} style={{ appearance:'none', border:`1.5px solid ${t212ViewMode===mode?C.accent:C.border}`, background:t212ViewMode===mode?C.accent:C.card, color:t212ViewMode===mode?'#fff':C.sub, borderRadius:8, padding:'7px 14px', fontWeight:700, fontSize:13, cursor:'pointer' }}>
+                  {mode==='pies'?'🥧 By Pie':'📋 All Stocks'}
+                </button>
+              ))}
+            </div>
+
+            {t212ViewMode === 'stocks' && (
+              <div style={{ display:'grid', gridTemplateColumns:mob?'1fr':'repeat(auto-fill,minmax(300px,1fr))', gap:12, marginBottom:18 }}>
+                {t212Data.positions.map((p,i) => {
+                  const ai = t212Result?.holdings?.find(h=>h.ticker===p.ticker)
+                  return (
+                    <div key={i} style={{ ...card({ borderLeft:`5px solid ${ai?actionColor(ai.action):(p.gainPct>=0?C.up:C.down)}` }) }}>
+                      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:10 }}>
+                        <div><span style={{ fontFamily:FM, fontWeight:900, fontSize:22, color:C.text }}>{p.ticker}</span><span style={{ color:C.muted, fontSize:12, marginLeft:8 }}>{p.quantity} shares</span>{p.pieName&&<span style={{ color:C.accent, fontSize:11, marginLeft:8 }}>🥧 {p.pieName}</span>}</div>
+                        <div style={{ display:'flex', gap:6, alignItems:'center' }}><span style={{ color:p.gainPct>=0?C.up:C.down, fontFamily:FM, fontWeight:800, fontSize:15 }}>{p.gainPct>=0?'+':''}{p.gainPct}%</span>{ai&&<span style={{ background:actionBg(ai.action), color:actionColor(ai.action), borderRadius:8, padding:'4px 10px', fontWeight:800, fontSize:12 }}>{ai.action}</span>}</div>
+                      </div>
+                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8, marginBottom:10 }}>
+                        {[['Bought',`£${p.averagePrice?.toFixed(2)}`],['Now',`£${p.currentPrice?.toFixed(2)}`],['P&L',`${p.ppl>=0?'+':''}£${p.ppl}`]].map(([l,v])=>(
+                          <div key={l} style={{ background:C.bg, borderRadius:8, padding:'8px 10px' }}><div style={{ ...LBL, fontSize:10 }}>{l}</div><div style={{ fontFamily:FM, fontWeight:700, fontSize:14 }}>{v}</div></div>
+                        ))}
+                      </div>
+                      {ai?.recommendation && <div style={{ color:C.sub, fontSize:13, lineHeight:1.6 }}>{ai.recommendation}</div>}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {t212ViewMode === 'pies' && (() => {
+              const pieGroups = {}, directHoldings = []
+              t212Data.positions.forEach(p => { if(p.pieName){if(!pieGroups[p.pieName])pieGroups[p.pieName]=[];pieGroups[p.pieName].push(p)}else directHoldings.push(p) })
+              const pieData = {}
+              ;(t212Data.pies||[]).forEach(pie=>{pieData[pie.name]=pie})
+
+              const StockCard = ({p}) => {
+                const ai = t212Result?.holdings?.find(h=>h.ticker===p.ticker)
+                return (
+                  <div style={{ background:C.bg, borderRadius:12, padding:14, borderLeft:`4px solid ${ai?actionColor(ai.action):(p.gainPct>=0?C.up:C.down)}` }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:8, flexWrap:'wrap', gap:6 }}>
+                      <div><span style={{ fontFamily:FM, fontWeight:900, fontSize:16, color:C.text }}>{p.ticker}</span><span style={{ color:C.muted, fontSize:11, marginLeft:6 }}>{p.quantity?.toFixed?.(4)||p.quantity}</span></div>
+                      <div style={{ display:'flex', gap:6, alignItems:'center' }}><span style={{ color:p.gainPct>=0?C.up:C.down, fontFamily:FM, fontWeight:800, fontSize:13 }}>{p.gainPct>=0?'+':''}{p.gainPct}%</span>{ai&&<span style={{ background:actionBg(ai.action), color:actionColor(ai.action), borderRadius:6, padding:'3px 8px', fontWeight:800, fontSize:11 }}>{ai.action}</span>}</div>
+                    </div>
+                    <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:6, marginBottom:ai?.recommendation?8:0 }}>
+                      {[['Bought',`£${p.averagePrice?.toFixed(2)}`],['Now',`£${p.currentPrice?.toFixed(2)}`],['Value',`£${p.totalValue?.toFixed(2)}`]].map(([l,v])=>(
+                        <div key={l} style={{ background:C.card, borderRadius:6, padding:'6px 8px' }}><div style={{ ...LBL, fontSize:9 }}>{l}</div><div style={{ fontFamily:FM, fontWeight:700, fontSize:12 }}>{v}</div></div>
+                      ))}
+                    </div>
+                    {ai?.recommendation && <div style={{ color:C.sub, fontSize:12, lineHeight:1.5 }}>{ai.recommendation}</div>}
+                  </div>
+                )
+              }
+
+              return (
+                <div style={{ display:'grid', gap:16, marginBottom:18 }}>
+                  {Object.entries(pieGroups).map(([pieName, stocks]) => {
+                    const pd = pieData[pieName]
+                    const isOpen = expandedPies[pieName] !== false
+                    const totalPPL = pd?.ppl ?? stocks.reduce((s,p)=>s+p.ppl,0)
+                    const totalVal = pd?.totalValue ?? stocks.reduce((s,p)=>s+p.totalValue,0)
+                    const gainPct  = pd?.gainPct ?? (stocks.reduce((s,p)=>s+p.gainPct,0)/stocks.length)
+                    const pplColor = totalPPL>=0?C.up:C.down
+                    const stockActions = stocks.map(p=>t212Result?.holdings?.find(h=>h.ticker===p.ticker)?.action).filter(Boolean)
+                    const pieVerdict = stockActions.some(a=>a==='SELL ALL')?'SELL ALL':stockActions.some(a=>a==='TRIM')?'TRIM':stockActions.some(a=>a==='BUY MORE')?'BUY MORE':'HOLD'
+                    return (
+                      <div key={pieName} style={{ ...card({ padding:0, overflow:'hidden' }) }}>
+                        <button onClick={()=>setExpandedPies(prev=>({...prev,[pieName]:!isOpen}))} style={{ appearance:'none', width:'100%', background:'none', border:'none', cursor:'pointer', padding:'16px 18px', textAlign:'left' }}>
+                          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:10 }}>
+                            <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                              <span style={{ fontSize:20 }}>🥧</span>
+                              <div><div style={{ color:C.text, fontWeight:800, fontSize:17 }}>{pieName}</div><div style={{ color:C.muted, fontSize:12, marginTop:2 }}>{stocks.length} stocks</div></div>
+                            </div>
+                            <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap' }}>
+                              <div style={{ textAlign:'right' }}>
+                                <div style={{ color:C.text, fontFamily:FM, fontWeight:800, fontSize:18 }}>£{totalVal?.toFixed(2)}</div>
+                                <div style={{ color:pplColor, fontFamily:FM, fontWeight:700, fontSize:13 }}>{totalPPL>=0?'+':''}£{totalPPL?.toFixed(2)} ({gainPct>=0?'+':''}{gainPct?.toFixed(1)}%)</div>
+                              </div>
+                              {t212Result && <span style={{ background:actionBg(pieVerdict), color:actionColor(pieVerdict), borderRadius:8, padding:'6px 12px', fontWeight:800, fontSize:13 }}>{pieVerdict}</span>}
+                              <span style={{ color:C.muted, fontSize:18 }}>{isOpen?'▲':'▼'}</span>
+                            </div>
+                          </div>
+                        </button>
+                        {isOpen && (
+                          <div style={{ padding:'0 14px 14px' }}>
+                            {t212Result && <div style={{ background:C.bg, borderRadius:10, padding:'10px 14px', marginBottom:12, fontSize:13, color:C.sub }}><strong>Summary:</strong> {stockActions.filter(a=>a==='BUY MORE').length} BUY MORE · {stockActions.filter(a=>a==='HOLD').length} HOLD · {stockActions.filter(a=>a==='TRIM').length} TRIM · {stockActions.filter(a=>a==='SELL ALL').length} SELL</div>}
+                            <div style={{ display:'grid', gridTemplateColumns:mob?'1fr':'repeat(auto-fill,minmax(240px,1fr))', gap:10 }}>
+                              {stocks.map((p,i)=><StockCard key={i} p={p}/>)}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                  {directHoldings.length>0 && (
+                    <div style={{ ...card({ padding:0, overflow:'hidden' }) }}>
+                      <button onClick={()=>setExpandedPies(prev=>({...prev,'__direct__':!(prev['__direct__']!==false)}))} style={{ appearance:'none', width:'100%', background:'none', border:'none', cursor:'pointer', padding:'16px 18px', textAlign:'left' }}>
+                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                          <div style={{ display:'flex', alignItems:'center', gap:10 }}><span style={{ fontSize:20 }}>📋</span><div><div style={{ color:C.text, fontWeight:800, fontSize:17 }}>Direct Holdings</div><div style={{ color:C.muted, fontSize:12 }}>{directHoldings.length} stocks</div></div></div>
+                          <div style={{ display:'flex', gap:10, alignItems:'center' }}>
+                            <div style={{ textAlign:'right' }}><div style={{ color:C.text, fontFamily:FM, fontWeight:800, fontSize:18 }}>£{directHoldings.reduce((s,p)=>s+p.totalValue,0).toFixed(2)}</div></div>
+                            <span style={{ color:C.muted, fontSize:18 }}>{expandedPies['__direct__']===false?'▼':'▲'}</span>
+                          </div>
+                        </div>
+                      </button>
+                      {expandedPies['__direct__']!==false && <div style={{ padding:'0 14px 14px', display:'grid', gridTemplateColumns:mob?'1fr':'repeat(auto-fill,minmax(240px,1fr))', gap:10 }}>{directHoldings.map((p,i)=><div key={i} style={{ ...card(), borderLeft:`4px solid ${p.gainPct>=0?C.up:C.down}` }}><div style={{ display:'flex', justifyContent:'space-between' }}><span style={{ fontFamily:FM, fontWeight:900, fontSize:18 }}>{p.ticker}</span><span style={{ color:p.gainPct>=0?C.up:C.down, fontWeight:800 }}>{p.gainPct>=0?'+':''}{p.gainPct}%</span></div><div style={{ color:C.muted, fontSize:12, marginTop:4 }}>£{p.averagePrice?.toFixed(2)} → £{p.currentPrice?.toFixed(2)} · P&L {p.ppl>=0?'+':''}£{p.ppl}</div></div>)}</div>}
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
+          </>
+        )}
+
+        {t212Data?.pendingOrders?.length > 0 && (
+          <div style={{ ...card({ marginBottom:14 }) }}>
+            <div style={{ ...LBL, marginBottom:12 }}>⏳ PENDING ORDERS</div>
+            <div style={{ display:'grid', gap:8 }}>
+              {t212Data.pendingOrders.map((o,i) => {
+                const advice = t212Result?.pendingOrdersAdvice?.find(a=>a.ticker===o.ticker)
+                const verdictColor = advice?.verdict==='KEEP'?C.up:advice?.verdict==='CANCEL'?C.down:C.amber
+                return (
+                  <div key={i} style={{ display:'flex', gap:10, alignItems:'center', background:C.bg, borderRadius:8, padding:'10px 14px', flexWrap:'wrap' }}>
+                    <span style={{ background:o.side==='BUY'?C.upBg:C.amberBg, color:o.side==='BUY'?C.up:C.amber, borderRadius:6, padding:'3px 8px', fontWeight:800, fontSize:12 }}>{o.side}</span>
+                    <span style={{ fontFamily:FM, fontWeight:800, fontSize:15 }}>{o.ticker}</span>
+                    <span style={{ color:C.sub, fontSize:13 }}>{o.quantity} shares @ £{o.limitPrice}</span>
+                    {advice && <><span style={{ color:verdictColor, fontWeight:800, fontSize:13 }}>{advice.verdict}</span><span style={{ color:C.muted, fontSize:12 }}>{advice.reason}</span></>}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // ── renderContent ──────────────────────────────────────────────────────────
+  function renderContent() {
+    if (activeTab === 'portfolio') return renderPortfolio()
+    if (activeTab === 't212')      return renderT212()
+
+    const isLoad = loading[activeTab]
+    const err    = errors[activeTab]
+    const d      = data[activeTab]
+
+    if (isLoad) return (
+      <div style={{ ...card({ minHeight:320 }), display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:14 }}>
+        <div style={{ width:44, height:44, border:`3px solid ${C.border}`, borderTop:`3px solid ${C.accent}`, borderRadius:'50%', animation:'spin 0.8s linear infinite' }} />
+        <div style={{ color:C.text, fontWeight:700, fontSize:16 }}>{loadingStep || (activeTab==='opportunities'?'Running full analysis…':'Loading…')}</div>
+        {activeTab==='opportunities' && (
+          <div style={{ display:'flex', flexDirection:'column', gap:6, alignItems:'center', marginTop:4 }}>
+            {[['Fetching live prices…','~3s',loadingStep!=='Fetching live prices…'],['Building AI analysis…','~15s',false]].map(([step,time,done])=>(
+              <div key={step} style={{ display:'flex', alignItems:'center', gap:8 }}>
+                <span style={{ fontSize:14, width:16, textAlign:'center' }}>{done?'✓':loadingStep===step?'⟳':'○'}</span>
+                <span style={{ color:done?C.up:loadingStep===step?C.accent:C.muted, fontSize:13 }}>{step}</span>
+                <span style={{ color:C.muted, fontSize:11 }}>{time}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ color:C.muted, fontSize:12, marginTop:4 }}>{activeTab==='opportunities'?'SMA trend badges load in background after cards appear':'Fetching live market data'}</div>
+      </div>
+    )
+
+    if (err) return (
+      <div style={{ ...card({ borderLeft:`4px solid ${C.down}` }), padding:24 }}>
+        <div style={{ color:C.down, fontWeight:700, fontSize:16, marginBottom:8 }}>Error</div>
+        <div style={{ color:C.sub, fontSize:14, marginBottom:16, whiteSpace:'pre-wrap' }}>{err}</div>
+        <button onClick={refresh} style={{ appearance:'none', background:C.down, color:'#fff', border:'none', borderRadius:10, padding:'10px 18px', fontWeight:700, fontSize:14, cursor:'pointer' }}>Retry</button>
+      </div>
+    )
+
+    if (!d) return <div style={{ ...card({ minHeight:200 }), display:'grid', placeItems:'center' }}><div style={{ color:C.muted }}>Loading…</div></div>
+
+    if (activeTab==='opportunities') return renderOpps()
+    if (activeTab==='global')        return renderGlobal()
+    if (activeTab==='risk')          return renderRisk()
+    return null
+  }
+
+  // ── Shell ──────────────────────────────────────────────────────────────────
+  return (
+    <div style={{ minHeight:'100vh', background:C.bg, color:C.text, fontFamily:FB, overflowX:'hidden', WebkitFontSmoothing:'antialiased' }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800;900&family=DM+Mono:wght@400;500;700&display=swap');
+        *, *::before, *::after { box-sizing:border-box; }
+        body { margin:0; }
+        button { -webkit-tap-highlight-color:transparent; }
+        button:hover { opacity:0.88; }
+        @keyframes spin { to { transform:rotate(360deg); } }
+        @media print {
+          body { background:#fff !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+          .no-print { display:none !important; }
+        }
+      `}</style>
+
+      <div style={{ maxWidth:1560, margin:'0 auto', padding: mob ? '10px 12px' : '14px 24px' }}>
+        <div style={{ ...card({ marginBottom:14, padding: mob ? '12px 14px' : '14px 22px' }), display:'flex', justifyContent:'space-between', alignItems:'center', gap:10, flexWrap:'wrap' }}>
+          <div>
+            <div style={{ fontWeight:900, fontSize: mob?20:26, color:C.accent, letterSpacing:-0.5 }}>CATALYST</div>
+            <div style={{ color:C.muted, fontSize:11, fontWeight:600, letterSpacing:0.5, marginTop:2 }}>TRADING INTELLIGENCE · {new Date().toDateString().toUpperCase()}</div>
+          </div>
+          <div style={{ display:'flex', gap:8, alignItems:'center' }} className="no-print">
+            {lastUp[activeTab] && <span style={{ color:C.muted, fontSize:11 }}>Updated {ts(lastUp[activeTab])}</span>}
+            <button onClick={() => window.print()} style={{ appearance:'none', background:'#fff', color:C.accent, border:`1.5px solid ${C.accent}`, borderRadius:10, padding: mob ? '8px 12px' : '10px 16px', fontWeight:700, fontSize: mob?12:13, cursor:'pointer' }}>{mob ? '⬇ PDF' : '⬇ Export PDF'}</button>
+            <button onClick={refresh} style={{ appearance:'none', background:C.accent, color:'#fff', border:'none', borderRadius:10, padding: mob ? '8px 14px' : '10px 18px', fontWeight:700, fontSize:14, cursor:'pointer', boxShadow:'0 2px 8px rgba(37,99,235,0.25)' }}>↻ Refresh</button>
+          </div>
+        </div>
+
+        <div className="no-print" style={{ display:'flex', gap:6, marginBottom:16, overflowX:'auto', WebkitOverflowScrolling:'touch', paddingBottom:4 }}>
+          {TABS.map(t => {
+            const active = activeTab===t.key
+            return (
+              <button key={t.key} onClick={() => setActiveTab(t.key)} style={{ appearance:'none', border: `1.5px solid ${active ? C.accent : C.border}`, background: active ? C.accent : C.card, color: active ? '#fff' : C.sub, borderRadius:10, padding: mob ? '9px 14px' : '11px 18px', cursor:'pointer', fontWeight:700, fontSize: mob?13:14, whiteSpace:'nowrap', flexShrink:0, boxShadow: active ? '0 2px 8px rgba(37,99,235,0.2)' : 'none', transition:'all 0.15s' }}>
+                {t.label}{loading[t.key] ? ' ⟳' : ''}
+              </button>
+            )
+          })}
+        </div>
+
+        {renderContent()}
+
+        <div style={{ textAlign:'center', color:C.muted, fontSize:11, padding:'24px 0 8px' }}>
+          Prices: Finnhub · Analysis: Claude AI · Not financial advice · For educational use only
+        </div>
+      </div>
+    </div>
+  )
+}
