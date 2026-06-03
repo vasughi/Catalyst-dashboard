@@ -81,8 +81,11 @@ const QUALITY_UNIVERSE = new Set([
   'EQIX','DLR','AMT','CCI','SBAC','CONE','QTS','SWITCH',
   // ── Cybersecurity ─────────────────────────────────────────────────────────
   'CRWD','PANW','ZS','FTNT','S','CYBR','TENB','RPD',
-  'VRNT','RDWR','CHKP','SAIL','QLYS','IGTM','LYFT',
-  'OKTA','PING','JAMF','OSPN','SCWX','CFLT','SIEM',
+  'VRNT','RDWR','CHKP','SAIL','QLYS','OKTA','PING','JAMF',
+  'NET','OSPN','SCWX','CFLT','SAIL','ZTNA','DDOG',
+  // ── Quantum computing ──────────────────────────────────────────────────────
+  'IONQ','RGTI','QUBT','QMCO','IBM','QTUM','ARQQ',
+  'QBTS','BFLY','DEFN','SPIR','QUBT','ATOS','HON',
   // ── Defence & aerospace ───────────────────────────────────────────────────
   'LMT','RTX','NOC','GD','BA','HII','AXON','KTOS','AVAV',
   'HEI','TDG','TXT','LDOS','SAIC','CACI','BAH','MRCY',
@@ -293,11 +296,19 @@ export async function GET(request) {
     // Phase 3: Also include quality stocks WITHOUT confirmed earnings
     // (so NVDA, MRVL etc still appear as WATCH candidates)
     // Add top watchlist stocks that aren't already in earningsMap
-    // These always appear — either with earnings dates or as WATCH candidates
-    // PANW included so it shows post-earnings as WATCH (already reported)
+    // Core stocks — always appear regardless of earnings calendar
+    // Split into: AI/semis core, cybersecurity core, quantum core, energy/defence core
     const ALWAYS_INCLUDE = [
-      'NVDA','AMD','AVGO','MRVL','META','MSFT','GOOGL','PLTR','CRWD',
-      'PANW','VRT','GEV','ANET','NOW','ARM','TSLA','AMZN','CRDO',
+      // AI & semiconductors — your core
+      'NVDA','AMD','AVGO','MRVL','ARM','PLTR','META','MSFT','GOOGL','AMZN',
+      // Cybersecurity — always visible
+      'CRWD','PANW','ZS','NET','FTNT','S',
+      // Quantum computing — always visible
+      'IONQ','RGTI','QUBT','IBM','QMCO',
+      // Power / energy / defence
+      'VRT','GEV','ETN','CEG','LMT','AXON',
+      // Other core holdings
+      'CRDO','ANET','NOW','TSLA',
     ]
     ALWAYS_INCLUDE.forEach(ticker => {
       if (!earningsMap[ticker]) {
