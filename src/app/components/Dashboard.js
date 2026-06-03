@@ -39,8 +39,11 @@ const FB = `'DM Sans', system-ui, sans-serif`
 const FM = `'DM Mono', 'JetBrains Mono', monospace`
 
 // ─── Universe + history ───────────────────────────────────────────────────────
-// ── TRADING UNIVERSE ─────────────────────────────────────────────────────────
-// Edit freely — add/remove tickers here and in market-route.js UNIVERSE array
+// ── EARNINGS HISTORY REFERENCE ───────────────────────────────────────────────
+// UNIVERSE is now only used as a reference for the EH earnings history display.
+// The actual stock discovery is handled by market-route.js QUALITY_UNIVERSE.
+// Add new tickers to QUALITY_UNIVERSE in market-route.js for discovery.
+// Add their EH history below to improve AI analysis quality.
 const UNIVERSE = [
   // AI silicon / semiconductors
   'NVDA','AMD','AVGO','TSM','MRVL','ARM','INTC','QCOM',
@@ -775,13 +778,17 @@ export default function Dashboard() {
     try {
       const md = await market('opportunities')
       setLoadingStep('Building AI analysis…')
+      // Log discovery stats for debugging
+      if (md.meta?.discoveredFromCalendar) {
+        console.log('[CATALYST] Discovered', md.meta.discoveredFromCalendar, 'stocks from live calendar out of', md.meta.calendarScanned, 'scanned')
+      }
       const { stocks, earningsCalendar, vix, vixRegime, sectors } = md
 
       // Build stock lines for prompt
       const stockLines = (stocks||[]).map(s => {
         const hist = getEH(s.ticker)
         const parts = [
-          s.ticker+'('+s.name+'): $'+s.price?.toFixed(2)+' '+s.change1d,
+          s.ticker+'('+s.name+')'+(s.discoveredFromCalendar?' [CAL]':'')+': $'+s.price?.toFixed(2)+' '+s.change1d,
           s.hasVerifiedEarnings
             ? ('EARNINGS='+s.earningsDate+' in_'+s.earningsTradingDaysAway+'d'+(s.earningsSource==='estimate'?' [EST]':' [VERIFIED]')+(s.epsEstimate?' EPS=$'+s.epsEstimate:''))
             : 'NO_EARNINGS',
@@ -800,11 +807,12 @@ export default function Dashboard() {
 
       const sectorLines = (sectors||[]).map(s=>s.label+': '+s.change+' ('+s.direction+')').join(', ')
 
-      // Build earnings history lines — live if available, hardcoded fallback otherwise
-      const ehLines = UNIVERSE.map(sym => {
-        const h = getEH(sym)
+      // Build earnings history lines — use discovered stocks, not hardcoded list
+      // This means any auto-discovered stock (e.g. PANW, ORCL) gets its history shown
+      const ehLines = (stocks||[]).map(s => {
+        const h = getEH(s.ticker)
         if (!h) return null
-        return `${sym}: ${h.label}${h.live ? ' [LIVE]' : ' [CACHED]'}`
+        return s.ticker+': '+h.label+(h.live?' [LIVE]':' [CACHED]')
       }).filter(Boolean).join(' | ')
 
       const calLines = (earningsCalendar||[]).slice(0,15).map(e => {
@@ -836,7 +844,8 @@ export default function Dashboard() {
 VIX: ${vix||'N/A'} (${vixRegime||'UNKNOWN'})
 SECTORS: ${sectorLines||'N/A'}
 
-PRICES:
+DISCOVERED STOCKS (auto-detected from earnings calendar + quality filter):
+Note: [CAL] = auto-discovered from live Finnhub earnings calendar (not on fixed list). These are event-driven opportunities surfaced by scanning all 500+ upcoming earnings.
 ${stockLines}
 
 EARNINGS DATES (next 60 days):
@@ -854,9 +863,11 @@ KNOWN EVENTS (may be stale):
 - QCOM: Already reported Q2, weak Q3 guidance, Apple modem risk — max WATCH
 - GOOGL: $80B share issue = dilution = max WATCH
 - FCX: Mine production cut = fundamental problem = max WATCH
-
+- NOC: Q1 beat revenue but EPS guidance missed, stock fell 16% since Q1 — max WATCH\n'
+      '- LMT: Average earnings move only 4.2% — borderline for 15% return gate — max WATCH\n'
+      '
 RULES:
-1. Stocks with earnings 33-45 days away are PRIME BUY candidates right now
+1. Stocks with earnings 33-45 days away are PRIME BUY candidates — especially [CAL] ones auto-discovered from the live calendar
 2. Stock up >8% today = max WATCH (too late to buy)
 3. Only BUY if 15%+ gain path within 45 trading days
 4. DOWNTREND = max WATCH. PULLBACK IN UPTREND = ideal BUY.
