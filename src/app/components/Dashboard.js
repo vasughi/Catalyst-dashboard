@@ -2097,8 +2097,9 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
       )
     }
 
-    // ── Group positions by pieName — fallback: check if ticker is known pie stock ──
-    // T212 sometimes doesn't tag ETF pies correctly, so we also group by totalValue proximity
+    // ── Group positions by pieName ─────────────────────────────────────────────
+    // pieName is set by the server from /equity/pies API data
+    // Positions split into pie portion + direct portion when both exist
     const buildGroups = (positions) => {
       const pies = {}, direct = []
       positions.forEach(p => {
@@ -2127,6 +2128,11 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
               style={{ appearance:'none', background:C.accent, color:'#fff', border:'none', borderRadius:8, padding:'9px 16px', fontWeight:700, fontSize:13, cursor:'pointer' }}>
               {t212Loading ? '⟳ Loading…' : '⟳ Refresh'}
             </button>
+            {t212Data?.debug && t212Data.debug.taggedCount === 0 && t212Data.debug.pieCount > 0 && (
+              <span style={{ color:C.amber, fontSize:12, padding:'9px 0' }}>
+                ⚠️ Pie grouping unavailable — T212 API returned no instrument data
+              </span>
+            )}
             {t212Data && !t212AnalysisLoad && (
               <button onClick={analyseT212}
                 style={{ appearance:'none', background:C.up, color:'#fff', border:'none', borderRadius:8, padding:'9px 16px', fontWeight:700, fontSize:13, cursor:'pointer' }}>
