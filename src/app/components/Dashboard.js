@@ -1186,7 +1186,7 @@ Return ONLY compact JSON starting with opportunities array:
     }
   }, [newTicker, newBuyPrice, newCurrency, getEH, claude])
 
-ns ────────────────────────────────────────────────────
+  // ── T212 API functions ────────────────────────────────────────────────────
   const fetchT212 = useCallback(async () => {
     setT212Loading(true)
     setT212Error(null)
