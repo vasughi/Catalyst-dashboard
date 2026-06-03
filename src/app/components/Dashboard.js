@@ -891,15 +891,16 @@ ${ehLines || Object.entries(EH).map(([k,v])=>(k+': '+v.label)).join(' | ')}
 LIVE NEWS + ANALYST DATA (auto-fetched):
 ${newsLines || 'Loading in background — refresh for live data'}
 
-KNOWN EVENTS (may be stale):
-- AVGO: Reported 3 Jun 2026 — check live news above for result
-- CRDO: Reported 1 Jun, beat but fell 14% — WATCH until $190-210
+KNOWN EVENTS:
+- ORCL: Reports Jun 10 2026 confirmed — 9 days, strong AI cloud growth, BUY candidate
+- DOCU: Reports Jun 4 tonight — BUY if guidance strong, WATCH if billings disappoint
+- AVGO: Reported 3 Jun — check live news above for actual result and reaction
+- CRDO: Reported 1 Jun, beat but fell 14% on inline guidance — WATCH until stabilises
 - QCOM: Already reported Q2, weak Q3 guidance, Apple modem risk — max WATCH
 - GOOGL: $80B share issue = dilution = max WATCH
 - FCX: Mine production cut = fundamental problem = max WATCH
-- NOC: Q1 beat revenue but EPS guidance missed, stock fell 16% since Q1 — max WATCH\n'
-      '- LMT: Average earnings move only 4.2% — borderline for 15% return gate — max WATCH\n'
-      '
+- NOC: Q1 guidance miss, stock fell 16% since — max WATCH
+- LMT: 4.2% avg earnings move — cannot reach 15% gate — max WATCH
 RULES:
 1. Stocks with earnings 33-45 days away are PRIME BUY candidates — especially [CAL] auto-discovered ones
 2. Stock up >8% today = max WATCH
