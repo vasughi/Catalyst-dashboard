@@ -11,8 +11,11 @@
 
 import { NextResponse } from 'next/server'
 
-// Edge runtime = no function timeout — critical for Sonnet which takes 15-25s
-export const runtime = 'edge'
+// Node.js runtime with extended maxDuration
+// Edge runtime has a 25s first-byte limit which kills Sonnet (15-20s generation)
+// maxDuration=60 gives Sonnet plenty of time
+export const dynamic    = 'force-dynamic'
+export const maxDuration = 60
 
 const MODELS = {
   cio:      'claude-sonnet-4-6',
