@@ -816,7 +816,8 @@ export default function Dashboard() {
       const { stocks, earningsCalendar, vix, vixRegime, sectors } = md
 
       // Build stock lines for prompt
-      const stockLines = (stocks||[]).map(s => {
+      // Only include stocks with valid live prices in the AI prompt
+      const stockLines = (stocks||[]).filter(s => s.price && s.price > 0).map(s => {
         const hist = getEH(s.ticker)
         const parts = [
           s.ticker+'('+s.name+')'+(s.discoveredFromCalendar?' [CAL]':'')+': $'+s.price?.toFixed(2)+' '+s.change1d,
@@ -907,7 +908,7 @@ RULES:
 5. TREND:PULLBACK_IN_UPTREND = ideal entry — prioritise these for BUY
 6. If SMA200 available: use CALC_STOP as stop loss, calculate R/R from real numbers
 7. If TREND:unknown(SMA_loading): AI estimates trend from price action
-8. currentPrice MUST be exact dollar from PRICES above
+8. currentPrice MUST be exact dollar from PRICES above — if a stock shows no price, EXCLUDE it from recommendations entirely
 9. Plain English only. Short sentences. No jargon.
 10. watchList: 5-8 most interesting. avoidList: 5-8 to avoid.
 
