@@ -14,7 +14,8 @@
 
 import { NextResponse } from 'next/server'
 
-export const dynamic = 'force-dynamic'
+export const runtime = "edge"
+
 
 const FH  = 'https://finnhub.io/api/v1'
 const KEY = process.env.FINNHUB_API_KEY
