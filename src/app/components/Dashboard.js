@@ -113,6 +113,27 @@ const EH = {
   // Critical minerals
   FCX:   { avg: 7.8,  beats: 3, label: '7.8% avg · 3/4 beats' },
   CCJ:   { avg: 9.4,  beats: 3, label: '9.4% avg · 3/4 beats' },
+  // Cybersecurity additions
+  NET:   { avg: 12.8, beats: 4, label: '12.8% avg · 4/4 beats' },
+  OKTA:  { avg: 10.2, beats: 3, label: '10.2% avg · 3/4 beats' },
+  FTNT:  { avg: 7.1,  beats: 3, label: '7.1% avg · 3/4 beats' },
+  CRWD:  { avg: 8.2,  beats: 4, label: '8.2% avg · 4/4 beats' },
+  // Quantum computing
+  IONQ:  { avg: 18.2, beats: 3, label: '18.2% avg · 3/4 beats — high volatility' },
+  RGTI:  { avg: 22.4, beats: 3, label: '22.4% avg · 3/4 beats — high volatility' },
+  QUBT:  { avg: 19.1, beats: 2, label: '19.1% avg · 2/4 beats' },
+  QMCO:  { avg: 15.3, beats: 3, label: '15.3% avg · 3/4 beats' },
+  IBM:   { avg: 6.2,  beats: 4, label: '6.2% avg · 4/4 beats — low volatility' },
+  // Cloud / SaaS additions
+  SNOW:  { avg: 18.4, beats: 4, label: '18.4% avg · 4/4 beats' },
+  DDOG:  { avg: 14.2, beats: 4, label: '14.2% avg · 4/4 beats' },
+  NET:   { avg: 12.8, beats: 4, label: '12.8% avg · 4/4 beats' },
+  ORCL:  { avg: 11.2, beats: 4, label: '11.2% avg · 4/4 beats' },
+  ADBE:  { avg: 7.8,  beats: 3, label: '7.8% avg · 3/4 beats' },
+  CRM:   { avg: 8.6,  beats: 4, label: '8.6% avg · 4/4 beats' },
+  AMZN:  { avg: 7.9,  beats: 4, label: '7.9% avg · 4/4 beats' },
+  TSLA:  { avg: 9.1,  beats: 3, label: '9.1% avg · 3/4 beats' },
+  NFLX:  { avg: 10.4, beats: 4, label: '10.4% avg · 4/4 beats' },
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -631,6 +652,18 @@ const TABS = [
   { key:'risk',          label:'⚠️ Risk' },
 ]
 
+// ── Core watchlist — always visible on Opportunities tab ──────────────────────
+// These are your mandatory stocks — you can always eyeball them
+// regardless of what the AI picks for the main 10 cards
+const CORE_WATCHLIST = {
+  'AI & Semis':   ['NVDA','AVGO','MRVL','ARM','PLTR','META','AMD'],
+  'Cybersecurity':['CRWD','PANW','ZS','NET','FTNT','S'],
+  'Quantum':      ['IONQ','RGTI','QUBT','IBM','QMCO'],
+  'Power/Energy': ['VRT','GEV','ETN','CEG','VST'],
+  'Defence':      ['LMT','AXON','NOC','RTX'],
+  'My Holdings':  ['NVDA','AVGO','CRDO','CRWV','ASTS'],
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function Dashboard() {
   const [activeTab,   setActiveTab]   = useState('opportunities')
@@ -794,12 +827,14 @@ export default function Dashboard() {
             : 'NO_EARNINGS',
           s.bigMoverToday ? 'GAP_UP>8%_APPLY_PENALTY' : '',
           hist ? 'HIST:'+hist.label+(hist.live?' [LIVE]':'') : '',
-          // Technicals — use live techMap if available
+          // Technicals — live SMA data from /api/technicals
+          // Shows: trend, entry quality, % above/below 200 SMA, calculated stop
           (()=>{const t=techMap[s.ticker]||{}; return[
-            t.trend             ? 'TREND:'+t.trend                                                  : '',
-            t.entryQuality      ? 'ENTRY:'+t.entryQuality                                           : '',
-            t.pctAbove200!=null ? 'vs200SMA:'+(t.pctAbove200>=0?'+':'')+t.pctAbove200+'%'          : '',
-            t.suggestedStopLoss ? 'STOP:$'+t.suggestedStopLoss                                      : '',
+            t.trend             ? 'TREND:'+t.trend               : 'TREND:unknown(SMA_loading)',
+            t.entryQuality      ? 'ENTRY:'+t.entryQuality        : '',
+            t.sma200            ? 'SMA200:$'+t.sma200+(t.pctAbove200!=null?'('+(t.pctAbove200>=0?'+':'')+t.pctAbove200+'%)':'') : '',
+            t.sma50             ? 'SMA50:$'+t.sma50+(t.pctAbove50!=null?'('+(t.pctAbove50>=0?'+':'')+t.pctAbove50+'%)':'')     : '',
+            t.suggestedStopLoss ? 'CALC_STOP:$'+t.suggestedStopLoss+'('+t.distToStopPct+'%_below)' : '',
           ].filter(Boolean).join(' | ')})(),
         ]
         return parts.filter(Boolean).join(' | ')
@@ -867,14 +902,16 @@ KNOWN EVENTS (may be stale):
       '- LMT: Average earnings move only 4.2% — borderline for 15% return gate — max WATCH\n'
       '
 RULES:
-1. Stocks with earnings 33-45 days away are PRIME BUY candidates — especially [CAL] ones auto-discovered from the live calendar
-2. Stock up >8% today = max WATCH (too late to buy)
+1. Stocks with earnings 33-45 days away are PRIME BUY candidates — especially [CAL] auto-discovered ones
+2. Stock up >8% today = max WATCH
 3. Only BUY if 15%+ gain path within 45 trading days
-4. DOWNTREND = max WATCH. PULLBACK IN UPTREND = ideal BUY.
-5. currentPrice MUST be exact dollar from PRICES above
-6. Include WATCH cards for NVDA, MRVL even without near-term earnings
-7. Plain English only. Short sentences. No jargon.
-8. watchList: 5-8 most interesting. avoidList: 5-8 to avoid.
+4. TREND:DOWNTREND = max WATCH — never BUY a downtrend
+5. TREND:PULLBACK_IN_UPTREND = ideal entry — prioritise these for BUY
+6. If SMA200 available: use CALC_STOP as stop loss, calculate R/R from real numbers
+7. If TREND:unknown(SMA_loading): AI estimates trend from price action
+8. currentPrice MUST be exact dollar from PRICES above
+9. Plain English only. Short sentences. No jargon.
+10. watchList: 5-8 most interesting. avoidList: 5-8 to avoid.
 
 EXACTLY 10 entries. COMPACT JSON, no spaces. Max 10 words per string. Start with opportunities array. Rank all stocks, best 10. Count them. If you have fewer than 10 BUYs, fill remaining slots with WATCH cards for: NVDA, MRVL, AVGO, GEV, FSLR, ETN, CEG, PLTR — whatever is needed to reach 10.
 
@@ -883,17 +920,25 @@ Return ONLY this JSON (EXACTLY 10 opportunity cards — rank all universe stocks
 
 
       // Direct browser API call — no Vercel timeout
-      // Pre-fetch SMA for top 8 priority stocks BEFORE AI runs
-      // This means the AI prompt includes real technical data for these stocks
-      const TOP_PRIORITY = ['NVDA','AVGO','MRVL','ARM','VRT','GEV','META','PLTR']
-        .filter(t => (stocks||[]).some(s => s.ticker === t))
-      if (TOP_PRIORITY.length) {
+      // Pre-fetch SMA for discovered stocks BEFORE AI runs
+      // Fetch top 10 by priority (stocks sorted by earnings proximity)
+      // Split into 2 parallel calls of 5 to stay within technicals route cap
+      const topTickers = (stocks||[]).slice(0, 10).map(s => s.ticker)
+      if (topTickers.length) {
         try {
-          const techRes = await fetch('/api/technicals?symbols=' + TOP_PRIORITY.slice(0,5).join(','), { cache: 'no-store' })
-          if (techRes.ok) {
-            const techData = await techRes.json()
-            if (techData?.technicals) {
-              setTechMap(prev => ({ ...prev, ...techData.technicals }))
+          const batch1 = topTickers.slice(0, 5)
+          const batch2 = topTickers.slice(5, 10)
+          const fetches = [
+            fetch('/api/technicals?symbols=' + batch1.join(','), { cache: 'no-store' }),
+            batch2.length ? fetch('/api/technicals?symbols=' + batch2.join(','), { cache: 'no-store' }) : null,
+          ].filter(Boolean)
+          const results = await Promise.allSettled(fetches)
+          for (const r of results) {
+            if (r.status === 'fulfilled' && r.value.ok) {
+              const techData = await r.value.json()
+              if (techData?.technicals) {
+                setTechMap(prev => ({ ...prev, ...techData.technicals }))
+              }
             }
           }
         } catch {}
@@ -1478,6 +1523,62 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
     )
   }
 
+  // ── Core Watchlist Panel ──────────────────────────────────────────────────
+  function CoreWatchlistPanel({ priceMap }) {
+    const [expanded, setExpanded] = React.useState(false)
+    if (!priceMap || !Object.keys(priceMap).length) return null
+
+    return (
+      <div style={{ ...card({ marginBottom:14 }), padding:'12px 16px' }}>
+        <button
+          onClick={() => setExpanded(e => !e)}
+          style={{ appearance:'none', background:'none', border:'none', cursor:'pointer', width:'100%', textAlign:'left', padding:0, display:'flex', justifyContent:'space-between', alignItems:'center' }}
+        >
+          <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+            <span style={{ fontSize:14, fontWeight:800, color:C.accent }}>📌 CORE WATCHLIST</span>
+            <span style={{ color:C.muted, fontSize:12 }}>Your mandatory stocks — always visible</span>
+          </div>
+          <span style={{ color:C.muted, fontSize:16 }}>{expanded ? '▲' : '▼'}</span>
+        </button>
+
+        {expanded && (
+          <div style={{ marginTop:12, display:'grid', gap:10 }}>
+            {Object.entries(CORE_WATCHLIST).map(([group, tickers]) => (
+              <div key={group}>
+                <div style={{ ...LBL, marginBottom:6 }}>{group}</div>
+                <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+                  {tickers.map(ticker => {
+                    const q = priceMap[ticker]
+                    const eh = getEH(ticker)
+                    const up = q?.changePct >= 0
+                    return (
+                      <div key={ticker} style={{
+                        background: q ? (up ? C.upBg : C.downBg) : C.bg,
+                        border: `1px solid ${q ? (up ? C.up+'33' : C.down+'33') : C.border}`,
+                        borderRadius:8, padding:'6px 10px', minWidth:90,
+                      }}>
+                        <div style={{ fontFamily:FM, fontWeight:800, fontSize:14, color:C.text }}>{ticker}</div>
+                        {q ? (
+                          <>
+                            <div style={{ fontFamily:FM, fontWeight:700, fontSize:13 }}>${q.price?.toFixed(2)}</div>
+                            <div style={{ color:up?C.up:C.down, fontSize:12, fontWeight:700 }}>{up?'+':''}{q.changePct?.toFixed(2)}%</div>
+                          </>
+                        ) : (
+                          <div style={{ color:C.muted, fontSize:11 }}>Loading…</div>
+                        )}
+                        {eh && <div style={{ color:C.purple, fontSize:10, marginTop:2 }}>{eh.avg}% avg</div>}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   // ── renderOpps ─────────────────────────────────────────────────────────────
   function renderOpps() {
     const d = data.opportunities
@@ -1488,6 +1589,11 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
     return (
       <>
         <CIOPanelInner cio={d.cio} marketCondition={d.marketCondition} vix={d.vix} vixRegime={d.vixRegime} sectors={d.sectors} regime={d.regime} cashPct={d.cashPct} cashRecommendation={d.cashRecommendation} />
+        <CoreWatchlistPanel priceMap={(() => {
+          const m = {}
+          ;(d.stocks||[]).forEach(s => { m[s.ticker] = s })
+          return m
+        })()} />
         <div style={{ display:'grid', gridTemplateColumns:mob?'1fr':'minmax(0,1fr) minmax(310px,340px)', gap:18, alignItems:'start' }}>
           <div>
             <div style={{ display:'grid', gridTemplateColumns:mob?'1fr':opps.length>3?'repeat(2,1fr)':'1fr', gap:14 }}>
