@@ -1081,20 +1081,22 @@ Return JSON:
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt, mode: 'cio' }),
       })
-      const aiData = await res.json()
-      const tb = aiData.content?.find(b => b.type === 'text')
-      if (!tb) throw new Error('No response from AI')
+      // Handle both text/plain (streaming) and JSON responses
+      let rawText
+      if (res.headers.get('content-type')?.includes('text/plain')) {
+        rawText = await res.text()
+      } else {
+        const aiData = await res.json()
+        if (!res.ok) throw new Error(aiData.error || 'AI error')
+        rawText = aiData.content?.find(b => b.type === 'text')?.text || ''
+      }
+      if (!rawText) throw new Error('No response from AI')
 
-      // Parse JSON
       let parsed
       try {
-        let s = tb.text.replace(/```json|```/g, '').trim()
-        const i = s.indexOf('{'); if (i > 0) s = s.slice(i)
-        parsed = JSON.parse(s)
+        parsed = repairJSON(rawText)
       } catch {
-        // Try repair
-        const s = tb.text.replace(/```json|```/g, '').trim()
-        parsed = { portfolioSummary: s, holdings: [] }
+        parsed = { portfolioSummary: rawText.slice(0, 200), holdings: [] }
       }
 
       setPortfolioResult({ ...parsed, enriched })
@@ -1210,18 +1212,21 @@ Return ONLY this JSON (up to 10 cards):
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt, mode: 'cio' }),
       })
-      const aiData = await res.json()
-      const tb = aiData.content?.find(b => b.type === 'text')
-      if (!tb) throw new Error('No response from AI')
+      let rawT212Text
+      if (res.headers.get('content-type')?.includes('text/plain')) {
+        rawT212Text = await res.text()
+      } else {
+        const aiData = await res.json()
+        if (!res.ok) throw new Error(aiData.error || 'AI error')
+        rawT212Text = aiData.content?.find(b => b.type === 'text')?.text || ''
+      }
+      if (!rawT212Text) throw new Error('No response from AI')
 
       let parsed
       try {
-        let s = tb.text.replace(/```json|```/g, '').trim()
-        const i = s.indexOf('{'); if (i > 0) s = s.slice(i)
-        parsed = JSON.parse(s)
+        parsed = repairJSON(rawT212Text)
       } catch {
-        const s = tb.text.replace(/```json|```/g, '').trim()
-        parsed = { portfolioSummary: s, holdings: [] }
+        parsed = { portfolioHealth: 'GOOD', overallSummary: rawT212Text.slice(0, 200), holdings: [] }
       }
 
       setT212Result({ ...parsed, enriched, raw: t212Data })
