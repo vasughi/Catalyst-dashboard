@@ -13,7 +13,8 @@
 
 import { NextResponse } from 'next/server'
 
-export const runtime = "edge"
+export const dynamic    = 'force-dynamic'
+export const maxDuration = 60
 
 const T212_KEY    = process.env.TRADING212_API_KEY
 const T212_SECRET = process.env.TRADING212_API_SECRET
