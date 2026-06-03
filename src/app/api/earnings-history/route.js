@@ -19,6 +19,7 @@
 import { NextResponse } from 'next/server'
 
 // Cache for 24 hours — earnings history doesn't change intraday
+export const runtime = "edge"
 export const revalidate = 86400
 
 const FH  = 'https://finnhub.io/api/v1'
