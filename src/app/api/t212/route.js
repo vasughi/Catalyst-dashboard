@@ -13,8 +13,7 @@
 
 import { NextResponse } from 'next/server'
 
-export const dynamic = 'force-dynamic'
-export const revalidate = 0
+export const runtime = "edge"
 
 const T212_KEY    = process.env.TRADING212_API_KEY
 const T212_SECRET = process.env.TRADING212_API_SECRET
