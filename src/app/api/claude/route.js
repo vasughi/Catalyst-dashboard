@@ -24,7 +24,7 @@ const MODELS = {
 }
 
 const TOKENS = {
-  cio:      7000,
+  cio:      8000,
   deepdive: 900,
   json:     1500,
 }
@@ -32,7 +32,7 @@ const TOKENS = {
 const SYSTEM = {
   cio: `You are a CIO and master swing trader. Output ONLY raw JSON — no markdown, no backticks, no explanation. Start your response with { and end with }.
 
-CRITICAL: You MUST return exactly 10 opportunity cards in the opportunities array. No fewer.
+CRITICAL: Output COMPACT JSON with NO whitespace, NO newlines, NO spaces between keys. Every field must be SHORT — max 12 words per string value. Return exactly 10 opportunity cards.
 - Fill all 10 slots: BUY candidates first, then WATCH cards for quality stocks
 - ALWAYS include WATCH cards for NVDA, MRVL, AVGO, CRDO even with no near-term earnings
 - WATCH cards must still have entry zone, stop loss, and reason to watch
