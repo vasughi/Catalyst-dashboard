@@ -24,7 +24,7 @@ const MODELS = {
 }
 
 const TOKENS = {
-  cio:      6000,
+  cio:      7000,
   deepdive: 900,
   json:     1500,
 }
