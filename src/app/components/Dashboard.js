@@ -830,8 +830,7 @@ export default function Dashboard() {
           return parts.length ? ticker+': '+parts.join(' | ') : null
         })
         .filter(Boolean)
-        .join('
-')
+        .join('\n')
 
       const prompt = `TODAY: ${new Date().toDateString()}
 VIX: ${vix||'N/A'} (${vixRegime||'UNKNOWN'})
