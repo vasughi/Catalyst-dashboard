@@ -177,6 +177,9 @@ const SANITY = {
   RKLB:[3,200],    ASTS:[2,100],    ACHR:[1,60],     JOBY:[1,50],
   // Quantum
   IONQ:[2,80],     RGTI:[1,50],     QUBT:[1,40],
+  // Additional discovered stocks
+  AVAV:[50,400],   DOCU:[20,150],   CFLT:[5,100],    SAIL:[0.5,20],
+  AEHR:[3,100],    AA:[10,80],      CIEN:[20,200],
 }
 
 async function safeQuote(sym) {
