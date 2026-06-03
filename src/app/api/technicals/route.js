@@ -14,15 +14,17 @@
 
 import { NextResponse } from 'next/server'
 
-export const runtime = "edge"
-
+export const dynamic    = 'force-dynamic'
+export const maxDuration = 60
 
 const FH  = 'https://finnhub.io/api/v1'
 const KEY = process.env.FINNHUB_API_KEY
 
 // ── Module-level cache ────────────────────────────────────────────────────────
+// Note: serverless functions may restart between requests
+// Cache helps within a warm instance but won't persist cold starts
 const CACHE = {}
-const TTL   = 6 * 60 * 60 * 1000  // 6 hours
+const TTL   = 4 * 60 * 60 * 1000  // 4 hours (reduced to handle restarts)
 
 async function fh(path) {
   const sep = path.includes('?') ? '&' : '?'
