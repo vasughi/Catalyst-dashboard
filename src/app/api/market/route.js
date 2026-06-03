@@ -33,7 +33,7 @@ function resp(body, status = 200) {
 }
 
 // Per-request timeout wrapper — prevents any single Finnhub call hanging
-async function fhSafe(path, timeoutMs = 5000) {
+async function fhSafe(path, timeoutMs = 4000) {
   try {
     const sep = path.includes('?') ? '&' : '?'
     const controller = new AbortController()
@@ -198,7 +198,7 @@ async function safeQuote(sym) {
 
 // Fetch prices in batches — max 10 parallel, 100ms between batches
 async function fetchPrices(syms) {
-  const BATCH = 10, DELAY = 100
+  const BATCH = 10, DELAY = 50
   const map = {}
   for (let i = 0; i < syms.length; i += BATCH) {
     const batch = syms.slice(i, i + BATCH)
@@ -248,7 +248,7 @@ const FALLBACK_DATES = {
   CCJ:  { date:'2026-08-07', note:'est' },
   NVDA: { date:'2026-08-27', note:'est' },
   CRWD: { date:'2026-08-26', note:'est' },
-  ORCL: { date:'2026-06-10', note:'est' },
+  ORCL: { date:'2026-06-10', note:'confirmed' },  // Confirmed Jun 10 2026
   ADBE: { date:'2026-06-17', note:'est' },
 }
 
