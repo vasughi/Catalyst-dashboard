@@ -161,9 +161,9 @@ function repairJSON(str) {
 
   try { return JSON.parse(fixed) } catch {
     // Last resort: try to extract whatever completed opportunity objects exist
+    // Works whether opportunities is first or last in the JSON
     try {
-      // Find all complete opportunity objects (between { and })
-      const oppArrayMatch = fixed.match(/"opportunities"\s*:\s*\[/)
+      const oppArrayMatch = fixed.includes('"opportunities"')
       if (oppArrayMatch) {
         const startIdx = fixed.indexOf('[', fixed.indexOf('"opportunities"'))
         let depth = 0, endIdx = startIdx
@@ -865,10 +865,10 @@ RULES:
 7. Plain English only. Short sentences. No jargon.
 8. watchList: 5-8 most interesting. avoidList: 5-8 to avoid.
 
-You MUST return EXACTLY 15 entries. Output COMPACT JSON — no spaces, no newlines. Keep ALL string values under 12 words. Rank ALL stocks from the prices list by opportunity score — include the best 15 across BUY and WATCH ratings. Count them. If you have fewer than 10 BUYs, fill remaining slots with WATCH cards for: NVDA, MRVL, AVGO, GEV, FSLR, ETN, CEG, PLTR — whatever is needed to reach 10.
+EXACTLY 15 entries. COMPACT JSON, no spaces. Max 10 words per string. Start with opportunities array. Rank all stocks, best 15. Count them. If you have fewer than 10 BUYs, fill remaining slots with WATCH cards for: NVDA, MRVL, AVGO, GEV, FSLR, ETN, CEG, PLTR — whatever is needed to reach 10.
 
 Return ONLY this JSON (EXACTLY 15 opportunity cards — rank all universe stocks, best 15 only):
-{"marketCondition":"BUY SELECTIVELY","cashRecommendation":"one sentence","cashPct":30,"regime":"one sentence","cio":{"bestTradeToday":"TICKER","bestRiskReward":"TICKER","finalMarketDecision":"BUY SELECTIVELY","watchList":[{"ticker":"","reason":"max 8 words"}],"avoidList":[{"ticker":"","reason":"max 8 words"}]},"opportunities":[{"ticker":"","company":"","action":"BUY","currentPrice":"","entryZone":"$X-$Y","stopLoss":"$X","takeProfit":"$X","expectedGain":"15%","riskReward":"3:1","allocation":"10%","whyWeLikeIt":"max 15 words","whatCouldGoWrong":"max 10 words","upcomingEvent":"","eventDate":"DD Mon YYYY","trend":"","entryQuality":"GOOD","returnGate":"PASS","cashChallenge":"PASS","opportunityScore":75}]}`
+{"opportunities":[{"ticker":"","company":"","action":"BUY","currentPrice":"","entryZone":"$X-$Y","stopLoss":"$X","takeProfit":"$X","expectedGain":"15%","riskReward":"3:1","allocation":"10%","whyWeLikeIt":"max 10 words","whatCouldGoWrong":"max 8 words","upcomingEvent":"","eventDate":"DD Mon YYYY","trend":"","entryQuality":"GOOD","returnGate":"PASS","cashChallenge":"PASS","opportunityScore":75}],"marketCondition":"BUY SELECTIVELY","cashRecommendation":"one sentence","cashPct":30,"regime":"one sentence","cio":{"bestTradeToday":"TICKER","bestRiskReward":"TICKER","finalMarketDecision":"BUY SELECTIVELY","watchList":[{"ticker":"","reason":"max 6 words"}],"avoidList":[{"ticker":"","reason":"max 6 words"}]}}`
 
 
       // Direct browser API call — no Vercel timeout
@@ -1261,7 +1261,7 @@ COVERAGE:
 LANGUAGE: Plain English, short sentences, beginner-friendly.
 
 Return ONLY this JSON (up to 10 cards):
-{"marketCondition":"BUY SELECTIVELY","cashRecommendation":"one sentence","cashPct":30,"regime":"one sentence","cio":{"bestTradeToday":"TICKER","bestRiskReward":"TICKER","finalMarketDecision":"BUY SELECTIVELY","watchList":[{"ticker":"","reason":"max 8 words"}],"avoidList":[{"ticker":"","reason":"max 8 words"}]},"opportunities":[{"ticker":"","company":"","action":"BUY","currentPrice":"","entryZone":"$X-$Y","stopLoss":"$X","takeProfit":"$X","expectedGain":"15%","riskReward":"3:1","allocation":"10%","whyWeLikeIt":"max 15 words","whatCouldGoWrong":"max 10 words","upcomingEvent":"","eventDate":"DD Mon YYYY","trend":"","entryQuality":"GOOD","returnGate":"PASS","cashChallenge":"PASS","opportunityScore":75}]}` 
+{"opportunities":[{"ticker":"","company":"","action":"BUY","currentPrice":"","entryZone":"$X-$Y","stopLoss":"$X","takeProfit":"$X","expectedGain":"15%","riskReward":"3:1","allocation":"10%","whyWeLikeIt":"max 12 words","whatCouldGoWrong":"max 8 words","upcomingEvent":"","eventDate":"DD Mon YYYY","trend":"","entryQuality":"GOOD","returnGate":"PASS","cashChallenge":"PASS","opportunityScore":75}],"marketCondition":"BUY SELECTIVELY","cashRecommendation":"one sentence","cashPct":30,"regime":"one sentence","cio":{"bestTradeToday":"TICKER","bestRiskReward":"TICKER","finalMarketDecision":"BUY SELECTIVELY","watchList":[{"ticker":"","reason":"max 6 words"}],"avoidList":[{"ticker":"","reason":"max 6 words"}]}}` 
 
       const res = await fetch('/api/claude', {
         method: 'POST',
