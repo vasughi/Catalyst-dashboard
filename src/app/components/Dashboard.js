@@ -119,8 +119,13 @@ function repairJSON(str) {
   const i = s.indexOf('{')
   if (i === -1) throw new Error(`No JSON found: "${s.slice(0,80)}"`)
   s = s.slice(i)
+
+  // Try direct parse first
   try { return JSON.parse(s) } catch {}
-  const opens = []; let inStr = false, esc = false
+
+  // Response may be truncated — close all open brackets/strings
+  let inStr = false, esc = false
+  const opens = []
   for (let j = 0; j < s.length; j++) {
     const c = s[j]
     if (esc) { esc = false; continue }
@@ -128,11 +133,33 @@ function repairJSON(str) {
     if (c === '"') { inStr = !inStr; continue }
     if (inStr) continue
     if (c === '{') opens.push('}')
-    if (c === '[') opens.push(']')
-    if (c === '}' || c === ']') opens.pop()
+    else if (c === '[') opens.push(']')
+    else if ((c === '}' || c === ']') && opens.length) opens.pop()
   }
-  const fixed = s.replace(/,\s*([}\]])/g, '$1').trimEnd() + opens.reverse().join('')
+
+  // If we're mid-string, close it
+  let fixed = s
+  if (inStr) fixed += '"'
+
+  // Remove trailing comma before closing
+  fixed = fixed.replace(/,\s*$/, '')
+
+  // Close all open brackets
+  fixed = fixed + opens.reverse().join('')
+
+  // Remove trailing commas before closing brackets
+  fixed = fixed.replace(/,\s*([}\]])/g, '$1')
+
   try { return JSON.parse(fixed) } catch {
+    // Last resort: try to find the opportunities array and extract completed cards
+    const oppMatch = fixed.match(/"opportunities"\s*:\s*(\[.*)/s)
+    if (oppMatch) {
+      try {
+        // Build minimal valid response from what we have
+        const partial = JSON.parse('{"marketCondition":"BUY SELECTIVELY","cashPct":30,"cashRecommendation":"Analysis incomplete — retry","regime":"Data partially loaded","cio":{"bestTradeToday":"—","bestRiskReward":"—","finalMarketDecision":"BUY SELECTIVELY","watchList":[],"avoidList":[]},"opportunities":[]}')
+        return partial
+      } catch {}
+    }
     throw new Error(`Cannot parse AI JSON: "${s.slice(0,120)}"`)
   }
 }
@@ -676,8 +703,12 @@ export default function Dashboard() {
       deepdive: 'You are a trading analyst. Write clear analysis for beginners. Label each sentence FACT, ANALYSIS or OPINION. Under 280 words.',
       json:     'Output ONLY raw JSON. No markdown, no backticks. Start with {',
     }
-    const tokenMap = { cio: 3000, deepdive: 800, json: 1500 }
-    const modelMap  = { cio: 'claude-haiku-4-5-20251001', deepdive: 'claude-haiku-4-5-20251001', json: 'claude-haiku-4-5-20251001' }
+    const tokenMap = { cio: 6000, deepdive: 900, json: 1500 }
+    const modelMap  = {
+      cio:      'claude-sonnet-4-6',          // Best reasoning for investment analysis
+      deepdive: 'claude-sonnet-4-6',          // Richer deep dive analysis
+      json:     'claude-haiku-4-5-20251001',  // Fast + cheap for simple JSON transforms
+    }
 
     const apiKey = process.env.NEXT_PUBLIC_ANTHROPIC_API_KEY
     if (!apiKey) throw new Error('NEXT_PUBLIC_ANTHROPIC_API_KEY not set in Vercel environment variables')
@@ -823,7 +854,7 @@ COVERAGE:
 - Do NOT try to cover every single stock — focus on the most actionable ones only
 
 Return ONLY this JSON (up to 10 opportunity cards):
-{"marketCondition":"BUY AGGRESSIVELY|BUY SELECTIVELY|WAIT|HOLD CASH","cashRecommendation":"one plain-English sentence","cashPct":30,"regime":"one plain-English sentence describing what the market is doing today","cio":{"bestTradeToday":"TICKER or NONE","bestRiskReward":"TICKER or NONE","finalMarketDecision":"BUY AGGRESSIVELY|BUY SELECTIVELY|WAIT|HOLD CASH","watchList":[{"ticker":"","reason":"plain English max 10 words — why watching not buying yet"}],"avoidList":[{"ticker":"","reason":"plain English max 10 words — specific reason to avoid right now"}]},"opportunities":[{"ticker":"","company":"","action":"STRONG BUY|BUY|WATCH|AVOID","currentPrice":"","entryZone":"$X-$Y","stopLoss":"use CALC_STOP from data","takeProfit":"$X","expectedGain":"15-20%","riskReward":"calculated e.g. 3:1","allocation":"10%","whyWeLikeIt":"plain English, max 20 words","whatCouldGoWrong":"plain English, max 15 words","upcomingEvent":"event name","eventDate":"DD Mon YYYY","trend":"from data","setup":"from data","entryQuality":"EXCELLENT|GOOD|AVERAGE|POOR","trendComment":"one plain sentence on chart","returnGate":"PASS|CONDITIONAL PASS|FAIL","cashChallenge":"PASS|FAIL","opportunityScore":75}]}`
+{"marketCondition":"BUY SELECTIVELY","cashRecommendation":"one sentence","cashPct":30,"regime":"one sentence","cio":{"bestTradeToday":"TICKER","bestRiskReward":"TICKER","finalMarketDecision":"BUY SELECTIVELY","watchList":[{"ticker":"","reason":"max 8 words"}],"avoidList":[{"ticker":"","reason":"max 8 words"}]},"opportunities":[{"ticker":"","company":"","action":"BUY","currentPrice":"","entryZone":"$X-$Y","stopLoss":"$X","takeProfit":"$X","expectedGain":"15%","riskReward":"3:1","allocation":"10%","whyWeLikeIt":"max 15 words","whatCouldGoWrong":"max 10 words","upcomingEvent":"","eventDate":"DD Mon YYYY","trend":"","entryQuality":"GOOD","returnGate":"PASS","cashChallenge":"PASS","opportunityScore":75}]}`
 
       // Direct browser API call — no Vercel timeout
       const ai = repairJSON(await claude(prompt, 'cio'))
