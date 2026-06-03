@@ -1984,216 +1984,349 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
   }
 
   function renderT212() {
-    const actionColor = a => a==='BUY MORE'?C.up:a==='HOLD'?C.accent:a==='TRIM'?C.amber:C.down
-    const actionBg    = a => a==='BUY MORE'?C.upBg:a==='HOLD'?C.accentBg:a==='TRIM'?C.amberBg:C.downBg
-    const healthColor = h => h==='STRONG'?C.up:h==='GOOD'?C.accent:h==='CAUTION'?C.amber:C.down
+    const PORTFOLIO_PASSWORD = process.env.NEXT_PUBLIC_PORTFOLIO_PASSWORD || 'catalyst2026'
+    const ac  = a => a==='BUY MORE'?C.up:a==='HOLD'?C.accent:a==='TRIM'?C.amber:C.down
+    const abg = a => a==='BUY MORE'?C.upBg:a==='HOLD'?C.accentBg:a==='TRIM'?C.amberBg:C.downBg
 
+    // ── Password gate ────────────────────────────────────────────────────────
     if (!t212Unlocked) {
       return (
-        <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', minHeight:400, padding:24 }}>
+        <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', minHeight:400 }}>
           <div style={{ ...card({ maxWidth:400, width:'100%', textAlign:'center', padding:36 }) }}>
             <div style={{ fontSize:40, marginBottom:16 }}>🏦</div>
             <div style={{ color:C.text, fontWeight:800, fontSize:20, marginBottom:8 }}>T212 Live Portfolio</div>
-            <div style={{ color:C.muted, fontSize:14, marginBottom:24, lineHeight:1.6 }}>Enter your password to view live positions.</div>
-            <input type="password" value={t212PwInput} onChange={e=>{setT212PwInput(e.target.value);setT212PwError(false)}} onKeyDown={e=>{if(e.key==='Enter'){if(t212PwInput===PORTFOLIO_PASSWORD){setT212Unlocked(true);setT212PwError(false);try{sessionStorage.setItem('catalyst_t212_auth','true')}catch{}}else{setT212PwError(true);setT212PwInput('')}}}} placeholder="Enter password" autoFocus style={{ width:'100%', padding:'12px 16px', borderRadius:10, border:`2px solid ${t212PwError?C.down:C.border}`, fontSize:16, fontFamily:FM, outline:'none', background:C.bg, marginBottom:12, boxSizing:'border-box', textAlign:'center', letterSpacing:4 }} />
+            <div style={{ color:C.muted, fontSize:14, marginBottom:24 }}>Enter your password to view live positions.</div>
+            <input type="password" value={t212PwInput} onChange={e=>{setT212PwInput(e.target.value);setT212PwError(false)}}
+              onKeyDown={e=>{if(e.key==='Enter'){if(t212PwInput===PORTFOLIO_PASSWORD){setT212Unlocked(true);try{sessionStorage.setItem('catalyst_t212_auth','true')}catch{}}else{setT212PwError(true);setT212PwInput('')}}}}
+              placeholder="Enter password" autoFocus
+              style={{ width:'100%', padding:'12px 16px', borderRadius:10, border:`2px solid ${t212PwError?C.down:C.border}`, fontSize:16, outline:'none', background:C.bg, marginBottom:12, boxSizing:'border-box', textAlign:'center', letterSpacing:4 }}
+            />
             {t212PwError && <div style={{ color:C.down, fontSize:13, marginBottom:12, fontWeight:600 }}>Incorrect password.</div>}
-            <button onClick={()=>{if(t212PwInput===PORTFOLIO_PASSWORD){setT212Unlocked(true);try{sessionStorage.setItem('catalyst_t212_auth','true')}catch{}}else{setT212PwError(true);setT212PwInput('')}}} style={{ appearance:'none', background:C.accent, color:'#fff', border:'none', borderRadius:10, padding:'12px 24px', fontWeight:800, fontSize:15, cursor:'pointer', width:'100%' }}>Unlock</button>
+            <button onClick={()=>{if(t212PwInput===PORTFOLIO_PASSWORD){setT212Unlocked(true);try{sessionStorage.setItem('catalyst_t212_auth','true')}catch{}}else{setT212PwError(true);setT212PwInput('')}}}
+              style={{ appearance:'none', background:C.accent, color:'#fff', border:'none', borderRadius:10, padding:'12px 24px', fontWeight:800, fontSize:15, cursor:'pointer', width:'100%' }}>
+              Unlock
+            </button>
           </div>
         </div>
       )
     }
 
+    // ── Single stock card — used in both pie and flat views ──────────────────
+    const T212Card = ({p, compact=false}) => {
+      const ai  = t212Result?.holdings?.find(h => h.ticker === p.ticker)
+      const tc  = techMap[p.ticker] || {}
+      const nd  = newsData[p.ticker] || {}
+      const eh  = getEH(p.ticker)
+      const border = ai ? ac(ai.action) : (p.gainPct >= 0 ? C.up : C.down)
+      const isUp   = p.gainPct >= 0
+      return (
+        <div style={{ background:C.bg, borderRadius:12, padding:compact?12:16, borderLeft:`4px solid ${border}` }}>
+          {/* Header */}
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:10, flexWrap:'wrap', gap:6 }}>
+            <div>
+              <span style={{ fontFamily:FM, fontWeight:900, fontSize:compact?16:20, color:C.text }}>{p.ticker}</span>
+              <span style={{ color:C.muted, fontSize:11, marginLeft:6 }}>{p.quantity?.toFixed?.(4)||p.quantity} shares</span>
+              {p.pieName && !compact && <div style={{ color:C.accent, fontSize:11, marginTop:2 }}>🥧 {p.pieName}</div>}
+            </div>
+            <div style={{ display:'flex', gap:6, alignItems:'center', flexWrap:'wrap' }}>
+              <span style={{ color:isUp?C.up:C.down, fontFamily:FM, fontWeight:800, fontSize:compact?13:15 }}>
+                {isUp?'+':''}{p.gainPct}%
+              </span>
+              <span style={{ color:isUp?C.up:C.down, fontSize:12 }}>({isUp?'+':''}£{p.ppl})</span>
+              {ai && <span style={{ background:abg(ai.action), color:ac(ai.action), borderRadius:7, padding:'3px 10px', fontWeight:800, fontSize:12 }}>{ai.action}</span>}
+            </div>
+          </div>
+
+          {/* Price grid */}
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:6, marginBottom:ai?.recommendation?10:0 }}>
+            {[['Bought','£'+(p.averagePrice?.toFixed(2)||'?')],['Now','£'+(p.currentPrice?.toFixed(2)||'?')],['Value','£'+(p.totalValue?.toFixed(0)||'?')]].map(([l,v])=>(
+              <div key={l} style={{ background:C.card, borderRadius:7, padding:'6px 8px' }}>
+                <div style={{ ...LBL, fontSize:9 }}>{l}</div>
+                <div style={{ fontFamily:FM, fontWeight:700, fontSize:12 }}>{v}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* AI recommendation */}
+          {ai?.recommendation && <div style={{ color:C.sub, fontSize:12, lineHeight:1.55, marginBottom:8, marginTop:8 }}>{ai.recommendation}</div>}
+
+          {/* Entry/exit hints */}
+          {ai?.action==='BUY MORE' && ai.entryIfBuyMore && (
+            <div style={{ background:C.upBg, borderRadius:7, padding:'5px 8px', marginTop:6 }}>
+              <span style={{ color:C.up, fontWeight:700, fontSize:12 }}>Buy more at: {ai.entryIfBuyMore}</span>
+            </div>
+          )}
+          {(ai?.action==='TRIM'||ai?.action==='SELL ALL') && ai.exitIfSell && (
+            <div style={{ background:C.amberBg, borderRadius:7, padding:'5px 8px', marginTop:6 }}>
+              <span style={{ color:C.amber, fontWeight:700, fontSize:12 }}>{ai.action==='TRIM'?'Trim at:':'Sell at:'} {ai.exitIfSell}</span>
+            </div>
+          )}
+
+          {/* SMA trend badge */}
+          {tc.trend && tc.trend !== 'UNKNOWN' && (
+            <div style={{ marginTop:8 }}>
+              <Pill tone={tc.trend==='STRONG UPTREND'?'green':tc.trend==='PULLBACK IN UPTREND'?'blue':tc.trend==='RECOVERING'?'amber':'red'} size="sm">
+                📈 {tc.trend}
+              </Pill>
+            </div>
+          )}
+
+          {/* News headline */}
+          {nd.news?.[0] && (
+            <div style={{ color:C.muted, fontSize:11, marginTop:6, fontStyle:'italic', lineHeight:1.4 }}>
+              {nd.news[0].date}: {nd.news[0].headline.slice(0,80)}…
+            </div>
+          )}
+
+          {/* Earnings history */}
+          {eh && <div style={{ color:C.purple, fontSize:11, marginTop:4, fontWeight:600 }}>{eh.label}</div>}
+
+          {/* Urgency */}
+          {ai?.urgency==='NOW' && <div style={{ color:C.down, fontSize:11, fontWeight:700, marginTop:6 }}>🔴 ACT NOW</div>}
+          {ai?.urgency==='THIS WEEK' && <div style={{ color:C.amber, fontSize:11, fontWeight:700, marginTop:6 }}>🟡 THIS WEEK</div>}
+        </div>
+      )
+    }
+
+    // ── Group positions by pieName — fallback: check if ticker is known pie stock ──
+    // T212 sometimes doesn't tag ETF pies correctly, so we also group by totalValue proximity
+    const buildGroups = (positions) => {
+      const pies = {}, direct = []
+      positions.forEach(p => {
+        if (p.pieName) {
+          if (!pies[p.pieName]) pies[p.pieName] = []
+          pies[p.pieName].push(p)
+        } else {
+          direct.push(p)
+        }
+      })
+      return { pies, direct }
+    }
+
     return (
       <div>
+        {/* Header bar */}
         <div style={{ ...card({ marginBottom:14, padding:'14px 18px' }), display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:10 }}>
           <div>
             <div style={{ color:C.text, fontWeight:800, fontSize:18 }}>🏦 Trading 212 Live Portfolio</div>
-            <div style={{ color:C.muted, fontSize:12, marginTop:2 }}>{t212Data ? `${t212Data.env||'LIVE'} · Updated ${new Date(t212Data.fetchedAt).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}` : 'Not loaded'}</div>
+            <div style={{ color:C.muted, fontSize:12, marginTop:2 }}>
+              {t212Data ? `${t212Data.env||'LIVE'} · Updated ${new Date(t212Data.fetchedAt).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}` : 'Not loaded'}
+            </div>
           </div>
           <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-            <button onClick={fetchT212} disabled={t212Loading} style={{ appearance:'none', background:C.accent, color:'#fff', border:'none', borderRadius:8, padding:'9px 16px', fontWeight:700, fontSize:13, cursor:'pointer' }}>{t212Loading?'⟳ Loading…':'⟳ Refresh'}</button>
-            {t212Data && !t212AnalysisLoad && <button onClick={analyseT212} style={{ appearance:'none', background:C.up, color:'#fff', border:'none', borderRadius:8, padding:'9px 16px', fontWeight:700, fontSize:13, cursor:'pointer' }}>⚡ Analyse</button>}
-            {t212AnalysisLoad && <span style={{ color:C.muted, fontSize:13, padding:'9px 0' }}>⟳ Analysing…</span>}
-            <button onClick={()=>{setT212Unlocked(false);setT212PwInput('');try{sessionStorage.removeItem('catalyst_t212_auth')}catch{}}} style={{ appearance:'none', background:'none', border:`1px solid ${C.border}`, borderRadius:8, padding:'9px 12px', color:C.muted, fontSize:12, cursor:'pointer', fontWeight:600 }}>🔒 Lock</button>
+            <button onClick={fetchT212} disabled={t212Loading}
+              style={{ appearance:'none', background:C.accent, color:'#fff', border:'none', borderRadius:8, padding:'9px 16px', fontWeight:700, fontSize:13, cursor:'pointer' }}>
+              {t212Loading ? '⟳ Loading…' : '⟳ Refresh'}
+            </button>
+            {t212Data && !t212AnalysisLoad && (
+              <button onClick={analyseT212}
+                style={{ appearance:'none', background:C.up, color:'#fff', border:'none', borderRadius:8, padding:'9px 16px', fontWeight:700, fontSize:13, cursor:'pointer' }}>
+                ⚡ Analyse portfolio
+              </button>
+            )}
+            {t212AnalysisLoad && <span style={{ color:C.muted, fontSize:13, padding:'9px 0' }}>⟳ AI analysing…</span>}
+            <button onClick={()=>{setT212Unlocked(false);setT212PwInput('');try{sessionStorage.removeItem('catalyst_t212_auth')}catch{}}}
+              style={{ appearance:'none', background:'none', border:`1px solid ${C.border}`, borderRadius:8, padding:'9px 12px', color:C.muted, fontSize:12, cursor:'pointer' }}>
+              🔒 Lock
+            </button>
           </div>
         </div>
 
-        {t212Error?.includes('credentials not configured') && (
+        {/* Setup instructions */}
+        {t212Error?.includes('credentials') && (
           <div style={{ ...card({ borderLeft:`4px solid ${C.amber}`, marginBottom:14 }) }}>
             <div style={{ color:C.amber, fontWeight:800, fontSize:15, marginBottom:8 }}>⚙️ Setup required</div>
             <div style={{ color:C.sub, fontSize:14, lineHeight:1.85 }}>
-              Trading 212 requires two credentials — a Key and a Secret.<br/><br/>
-              <strong>Step 1:</strong> T212 app → Settings → API (Beta) → Generate API key<br/>
-              <strong>Step 2:</strong> Copy BOTH the Key and Secret (secret shown only once)<br/>
-              <strong>Step 3:</strong> Vercel → Environment Variables:<br/>
+              T212 requires two credentials. T212 app → Settings → API (Beta) → Generate API key.<br/>
+              Copy BOTH the Key and Secret. Add to Vercel env vars:<br/>
               <code style={{ background:C.bg, padding:'2px 6px', borderRadius:4, display:'block', margin:'4px 0' }}>TRADING212_API_KEY = your key</code>
               <code style={{ background:C.bg, padding:'2px 6px', borderRadius:4, display:'block', margin:'4px 0' }}>TRADING212_API_SECRET = your secret</code>
-              <strong>Step 4:</strong> Redeploy
             </div>
           </div>
         )}
 
-        {t212Error && !t212Error.includes('credentials') && <div style={{ ...card({ borderLeft:`4px solid ${C.down}`, marginBottom:14 }), padding:'14px 18px' }}><div style={{ color:C.down, fontWeight:700 }}>Error: {t212Error}</div></div>}
+        {t212Error && !t212Error.includes('credentials') && (
+          <div style={{ ...card({ borderLeft:`4px solid ${C.down}`, marginBottom:14, padding:'14px 18px' }) }}>
+            <div style={{ color:C.down, fontWeight:700 }}>Error: {t212Error}</div>
+          </div>
+        )}
 
         {!t212Data && !t212Loading && !t212Error && (
           <div style={{ ...card({ textAlign:'center', padding:48 }) }}>
             <div style={{ fontSize:36, marginBottom:12 }}>🏦</div>
-            <div style={{ color:C.text, fontWeight:700, fontSize:18, marginBottom:8 }}>Ready to connect</div>
-            <button onClick={fetchT212} style={{ appearance:'none', background:C.accent, color:'#fff', border:'none', borderRadius:10, padding:'12px 24px', fontWeight:800, fontSize:15, cursor:'pointer' }}>Load my T212 portfolio</button>
+            <div style={{ color:C.text, fontWeight:700, fontSize:18, marginBottom:16 }}>Connect your Trading 212 account</div>
+            <button onClick={fetchT212}
+              style={{ appearance:'none', background:C.accent, color:'#fff', border:'none', borderRadius:10, padding:'12px 24px', fontWeight:800, fontSize:15, cursor:'pointer' }}>
+              Load my T212 portfolio
+            </button>
           </div>
         )}
 
-        {t212Loading && <div style={{ ...card({ textAlign:'center', padding:40 }) }}><div style={{ color:C.muted, fontSize:14 }}>⟳ Fetching positions from Trading 212…</div></div>}
+        {t212Loading && (
+          <div style={{ ...card({ textAlign:'center', padding:40 }) }}>
+            <div style={{ color:C.muted, fontSize:14 }}>⟳ Fetching your positions from Trading 212…</div>
+          </div>
+        )}
 
+        {/* Cash summary */}
         {t212Data?.cash && (
           <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))', gap:10, marginBottom:14 }}>
             {[['Free Cash',`£${t212Data.cash.free}`,C.up],['Invested',`£${t212Data.cash.invested}`,C.accent],['Total Value',`£${t212Data.cash.total}`,C.text],['Total P&L',`£${t212Data.cash.ppl}`,parseFloat(t212Data.cash.ppl)>=0?C.up:C.down]].map(([lbl,val,color])=>(
-              <div key={lbl} style={{ ...card({ padding:14 }) }}><div style={LBL}>{lbl}</div><div style={{ color, fontFamily:FM, fontWeight:800, fontSize:20 }}>{val}</div></div>
+              <div key={lbl} style={{ ...card({ padding:14 }) }}>
+                <div style={LBL}>{lbl}</div>
+                <div style={{ color, fontFamily:FM, fontWeight:800, fontSize:20 }}>{val}</div>
+              </div>
             ))}
           </div>
         )}
 
+        {/* AI portfolio summary */}
         {t212Result && (
-          <div style={{ ...card({ marginBottom:14, borderLeft:`4px solid ${healthColor(t212Result.portfolioHealth)}` }) }}>
-            <div style={{ display:'flex', gap:10, alignItems:'center', marginBottom:12, flexWrap:'wrap' }}>
-              <Pill tone={t212Result.portfolioHealth==='STRONG'?'green':t212Result.portfolioHealth==='GOOD'?'blue':t212Result.portfolioHealth==='CAUTION'?'amber':'red'} size="lg">{t212Result.portfolioHealth||'ANALYSED'}</Pill>
+          <div style={{ ...card({ marginBottom:14, borderLeft:`4px solid ${t212Result.portfolioHealth==='STRONG'?C.up:t212Result.portfolioHealth==='GOOD'?C.accent:t212Result.portfolioHealth==='CAUTION'?C.amber:C.down}` }) }}>
+            <div style={{ display:'flex', gap:10, alignItems:'center', marginBottom:10, flexWrap:'wrap' }}>
+              <Pill tone={t212Result.portfolioHealth==='STRONG'?'green':t212Result.portfolioHealth==='GOOD'?'blue':t212Result.portfolioHealth==='CAUTION'?'amber':'red'} size="lg">
+                {t212Result.portfolioHealth || 'ANALYSED'}
+              </Pill>
               {t212Result.topAction && <span style={{ color:C.sub, fontSize:14, fontWeight:600 }}>→ {t212Result.topAction}</span>}
             </div>
-            {t212Result.overallSummary && <div style={{ color:C.sub, fontSize:14, lineHeight:1.6, marginBottom:8 }}>{t212Result.overallSummary}</div>}
+            {t212Result.overallSummary && <div style={{ color:C.sub, fontSize:14, lineHeight:1.6, marginBottom:6 }}>{t212Result.overallSummary}</div>}
             {t212Result.cashAdvice && <div style={{ color:C.muted, fontSize:13 }}>{t212Result.cashAdvice}</div>}
           </div>
         )}
 
-        {t212Data?.positions?.length > 0 && (
-          <>
-            <div style={{ display:'flex', gap:8, marginBottom:14, alignItems:'center' }}>
-              <span style={{ color:C.muted, fontSize:13, fontWeight:600 }}>View:</span>
-              {['pies','stocks'].map(mode => (
-                <button key={mode} onClick={() => setT212ViewMode(mode)} style={{ appearance:'none', border:`1.5px solid ${t212ViewMode===mode?C.accent:C.border}`, background:t212ViewMode===mode?C.accent:C.card, color:t212ViewMode===mode?'#fff':C.sub, borderRadius:8, padding:'7px 14px', fontWeight:700, fontSize:13, cursor:'pointer' }}>
-                  {mode==='pies'?'🥧 By Pie':'📋 All Stocks'}
-                </button>
-              ))}
-            </div>
+        {/* Positions */}
+        {t212Data?.positions?.length > 0 && (() => {
+          const { pies, direct } = buildGroups(t212Data.positions)
+          const pieDataMap = {}
+          ;(t212Data.pies||[]).forEach(pie => { pieDataMap[pie.name] = pie })
 
-            {t212ViewMode === 'stocks' && (
-              <div style={{ display:'grid', gridTemplateColumns:mob?'1fr':'repeat(auto-fill,minmax(300px,1fr))', gap:12, marginBottom:18 }}>
-                {t212Data.positions.map((p,i) => {
-                  const ai = t212Result?.holdings?.find(h=>h.ticker===p.ticker)
-                  return (
-                    <div key={i} style={{ ...card({ borderLeft:`5px solid ${ai?actionColor(ai.action):(p.gainPct>=0?C.up:C.down)}` }) }}>
-                      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:10 }}>
-                        <div><span style={{ fontFamily:FM, fontWeight:900, fontSize:22, color:C.text }}>{p.ticker}</span><span style={{ color:C.muted, fontSize:12, marginLeft:8 }}>{p.quantity} shares</span>{p.pieName&&<span style={{ color:C.accent, fontSize:11, marginLeft:8 }}>🥧 {p.pieName}</span>}</div>
-                        <div style={{ display:'flex', gap:6, alignItems:'center' }}><span style={{ color:p.gainPct>=0?C.up:C.down, fontFamily:FM, fontWeight:800, fontSize:15 }}>{p.gainPct>=0?'+':''}{p.gainPct}%</span>{ai&&<span style={{ background:actionBg(ai.action), color:actionColor(ai.action), borderRadius:8, padding:'4px 10px', fontWeight:800, fontSize:12 }}>{ai.action}</span>}</div>
-                      </div>
-                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8, marginBottom:10 }}>
-                        {[['Bought',`£${p.averagePrice?.toFixed(2)}`],['Now',`£${p.currentPrice?.toFixed(2)}`],['P&L',`${p.ppl>=0?'+':''}£${p.ppl}`]].map(([l,v])=>(
-                          <div key={l} style={{ background:C.bg, borderRadius:8, padding:'8px 10px' }}><div style={{ ...LBL, fontSize:10 }}>{l}</div><div style={{ fontFamily:FM, fontWeight:700, fontSize:14 }}>{v}</div></div>
-                        ))}
-                      </div>
-                      {ai?.recommendation && <div style={{ color:C.sub, fontSize:13, lineHeight:1.6 }}>{ai.recommendation}</div>}
-                    </div>
-                  )
-                })}
+          return (
+            <>
+              {/* View toggle */}
+              <div style={{ display:'flex', gap:8, marginBottom:14, alignItems:'center' }}>
+                <span style={{ color:C.muted, fontSize:13, fontWeight:600 }}>View:</span>
+                {['pies','stocks'].map(mode => (
+                  <button key={mode} onClick={() => setT212ViewMode(mode)} style={{ appearance:'none', border:`1.5px solid ${t212ViewMode===mode?C.accent:C.border}`, background:t212ViewMode===mode?C.accent:C.card, color:t212ViewMode===mode?'#fff':C.sub, borderRadius:8, padding:'7px 14px', fontWeight:700, fontSize:13, cursor:'pointer' }}>
+                    {mode==='pies' ? '🥧 By Pie' : '📋 All Stocks'}
+                  </button>
+                ))}
               </div>
-            )}
 
-            {t212ViewMode === 'pies' && (() => {
-              const pieGroups = {}, directHoldings = []
-              t212Data.positions.forEach(p => { if(p.pieName){if(!pieGroups[p.pieName])pieGroups[p.pieName]=[];pieGroups[p.pieName].push(p)}else directHoldings.push(p) })
-              const pieData = {}
-              ;(t212Data.pies||[]).forEach(pie=>{pieData[pie.name]=pie})
-
-              const StockCard = ({p}) => {
-                const ai = t212Result?.holdings?.find(h=>h.ticker===p.ticker)
-                return (
-                  <div style={{ background:C.bg, borderRadius:12, padding:14, borderLeft:`4px solid ${ai?actionColor(ai.action):(p.gainPct>=0?C.up:C.down)}` }}>
-                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:8, flexWrap:'wrap', gap:6 }}>
-                      <div><span style={{ fontFamily:FM, fontWeight:900, fontSize:16, color:C.text }}>{p.ticker}</span><span style={{ color:C.muted, fontSize:11, marginLeft:6 }}>{p.quantity?.toFixed?.(4)||p.quantity}</span></div>
-                      <div style={{ display:'flex', gap:6, alignItems:'center' }}><span style={{ color:p.gainPct>=0?C.up:C.down, fontFamily:FM, fontWeight:800, fontSize:13 }}>{p.gainPct>=0?'+':''}{p.gainPct}%</span>{ai&&<span style={{ background:actionBg(ai.action), color:actionColor(ai.action), borderRadius:6, padding:'3px 8px', fontWeight:800, fontSize:11 }}>{ai.action}</span>}</div>
-                    </div>
-                    <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:6, marginBottom:ai?.recommendation?8:0 }}>
-                      {[['Bought',`£${p.averagePrice?.toFixed(2)}`],['Now',`£${p.currentPrice?.toFixed(2)}`],['Value',`£${p.totalValue?.toFixed(2)}`]].map(([l,v])=>(
-                        <div key={l} style={{ background:C.card, borderRadius:6, padding:'6px 8px' }}><div style={{ ...LBL, fontSize:9 }}>{l}</div><div style={{ fontFamily:FM, fontWeight:700, fontSize:12 }}>{v}</div></div>
-                      ))}
-                    </div>
-                    {ai?.recommendation && <div style={{ color:C.sub, fontSize:12, lineHeight:1.5 }}>{ai.recommendation}</div>}
-                  </div>
-                )
-              }
-
-              return (
+              {/* ── BY PIE VIEW ──────────────────────────────────────────── */}
+              {t212ViewMode === 'pies' && (
                 <div style={{ display:'grid', gap:16, marginBottom:18 }}>
-                  {Object.entries(pieGroups).map(([pieName, stocks]) => {
-                    const pd = pieData[pieName]
-                    const isOpen = expandedPies[pieName] !== false
-                    const totalPPL = pd?.ppl ?? stocks.reduce((s,p)=>s+p.ppl,0)
-                    const totalVal = pd?.totalValue ?? stocks.reduce((s,p)=>s+p.totalValue,0)
-                    const gainPct  = pd?.gainPct ?? (stocks.reduce((s,p)=>s+p.gainPct,0)/stocks.length)
-                    const pplColor = totalPPL>=0?C.up:C.down
-                    const stockActions = stocks.map(p=>t212Result?.holdings?.find(h=>h.ticker===p.ticker)?.action).filter(Boolean)
+                  {/* Pies */}
+                  {Object.entries(pies).map(([pieName, stocks]) => {
+                    const pd      = pieDataMap[pieName]
+                    const isOpen  = expandedPies[pieName] !== false
+                    const totalPPL= pd?.ppl ?? stocks.reduce((s,p)=>s+(p.ppl||0),0)
+                    const totalVal= pd?.totalValue ?? stocks.reduce((s,p)=>s+(p.totalValue||0),0)
+                    const gainPct = pd?.gainPct ?? (stocks.length ? stocks.reduce((s,p)=>s+(p.gainPct||0),0)/stocks.length : 0)
+                    const pplColor= totalPPL >= 0 ? C.up : C.down
+                    const stockActions = stocks.map(p => t212Result?.holdings?.find(h=>h.ticker===p.ticker)?.action).filter(Boolean)
                     const pieVerdict = stockActions.some(a=>a==='SELL ALL')?'SELL ALL':stockActions.some(a=>a==='TRIM')?'TRIM':stockActions.some(a=>a==='BUY MORE')?'BUY MORE':'HOLD'
                     return (
                       <div key={pieName} style={{ ...card({ padding:0, overflow:'hidden' }) }}>
-                        <button onClick={()=>setExpandedPies(prev=>({...prev,[pieName]:!isOpen}))} style={{ appearance:'none', width:'100%', background:'none', border:'none', cursor:'pointer', padding:'16px 18px', textAlign:'left' }}>
+                        <button onClick={()=>setExpandedPies(prev=>({...prev,[pieName]:!isOpen}))}
+                          style={{ appearance:'none', width:'100%', background:'none', border:'none', cursor:'pointer', padding:'16px 18px', textAlign:'left' }}>
                           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:10 }}>
                             <div style={{ display:'flex', alignItems:'center', gap:10 }}>
                               <span style={{ fontSize:20 }}>🥧</span>
-                              <div><div style={{ color:C.text, fontWeight:800, fontSize:17 }}>{pieName}</div><div style={{ color:C.muted, fontSize:12, marginTop:2 }}>{stocks.length} stocks</div></div>
+                              <div>
+                                <div style={{ color:C.text, fontWeight:800, fontSize:17 }}>{pieName}</div>
+                                <div style={{ color:C.muted, fontSize:12 }}>{stocks.length} stocks · {isOpen?'collapse':'expand'}</div>
+                              </div>
                             </div>
                             <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap' }}>
                               <div style={{ textAlign:'right' }}>
                                 <div style={{ color:C.text, fontFamily:FM, fontWeight:800, fontSize:18 }}>£{totalVal?.toFixed(2)}</div>
                                 <div style={{ color:pplColor, fontFamily:FM, fontWeight:700, fontSize:13 }}>{totalPPL>=0?'+':''}£{totalPPL?.toFixed(2)} ({gainPct>=0?'+':''}{gainPct?.toFixed(1)}%)</div>
                               </div>
-                              {t212Result && <span style={{ background:actionBg(pieVerdict), color:actionColor(pieVerdict), borderRadius:8, padding:'6px 12px', fontWeight:800, fontSize:13 }}>{pieVerdict}</span>}
+                              {t212Result && stockActions.length > 0 && (
+                                <span style={{ background:abg(pieVerdict), color:ac(pieVerdict), borderRadius:8, padding:'6px 12px', fontWeight:800, fontSize:13 }}>{pieVerdict}</span>
+                              )}
                               <span style={{ color:C.muted, fontSize:18 }}>{isOpen?'▲':'▼'}</span>
                             </div>
                           </div>
                         </button>
                         {isOpen && (
                           <div style={{ padding:'0 14px 14px' }}>
-                            {t212Result && <div style={{ background:C.bg, borderRadius:10, padding:'10px 14px', marginBottom:12, fontSize:13, color:C.sub }}><strong>Summary:</strong> {stockActions.filter(a=>a==='BUY MORE').length} BUY MORE · {stockActions.filter(a=>a==='HOLD').length} HOLD · {stockActions.filter(a=>a==='TRIM').length} TRIM · {stockActions.filter(a=>a==='SELL ALL').length} SELL</div>}
-                            <div style={{ display:'grid', gridTemplateColumns:mob?'1fr':'repeat(auto-fill,minmax(240px,1fr))', gap:10 }}>
-                              {stocks.map((p,i)=><StockCard key={i} p={p}/>)}
+                            {t212Result && stockActions.length > 0 && (
+                              <div style={{ background:C.bg, borderRadius:10, padding:'10px 14px', marginBottom:12, fontSize:13, color:C.sub }}>
+                                <strong>Summary:</strong> {stockActions.filter(a=>a==='BUY MORE').length} BUY MORE · {stockActions.filter(a=>a==='HOLD').length} HOLD · {stockActions.filter(a=>a==='TRIM').length} TRIM · {stockActions.filter(a=>a==='SELL ALL').length} SELL
+                              </div>
+                            )}
+                            <div style={{ display:'grid', gridTemplateColumns:mob?'1fr':'repeat(auto-fill,minmax(260px,1fr))', gap:10 }}>
+                              {stocks.map((p,i) => <T212Card key={i} p={p} compact />)}
                             </div>
                           </div>
                         )}
                       </div>
                     )
                   })}
-                  {directHoldings.length>0 && (
+
+                  {/* Direct Holdings */}
+                  {direct.length > 0 && (
                     <div style={{ ...card({ padding:0, overflow:'hidden' }) }}>
-                      <button onClick={()=>setExpandedPies(prev=>({...prev,'__direct__':!(prev['__direct__']!==false)}))} style={{ appearance:'none', width:'100%', background:'none', border:'none', cursor:'pointer', padding:'16px 18px', textAlign:'left' }}>
+                      <button onClick={()=>setExpandedPies(prev=>({...prev,'__direct__':!(prev['__direct__']!==false)}))}
+                        style={{ appearance:'none', width:'100%', background:'none', border:'none', cursor:'pointer', padding:'16px 18px', textAlign:'left' }}>
                         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-                          <div style={{ display:'flex', alignItems:'center', gap:10 }}><span style={{ fontSize:20 }}>📋</span><div><div style={{ color:C.text, fontWeight:800, fontSize:17 }}>Direct Holdings</div><div style={{ color:C.muted, fontSize:12 }}>{directHoldings.length} stocks</div></div></div>
+                          <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                            <span style={{ fontSize:20 }}>📋</span>
+                            <div>
+                              <div style={{ color:C.text, fontWeight:800, fontSize:17 }}>Direct Holdings</div>
+                              <div style={{ color:C.muted, fontSize:12 }}>{direct.length} stocks</div>
+                            </div>
+                          </div>
                           <div style={{ display:'flex', gap:10, alignItems:'center' }}>
-                            <div style={{ textAlign:'right' }}><div style={{ color:C.text, fontFamily:FM, fontWeight:800, fontSize:18 }}>£{directHoldings.reduce((s,p)=>s+p.totalValue,0).toFixed(2)}</div></div>
+                            <div style={{ textAlign:'right' }}>
+                              <div style={{ color:C.text, fontFamily:FM, fontWeight:800, fontSize:18 }}>£{direct.reduce((s,p)=>s+(p.totalValue||0),0).toFixed(2)}</div>
+                              <div style={{ color:direct.reduce((s,p)=>s+(p.ppl||0),0)>=0?C.up:C.down, fontFamily:FM, fontWeight:700, fontSize:13 }}>
+                                {direct.reduce((s,p)=>s+(p.ppl||0),0)>=0?'+':''}£{direct.reduce((s,p)=>s+(p.ppl||0),0).toFixed(2)}
+                              </div>
+                            </div>
                             <span style={{ color:C.muted, fontSize:18 }}>{expandedPies['__direct__']===false?'▼':'▲'}</span>
                           </div>
                         </div>
                       </button>
-                      {expandedPies['__direct__']!==false && <div style={{ padding:'0 14px 14px', display:'grid', gridTemplateColumns:mob?'1fr':'repeat(auto-fill,minmax(240px,1fr))', gap:10 }}>{directHoldings.map((p,i)=><div key={i} style={{ ...card(), borderLeft:`4px solid ${p.gainPct>=0?C.up:C.down}` }}><div style={{ display:'flex', justifyContent:'space-between' }}><span style={{ fontFamily:FM, fontWeight:900, fontSize:18 }}>{p.ticker}</span><span style={{ color:p.gainPct>=0?C.up:C.down, fontWeight:800 }}>{p.gainPct>=0?'+':''}{p.gainPct}%</span></div><div style={{ color:C.muted, fontSize:12, marginTop:4 }}>£{p.averagePrice?.toFixed(2)} → £{p.currentPrice?.toFixed(2)} · P&L {p.ppl>=0?'+':''}£{p.ppl}</div></div>)}</div>}
+                      {expandedPies['__direct__'] !== false && (
+                        <div style={{ padding:'0 14px 14px', display:'grid', gridTemplateColumns:mob?'1fr':'repeat(auto-fill,minmax(260px,1fr))', gap:10 }}>
+                          {direct.map((p,i) => <T212Card key={i} p={p} />)}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
-              )
-            })()}
-          </>
-        )}
+              )}
 
+              {/* ── ALL STOCKS VIEW ──────────────────────────────────────── */}
+              {t212ViewMode === 'stocks' && (
+                <div style={{ display:'grid', gridTemplateColumns:mob?'1fr':'repeat(auto-fill,minmax(280px,1fr))', gap:12, marginBottom:18 }}>
+                  {t212Data.positions.map((p,i) => <T212Card key={i} p={p} />)}
+                </div>
+              )}
+            </>
+          )
+        })()}
+
+        {/* Pending orders */}
         {t212Data?.pendingOrders?.length > 0 && (
           <div style={{ ...card({ marginBottom:14 }) }}>
             <div style={{ ...LBL, marginBottom:12 }}>⏳ PENDING ORDERS</div>
             <div style={{ display:'grid', gap:8 }}>
               {t212Data.pendingOrders.map((o,i) => {
                 const advice = t212Result?.pendingOrdersAdvice?.find(a=>a.ticker===o.ticker)
-                const verdictColor = advice?.verdict==='KEEP'?C.up:advice?.verdict==='CANCEL'?C.down:C.amber
                 return (
                   <div key={i} style={{ display:'flex', gap:10, alignItems:'center', background:C.bg, borderRadius:8, padding:'10px 14px', flexWrap:'wrap' }}>
                     <span style={{ background:o.side==='BUY'?C.upBg:C.amberBg, color:o.side==='BUY'?C.up:C.amber, borderRadius:6, padding:'3px 8px', fontWeight:800, fontSize:12 }}>{o.side}</span>
                     <span style={{ fontFamily:FM, fontWeight:800, fontSize:15 }}>{o.ticker}</span>
                     <span style={{ color:C.sub, fontSize:13 }}>{o.quantity} shares @ £{o.limitPrice}</span>
-                    {advice && <><span style={{ color:verdictColor, fontWeight:800, fontSize:13 }}>{advice.verdict}</span><span style={{ color:C.muted, fontSize:12 }}>{advice.reason}</span></>}
+                    {advice && (
+                      <>
+                        <span style={{ color:advice.verdict==='KEEP'?C.up:advice.verdict==='CANCEL'?C.down:C.amber, fontWeight:800, fontSize:13 }}>{advice.verdict}</span>
+                        <span style={{ color:C.muted, fontSize:12 }}>{advice.reason}</span>
+                      </>
+                    )}
                   </div>
                 )
               })}
@@ -2204,7 +2337,7 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
     )
   }
 
-  // ── renderContent ──────────────────────────────────────────────────────────
+
   function renderContent() {
     if (activeTab === 'portfolio') return renderPortfolio()
     if (activeTab === 't212')      return renderT212()
