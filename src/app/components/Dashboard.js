@@ -697,39 +697,22 @@ export default function Dashboard() {
   }, [liveEH])
 
   const claude = useCallback(async (prompt, mode='json') => {
-    // Call Anthropic directly from browser — bypasses Vercel's 10s function timeout
-    const systemMap = {
-      cio:      'You are a trading analyst. Output ONLY raw JSON. No markdown, no backticks. Start with { end with }. Rules: use live prices given, never guess dates, plain English output.',
-      deepdive: 'You are a trading analyst. Write clear analysis for beginners. Label each sentence FACT, ANALYSIS or OPINION. Under 280 words.',
-      json:     'Output ONLY raw JSON. No markdown, no backticks. Start with {',
-    }
-    const tokenMap = { cio: 6000, deepdive: 900, json: 1500 }
-    const modelMap  = {
-      cio:      'claude-sonnet-4-6',          // Best reasoning for investment analysis
-      deepdive: 'claude-sonnet-4-6',          // Richer deep dive analysis
-      json:     'claude-haiku-4-5-20251001',  // Fast + cheap for simple JSON transforms
-    }
-
-    const apiKey = process.env.NEXT_PUBLIC_ANTHROPIC_API_KEY
-    if (!apiKey) throw new Error('NEXT_PUBLIC_ANTHROPIC_API_KEY not set in Vercel environment variables')
-
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
+    // Use streaming via /api/claude — collects full streamed response,
+    // bypassing Vercel timeout by using Edge runtime (no 10s limit)
+    const r = await fetch('/api/claude', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
-      body: JSON.stringify({
-        model:      modelMap[mode] || modelMap.json,
-        max_tokens: tokenMap[mode] || 1500,
-        system:     systemMap[mode] || systemMap.json,
-        messages:   [{ role: 'user', content: prompt.trim() }],
-      }),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, mode }),
     })
+    // Handle streaming response
+    if (r.headers.get('content-type')?.includes('text/plain')) {
+      const text = await r.text()
+      if (!r.ok) throw new Error(text || `Claude ${r.status}`)
+      return text
+    }
+    // Handle regular JSON response
     const d = await r.json()
-    if (!r.ok) throw new Error(d.error?.message || `Anthropic API error ${r.status}`)
+    if (!r.ok) throw new Error(d.error || `Claude ${r.status}`)
     const tb = d.content?.find(b => b.type === 'text')
     if (!tb) throw new Error('No text in Claude response')
     return tb.text
