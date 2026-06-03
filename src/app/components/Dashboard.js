@@ -646,7 +646,7 @@ const PORTFOLIO_PASSWORD = (
 // ─── Tabs ─────────────────────────────────────────────────────────────────────
 const TABS = [
   { key:'opportunities', label:'⚡ Opportunities' },
-  { key:'portfolio',     label:'💼 My Portfolio' }, // password protected — manual input
+  { key:'portfolio',     label:'🔍 Stock Analyser' },
   { key:'t212',          label:'🏦 T212 Live' },    // password protected — Trading 212 API
   { key:'global',        label:'🌍 Global Macro' },
   { key:'risk',          label:'⚠️ Risk' },
@@ -678,10 +678,7 @@ export default function Dashboard() {
   const [showAllOpps,        setShowAllOpps]        = useState(false)
   const [expandedWatchlist,  setExpandedWatchlist]  = useState(false)
   // Portfolio password gate — stored in sessionStorage (cleared on browser close)
-  const [portfolioUnlocked, setPortfolioUnlocked] = useState(false)
   const [loadingStep, setLoadingStep] = useState('')
-  const [passwordInput,     setPasswordInput]     = useState('')
-  const [passwordError,     setPasswordError]     = useState(false)
   // Live earnings history — fetched from /api/earnings-history, cached 24h
   // Falls back to hardcoded EH if fetch fails
   const [liveEH,      setLiveEH]      = useState({})
@@ -1111,116 +1108,85 @@ Keep total response under 280 words. Plain English only — no trading jargon.`,
   }, [])
 
   const analysePortfolio = useCallback(async () => {
-    if (!holdings.length) return
+    const ticker = newTicker.trim().toUpperCase()
+    if (!ticker) return
     setPortfolioLoading(true)
     setPortfolioError(null)
     setPortfolioResult(null)
     try {
-      // Fetch only the prices we need — much faster than loading all 44 universe stocks
-      const tickers = holdings.map(h => h.ticker)
-      const [priceRes, marketRes] = await Promise.all([
-        fetch(`/api/prices?symbols=${tickers.join(',')}`, { cache: 'no-store' }),
-        fetch('/api/market?type=global', { cache: 'no-store' }),  // VIX + sectors only
+      // Fetch live price, SMA technicals, news+analyst, market context — all parallel
+      const [priceRes, techRes, newsRes, marketRes] = await Promise.allSettled([
+        fetch('/api/prices?symbols=' + ticker, { cache:'no-store' }),
+        fetch('/api/technicals?symbols=' + ticker, { cache:'no-store' }),
+        fetch('/api/news?symbols=' + ticker, { cache:'no-store' }),
+        fetch('/api/market?type=global', { cache:'no-store' }),
       ])
-      const priceData  = await priceRes.json()
-      const marketData = await marketRes.json()
-      const priceMap = {}
-      Object.entries(priceData.prices || {}).forEach(([ticker, q]) => {
-        if (q) priceMap[ticker] = q
-      })
-      // Attach vix/sectors from global endpoint
-      priceData.vix      = marketData.vix
-      priceData.vixRegime= marketData.vixRegime
-      priceData.sectors  = marketData.sectors
 
-      // Build holdings with live prices
-      const enriched = holdings.map(h => {
-        const live = priceMap[h.ticker]
-        const livePrice = live?.price || null
-        const gainPct = livePrice ? ((livePrice - h.buyPrice) / h.buyPrice * 100) : null
-        const gainAbs = livePrice ? ((livePrice - h.buyPrice) * h.shares) : null
-        const hist = getEH(h.ticker)
-        return {
-          ...h,
-          livePrice,
-          livePriceFormatted: livePrice ? `$${livePrice.toFixed(2)}` : 'Price unavailable',
-          gainPct:     gainPct !== null ? parseFloat(gainPct.toFixed(2)) : null,
-          gainAbs:     gainAbs !== null ? parseFloat(gainAbs.toFixed(2)) : null,
-          totalValue:  livePrice ? livePrice * h.shares : null,
-          change1d:    live?.change1d || null,
-          direction:   live?.direction || null,
-          earningsDate: null,                // earnings from calendar, not price feed
-          earningsTradingDaysAway: null,
-          earningsSource: null,
-          earningsHistory: hist ? hist.label : null,
-        }
-      })
+      const priceData  = priceRes.status==='fulfilled'  && priceRes.value.ok  ? await priceRes.value.json()  : {}
+      const techData   = techRes.status==='fulfilled'   && techRes.value.ok   ? await techRes.value.json()   : {}
+      const newsData   = newsRes.status==='fulfilled'   && newsRes.value.ok   ? await newsRes.value.json()   : {}
+      const marketData = marketRes.status==='fulfilled' && marketRes.value.ok ? await marketRes.value.json() : {}
 
-      // Build AI prompt
-      const holdingsText = enriched.map(h => [
-        `${h.ticker}: bought at ${h.currency}${h.buyPrice} × ${h.shares} shares`,
-        h.livePrice ? `current price $${h.livePrice.toFixed(2)} (${h.gainPct >= 0 ? '+' : ''}${h.gainPct?.toFixed(1) || '?'}% gain, total P&L ${h.currency}${h.gainAbs?.toFixed(2) || '?'})` : 'price unavailable',
-        h.change1d ? `today ${h.change1d}` : '',
-        h.earningsDate ? `next earnings ${h.earningsDate} (${h.earningsTradingDaysAway}d away)` : 'no upcoming earnings confirmed',
-        h.earningsHistory ? `past reactions: ${h.earningsHistory}` : '',
-      ].filter(Boolean).join(' | ')).join('\n')
+      const q  = priceData.prices?.[ticker]
+      const tc = techData.technicals?.[ticker] || {}
+      const nd = newsData.results?.[ticker] || {}
+      const livePrice  = q?.price || null
+      const hist       = getEH(ticker)
 
-      const prompt = `Today: ${new Date().toDateString()}
+      if (!livePrice) throw new Error(`Could not fetch live price for ${ticker}. Check the ticker symbol is correct.`)
 
-PORTFOLIO HOLDINGS:
-${holdingsText}
+      // Build prompt — same quality as Opportunities tab
+      const entryPrice = newBuyPrice ? parseFloat(newBuyPrice) : livePrice
+      const gainIfEntry = livePrice ? ((livePrice - entryPrice) / entryPrice * 100).toFixed(1) : null
 
-CURRENT MARKET CONTEXT:
+      const prompt = `TODAY: ${new Date().toDateString()}
+STOCK TO ANALYSE: ${ticker}
+Live price: $${livePrice?.toFixed(2)}
+${newBuyPrice ? 'User price (bought or considering): ' + newCurrency + newBuyPrice + (gainIfEntry ? ' (' + (gainIfEntry>=0?'+':'') + gainIfEntry + '% vs live)' : '') : 'No specific entry price given — use live price'}
+
+TECHNICAL DATA:
+Trend: ${tc.trend || 'unknown'}
+Setup: ${tc.setup || 'unknown'}
+Entry quality: ${tc.entryQuality || 'unknown'}
+SMA200: ${tc.sma200 ? '$'+tc.sma200+(tc.pctAbove200!=null?(' ('+(tc.pctAbove200>=0?'+':'')+tc.pctAbove200+'%)'):'') : 'not available'}
+SMA50: ${tc.sma50 ? '$'+tc.sma50+(tc.pctAbove50!=null?(' ('+(tc.pctAbove50>=0?'+':'')+tc.pctAbove50+'%)'):'') : 'not available'}
+Stop loss (calc): ${tc.suggestedStopLoss ? '$'+tc.suggestedStopLoss+' ('+tc.distToStopPct+'% below)' : 'not available'}
+
+EARNINGS HISTORY: ${hist ? hist.label : 'not in history — estimate from sector'}
+
+ANALYST DATA:
+${nd.analyst ? 'Consensus: '+nd.analyst.consensus+' ('+nd.analyst.buy+' buy, '+nd.analyst.hold+' hold, '+nd.analyst.sell+' sell of '+nd.analyst.total+' analysts)' : 'No analyst data available'}
+${nd.lastEarnings ? 'Last earnings ('+nd.lastEarnings.period+'): '+(nd.lastEarnings.beat?'BEAT':'MISS')+' by '+nd.lastEarnings.surprise : 'No earnings history available'}
+
+RECENT NEWS (last 5 days):
+${nd.news?.length ? nd.news.map(n => n.date+': '+n.headline).join('\n') : 'No significant news'}
+
+MARKET CONTEXT:
 VIX: ${marketData.vix || 'N/A'} (${marketData.vixRegime || 'N/A'})
-Sector health: ${(marketData.sectors || []).map(s => s.label+' '+s.change).join(', ')}
+Sector: ${(marketData.sectors||[]).map(s=>s.label+' '+s.change).join(', ')}
 
 RULES:
-1. For each holding, give exactly one action: BUY MORE / HOLD / TRIM (sell some) / SELL ALL
-2. BUY MORE only if: stock is down or flat, upcoming catalyst within 40 days, thesis intact, average down makes sense
-3. TRIM if: stock is up 15%+ and catalyst is now priced in, or position is oversize
-4. SELL ALL if: thesis broken, company fundamental problem, or better opportunity exists
-5. HOLD if: catalyst still upcoming, thesis intact, position size reasonable
-6. Be specific — name exact price levels and reasons in plain English
-7. Consider the person's actual buy price — are they in profit or loss?
-8. At the end, give an overall portfolio health summary and total estimated P&L
+1. Give BUY if: uptrend, good entry, catalyst within 45 days or strong momentum
+2. Give WATCH if: good setup but no near-term catalyst, or slightly extended
+3. Give AVOID if: downtrend, post-earnings gap, fundamental problem, or no edge
+4. Use CALC_STOP if available for stop loss — real calculated level
+5. Calculate R/R from real numbers
+6. If user gave a buy price, factor in whether it is a good entry vs current price
+7. Plain English. Short sentences. No jargon.
 
-Write in plain English. No jargon. Short sentences. As if explaining to someone new to investing.
+Return ONLY compact JSON starting with opportunities array:
+{"opportunities":[{"ticker":"","company":"","action":"BUY|WATCH|AVOID","currentPrice":"","entryZone":"$X-$Y","stopLoss":"$X","takeProfit":"$X","expectedGain":"15%","riskReward":"3:1","allocation":"10%","whyWeLikeIt":"plain English max 20 words","whatCouldGoWrong":"plain English max 15 words","upcomingEvent":"","eventDate":"DD Mon YYYY","trend":"","entryQuality":"GOOD","returnGate":"PASS","cashChallenge":"PASS","opportunityScore":75}]}`
 
-Return JSON:
-{"portfolioSummary":"2 sentences on overall portfolio health","totalGainLossPct":"overall %","cashSuggestion":"how much cash to hold right now","holdings":[{"ticker":"","action":"BUY MORE|HOLD|TRIM|SELL ALL","confidence":"HIGH|MEDIUM|LOW","currentPrice":"","buyPrice":"","gainLossPct":"","recommendation":"2 plain sentences explaining exactly what to do and why","entryIfBuyMore":"price to buy more at if action is BUY MORE","exitIfSell":"price to sell at if trimming or selling","urgency":"NOW|THIS WEEK|NO RUSH"}]}`
-
-      const res = await fetch('/api/claude', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, mode: 'cio' }),
-      })
-      // Handle both text/plain (streaming) and JSON responses
-      let rawText
-      if (res.headers.get('content-type')?.includes('text/plain')) {
-        rawText = await res.text()
-      } else {
-        const aiData = await res.json()
-        if (!res.ok) throw new Error(aiData.error || 'AI error')
-        rawText = aiData.content?.find(b => b.type === 'text')?.text || ''
-      }
-      if (!rawText) throw new Error('No response from AI')
-
-      let parsed
-      try {
-        parsed = repairJSON(rawText)
-      } catch {
-        parsed = { portfolioSummary: rawText.slice(0, 200), holdings: [] }
-      }
-
-      setPortfolioResult({ ...parsed, enriched })
-    } catch (e) {
+      const ai = repairJSON(await claude(prompt, 'cio'))
+      setPortfolioResult({ ...ai, deepDive: null })
+    } catch(e) {
       setPortfolioError(e.message)
     } finally {
       setPortfolioLoading(false)
     }
-  }, [holdings, getEH])
+  }, [newTicker, newBuyPrice, newCurrency, getEH, claude])
 
-  // ── T212 API functions ────────────────────────────────────────────────────
+ns ────────────────────────────────────────────────────
   const fetchT212 = useCallback(async () => {
     setT212Loading(true)
     setT212Error(null)
@@ -1254,16 +1220,28 @@ Return JSON:
         if (q) priceMap[ticker] = q
       })
 
-      // Enrich T212 positions with Finnhub data
-      // T212 already provides currentPrice — we use Finnhub for change1d and earnings
+      // Fetch SMA technicals and news for T212 positions in background
+      const t212Tickers = t212Data.positions.map(p => p.ticker).slice(0, 15)
+      const [techBatch, newsBatch] = await Promise.allSettled([
+        fetch('/api/technicals?symbols=' + t212Tickers.slice(0,5).join(','), { cache:'no-store' }).then(r=>r.ok?r.json():{}),
+        fetch('/api/news?symbols=' + t212Tickers.slice(0,10).join(','), { cache:'no-store' }).then(r=>r.ok?r.json():{}),
+      ])
+      if (techBatch.status==='fulfilled' && techBatch.value?.technicals) {
+        setTechMap(prev => ({ ...prev, ...techBatch.value.technicals }))
+      }
+      if (newsBatch.status==='fulfilled' && newsBatch.value?.results) {
+        setNewsData(prev => ({ ...prev, ...newsBatch.value.results }))
+      }
+
+      // Enrich T212 positions
       const enriched = t212Data.positions.map(p => {
-        const live = priceMap[p.ticker]  // from fast /api/prices endpoint
+        const live = priceMap[p.ticker]
         const hist = getEH(p.ticker)
         return {
           ...p,
           finnhubPrice:    live?.price || null,
           change1d:        live?.change1d || null,
-          earningsDate:    null,   // earnings come from calendar, added separately if needed
+          earningsDate:    null,
           earningsDays:    null,
           earningsSource:  null,
           earningsHistory: hist?.label || null,
@@ -1271,13 +1249,24 @@ Return JSON:
         }
       })
 
-      // Build AI prompt
-      const posLines = enriched.map(p =>
-        `${p.ticker}: ${p.quantity} shares, avg buy price £${p.averagePrice}, current £${p.currentPrice?.toFixed(2)}, P&L £${p.ppl} (${p.gainPct >= 0 ? '+' : ''}${p.gainPct}%)` +
-        (p.change1d ? `, today ${p.change1d}` : '') +
-        (p.earningsDate ? `, earnings ${p.earningsDate} in ${p.earningsDays}d` : '') +
-        (p.earningsHistory ? `, history: ${p.earningsHistory}` : '')
-      ).join('\n')
+      // Build AI prompt — enriched with SMA + news + analyst data from techMap/newsData
+      const posLines = enriched.map(p => {
+        const tc = techMap[p.ticker] || {}
+        const nd = newsData[p.ticker] || {}
+        const parts = [
+          p.ticker+': '+p.quantity+' shares @ £'+p.averagePrice+' → now £'+(p.currentPrice?.toFixed(2)||'?')+' P&L £'+p.ppl+' ('+(p.gainPct>=0?'+':'')+p.gainPct+'%)',
+          p.change1d ? 'today '+p.change1d : '',
+          tc.trend ? 'TREND:'+tc.trend : '',
+          tc.entryQuality ? 'ENTRY:'+tc.entryQuality : '',
+          tc.pctAbove200!=null ? 'vs200SMA:'+(tc.pctAbove200>=0?'+':'')+tc.pctAbove200+'%' : '',
+          tc.suggestedStopLoss ? 'CALC_STOP:£'+tc.suggestedStopLoss : '',
+          nd.analyst ? 'Analysts:'+nd.analyst.consensus+'('+nd.analyst.total+')' : '',
+          nd.lastEarnings ? 'LastEPS:'+(nd.lastEarnings.beat?'BEAT':'MISS')+nd.lastEarnings.surprise : '',
+          nd.news?.length ? 'News:'+nd.news[0].headline.slice(0,60) : '',
+          p.earningsHistory ? 'EHist:'+p.earningsHistory : '',
+        ]
+        return parts.filter(Boolean).join(' | ')
+      }).join('\n')
 
       const pendingLines = (t212Data.pendingOrders || []).map(o =>
         `${o.side} ${o.quantity} ${o.ticker} @ £${o.limitPrice} (${o.orderType})`
@@ -1396,7 +1385,6 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
   useEffect(() => { fetchEarningsHistory() }, []) // eslint-disable-line
   useEffect(() => {
     try {
-      if (sessionStorage.getItem('catalyst_portfolio_auth') === 'true') setPortfolioUnlocked(true)
       if (sessionStorage.getItem('catalyst_t212_auth')      === 'true') setT212Unlocked(true)
     } catch {}
   }, [])
@@ -1802,96 +1790,200 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
   }
 
   // ── renderPortfolio ────────────────────────────────────────────────────────
+  // ── Stock Analyser (was My Portfolio) ────────────────────────────────────
   function renderPortfolio() {
-    if (!portfolioUnlocked) {
-      return (
-        <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', minHeight:400, padding:24 }}>
-          <div style={{ ...card({ maxWidth:380, width:'100%', textAlign:'center', padding:36 }) }}>
-            <div style={{ fontSize:40, marginBottom:16 }}>🔒</div>
-            <div style={{ color:C.text, fontWeight:800, fontSize:20, marginBottom:8 }}>Portfolio is protected</div>
-            <div style={{ color:C.muted, fontSize:14, marginBottom:24, lineHeight:1.6 }}>Enter your password to continue.</div>
-            <input type="password" value={passwordInput} onChange={e=>{setPasswordInput(e.target.value);setPasswordError(false)}} onKeyDown={e=>e.key==='Enter'&&handlePasswordSubmit()} placeholder="Enter password" autoFocus style={{ width:'100%', padding:'12px 16px', borderRadius:10, border:`2px solid ${passwordError?C.down:C.border}`, fontSize:16, fontFamily:FM, outline:'none', background:C.bg, marginBottom:12, boxSizing:'border-box', textAlign:'center', letterSpacing:4 }} />
-            {passwordError && <div style={{ color:C.down, fontSize:13, marginBottom:12, fontWeight:600 }}>Incorrect password.</div>}
-            <button onClick={handlePasswordSubmit} style={{ appearance:'none', background:C.accent, color:'#fff', border:'none', borderRadius:10, padding:'12px 24px', fontWeight:800, fontSize:15, cursor:'pointer', width:'100%' }}>Unlock Portfolio</button>
-          </div>
-        </div>
-      )
-    }
-    const result = portfolioResult
-    const actionColor = a => a==='BUY MORE'?C.up:a==='HOLD'?C.accent:a==='TRIM'?C.amber:C.down
-    const actionBg    = a => a==='BUY MORE'?C.upBg:a==='HOLD'?C.accentBg:a==='TRIM'?C.amberBg:C.downBg
+    const actionColor = a => a==='BUY'||a==='STRONG BUY'?C.up:a==='WATCH'?C.amber:a==='AVOID'?C.down:C.accent
+    const actionBg    = a => a==='BUY'||a==='STRONG BUY'?C.upBg:a==='WATCH'?C.amberBg:a==='AVOID'?C.downBg:C.accentBg
+
     return (
       <div>
-        <div style={{ ...card({ marginBottom:18 }) }}>
-          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:4 }}>
-            <div style={{ color:C.text, fontWeight:800, fontSize:18 }}>💼 My Holdings</div>
-            <button onClick={()=>{setPortfolioUnlocked(false);setPasswordInput('');try{sessionStorage.removeItem('catalyst_portfolio_auth')}catch{}}} style={{ appearance:'none', background:'none', border:`1px solid ${C.border}`, borderRadius:8, padding:'6px 12px', color:C.muted, fontSize:12, cursor:'pointer', fontWeight:600 }}>🔒 Lock</button>
+        {/* Header */}
+        <div style={{ ...card({ marginBottom:18 }), padding:'16px 20px' }}>
+          <div style={{ color:C.text, fontWeight:800, fontSize:20, marginBottom:4 }}>🔍 Stock Analyser</div>
+          <div style={{ color:C.muted, fontSize:14, lineHeight:1.6 }}>
+            Enter any ticker to get a full AI analysis — BUY / WATCH / AVOID rating, entry price, stop loss, target, and deep dive. Works for stocks you own or ones you're considering.
           </div>
-          <div style={{ color:C.muted, fontSize:13, marginBottom:18 }}>Enter each stock you own, what you paid, and how many shares.</div>
-          <div style={{ display:'grid', gridTemplateColumns: mob ? '1fr 1fr' : '2fr 1.5fr 1fr 1fr auto', gap:10, marginBottom:14, alignItems:'end' }}>
-            <div><div style={LBL}>TICKER</div><input value={newTicker} onChange={e=>setNewTicker(e.target.value.toUpperCase())} onKeyDown={e=>e.key==='Enter'&&addHolding()} placeholder="e.g. NVDA" style={{ width:'100%', padding:'10px 12px', borderRadius:8, border:`1.5px solid ${C.border}`, fontSize:15, fontFamily:FM, fontWeight:700, outline:'none', boxSizing:'border-box', background:C.bg }} /></div>
-            <div><div style={LBL}>PRICE PAID ($)</div><input value={newBuyPrice} onChange={e=>setNewBuyPrice(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addHolding()} placeholder="450.00" type="number" style={{ width:'100%', padding:'10px 12px', borderRadius:8, border:`1.5px solid ${C.border}`, fontSize:15, fontFamily:FM, outline:'none', boxSizing:'border-box', background:C.bg }} /></div>
-            <div><div style={LBL}>SHARES</div><input value={newShares} onChange={e=>setNewShares(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addHolding()} placeholder="10" type="number" style={{ width:'100%', padding:'10px 12px', borderRadius:8, border:`1.5px solid ${C.border}`, fontSize:15, fontFamily:FM, outline:'none', boxSizing:'border-box', background:C.bg }} /></div>
-            <div><div style={LBL}>CURRENCY</div><select value={newCurrency} onChange={e=>setNewCurrency(e.target.value)} style={{ width:'100%', padding:'10px 12px', borderRadius:8, border:`1.5px solid ${C.border}`, fontSize:14, fontFamily:FB, outline:'none', background:C.bg }}><option>USD</option><option>GBP</option><option>EUR</option></select></div>
-            <button onClick={addHolding} style={{ appearance:'none', background:C.accent, color:'#fff', border:'none', borderRadius:8, padding:'11px 18px', fontWeight:700, fontSize:14, cursor:'pointer' }}>+ Add</button>
-          </div>
-          {holdings.length > 0 && (
-            <div style={{ display:'grid', gap:8, marginBottom:18 }}>
-              {holdings.map((h,i) => {
-                const r = result?.enriched?.find(e=>e.ticker===h.ticker)
-                const ai = result?.holdings?.find(x=>x.ticker===h.ticker)
-                const gainPct = r?.gainPct
-                return (
-                  <div key={i} style={{ display:'flex', alignItems:'center', gap:10, background: gainPct!=null?(gainPct>=0?C.upBg:C.downBg):C.bg, borderRadius:10, padding:'10px 14px', flexWrap:'wrap' }}>
-                    <span style={{ fontFamily:FM, fontWeight:900, fontSize:17, color:C.text, minWidth:60 }}>{h.ticker}</span>
-                    <span style={{ color:C.muted, fontSize:13 }}>{h.currency}{h.buyPrice} × {h.shares}</span>
-                    {r?.livePrice && <><span style={{ color:C.sub, fontSize:13 }}>→ ${r.livePrice.toFixed(2)}</span><span style={{ color:gainPct>=0?C.up:C.down, fontWeight:800, fontSize:14, fontFamily:FM }}>{gainPct>=0?'+':''}{gainPct?.toFixed(1)}%</span></>}
-                    {ai && <span style={{ background:actionBg(ai.action), color:actionColor(ai.action), borderRadius:8, padding:'4px 12px', fontWeight:800, fontSize:13 }}>{ai.action}</span>}
-                    <button onClick={()=>removeHolding(h.ticker)} style={{ marginLeft:'auto', appearance:'none', background:'none', border:'none', color:C.muted, cursor:'pointer', fontSize:18, padding:'0 4px' }}>×</button>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-          {holdings.length > 0 && <button onClick={analysePortfolio} disabled={portfolioLoading} style={{ appearance:'none', background:portfolioLoading?C.border:C.accent, color:portfolioLoading?C.muted:'#fff', border:'none', borderRadius:10, padding:'12px 24px', fontWeight:800, fontSize:15, cursor:portfolioLoading?'not-allowed':'pointer', width:mob?'100%':'auto' }}>{portfolioLoading?'⟳ Analysing…':'⚡ Analyse my portfolio'}</button>}
-          {portfolioError && <div style={{ color:C.down, fontSize:13, marginTop:12 }}>Error: {portfolioError}</div>}
         </div>
-        {result && (
-          <>
-            {result.portfolioSummary && <div style={{ ...card({ marginBottom:14, borderLeft:`4px solid ${C.gold}` }) }}><div style={{ color:C.gold, fontWeight:800, fontSize:13, marginBottom:10 }}>📊 PORTFOLIO SUMMARY</div><div style={{ color:C.sub, fontSize:15, lineHeight:1.6, marginBottom:10 }}>{result.portfolioSummary}</div>{result.cashSuggestion && <Pill tone="amber" size="md">💰 {result.cashSuggestion}</Pill>}</div>}
-            <div style={{ display:'grid', gridTemplateColumns:mob?'1fr':'repeat(auto-fill,minmax(340px,1fr))', gap:14 }}>
-              {(result.holdings||[]).map((h,i)=>{
-                const enriched = result.enriched?.find(e=>e.ticker===h.ticker)
-                const gainPct = parseFloat(h.gainLossPct)||enriched?.gainPct
-                return (
-                  <div key={i} style={{ ...card({ borderLeft:`5px solid ${actionColor(h.action)}` }) }}>
-                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:12, flexWrap:'wrap', gap:8 }}>
-                      <div><span style={{ fontFamily:FM, fontWeight:900, fontSize:24, color:C.text }}>{h.ticker}</span>{h.urgency==='NOW'&&<span style={{ marginLeft:8, fontSize:11, fontWeight:700, color:C.down }}>🔴 ACT NOW</span>}{h.urgency==='THIS WEEK'&&<span style={{ marginLeft:8, fontSize:11, fontWeight:700, color:C.amber }}>🟡 THIS WEEK</span>}</div>
-                      <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-                        {gainPct!=null&&<span style={{ color:gainPct>=0?C.up:C.down, fontFamily:FM, fontWeight:800, fontSize:16 }}>{gainPct>=0?'+':''}{typeof gainPct==='number'?gainPct.toFixed(1):gainPct}%</span>}
-                        <span style={{ background:actionBg(h.action), color:actionColor(h.action), borderRadius:10, padding:'6px 14px', fontWeight:800, fontSize:14 }}>{h.action}</span>
-                      </div>
-                    </div>
-                    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12 }}>
-                      {[['You Paid',h.buyPrice],['Price Now',h.currentPrice||enriched?.livePriceFormatted]].map(([l,v])=>v?<div key={l} style={{ background:C.bg, borderRadius:8, padding:'8px 12px' }}><div style={LBL}>{l}</div><div style={{ ...VAL, fontSize:14 }}>{v}</div></div>:null)}
-                      {h.action==='BUY MORE'&&h.entryIfBuyMore&&<div style={{ background:C.upBg, borderRadius:8, padding:'8px 12px' }}><div style={LBL}>BUY MORE AT</div><div style={{ color:C.up, fontWeight:800, fontSize:15 }}>{h.entryIfBuyMore}</div></div>}
-                      {(h.action==='TRIM'||h.action==='SELL ALL')&&h.exitIfSell&&<div style={{ background:C.amberBg, borderRadius:8, padding:'8px 12px' }}><div style={LBL}>{h.action==='TRIM'?'SELL SOME AT':'SELL ALL AT'}</div><div style={{ color:C.amber, fontWeight:800, fontSize:15 }}>{h.exitIfSell}</div></div>}
-                    </div>
-                    <div style={{ color:C.sub, fontSize:14, lineHeight:1.65, marginBottom:enriched?.earningsDate?10:0 }}>{h.recommendation}</div>
-                    {enriched?.earningsDate&&enriched.earningsTradingDaysAway>=0&&<Pill tone={enriched.earningsTradingDaysAway<=10?'amber':'blue'} size="sm">📅 Earnings in {enriched.earningsTradingDaysAway}d · {ukDate(enriched.earningsDate)}</Pill>}
-                    {h.confidence&&<div style={{ marginTop:10 }}><Pill tone={h.confidence==='HIGH'?'green':h.confidence==='MEDIUM'?'amber':'grey'} size="sm">{h.confidence} confidence</Pill></div>}
-                  </div>
-                )
-              })}
+
+        {/* Input form */}
+        <div style={{ ...card({ marginBottom:18 }) }}>
+          <div style={{ display:'grid', gridTemplateColumns: mob ? '1fr' : '2fr 2fr 1fr auto', gap:12, alignItems:'end', marginBottom:8 }}>
+            <div>
+              <div style={LBL}>TICKER SYMBOL</div>
+              <input
+                value={newTicker}
+                onChange={e => setNewTicker(e.target.value.toUpperCase())}
+                onKeyDown={e => e.key==='Enter' && analysePortfolio()}
+                placeholder="e.g. NVDA, AAPL, IONQ"
+                style={{ width:'100%', padding:'11px 14px', borderRadius:10, border:`1.5px solid ${C.border}`, fontSize:16, fontFamily:FM, fontWeight:700, outline:'none', boxSizing:'border-box', background:C.bg }}
+              />
             </div>
-          </>
+            <div>
+              <div style={LBL}>PRICE (optional — your buy price or target entry)</div>
+              <input
+                value={newBuyPrice}
+                onChange={e => setNewBuyPrice(e.target.value)}
+                onKeyDown={e => e.key==='Enter' && analysePortfolio()}
+                placeholder="e.g. 450.00 — leave blank for current price"
+                type="number"
+                style={{ width:'100%', padding:'11px 14px', borderRadius:10, border:`1.5px solid ${C.border}`, fontSize:15, fontFamily:FM, outline:'none', boxSizing:'border-box', background:C.bg }}
+              />
+            </div>
+            <div>
+              <div style={LBL}>CURRENCY</div>
+              <select value={newCurrency} onChange={e => setNewCurrency(e.target.value)} style={{ width:'100%', padding:'11px 14px', borderRadius:10, border:`1.5px solid ${C.border}`, fontSize:14, fontFamily:FB, outline:'none', background:C.bg }}>
+                <option>USD</option><option>GBP</option><option>EUR</option>
+              </select>
+            </div>
+            <button
+              onClick={analysePortfolio}
+              disabled={portfolioLoading || !newTicker.trim()}
+              style={{ appearance:'none', background:portfolioLoading||!newTicker.trim()?C.border:C.accent, color:portfolioLoading||!newTicker.trim()?C.muted:'#fff', border:'none', borderRadius:10, padding:'11px 20px', fontWeight:800, fontSize:15, cursor:portfolioLoading||!newTicker.trim()?'not-allowed':'pointer', whiteSpace:'nowrap' }}
+            >
+              {portfolioLoading ? '⟳ Analysing…' : '⚡ Analyse'}
+            </button>
+          </div>
+          {portfolioError && <div style={{ color:C.down, fontSize:13, marginTop:8 }}>Error: {portfolioError}</div>}
+          <div style={{ color:C.muted, fontSize:12, marginTop:4 }}>
+            Enter any stock — we fetch the live price, SMA trends, analyst ratings, recent news, earnings history and run a full AI analysis.
+          </div>
+        </div>
+
+        {/* Result card */}
+        {portfolioResult && (() => {
+          const r = portfolioResult
+          const opps = r.opportunities || []
+          const opp = opps[0]
+          if (!opp) return <div style={{ ...card(), color:C.muted }}>No analysis returned — try again.</div>
+          return (
+            <div>
+              {/* Main analysis card — styled like OppCard */}
+              <div style={{ ...card({ borderLeft:`6px solid ${actionColor(opp.action)}`, marginBottom:14 }) }}>
+                {/* Header */}
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:14, flexWrap:'wrap', gap:10 }}>
+                  <div>
+                    <div style={{ fontFamily:FM, fontWeight:900, fontSize:32, color:C.text }}>{opp.ticker}</div>
+                    <div style={{ color:C.muted, fontSize:14 }}>{opp.company}</div>
+                    {newBuyPrice && <div style={{ color:C.sub, fontSize:13, marginTop:4 }}>Your price: {newCurrency}{newBuyPrice}</div>}
+                  </div>
+                  <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:8 }}>
+                    <span style={{ background:actionBg(opp.action), color:actionColor(opp.action), borderRadius:12, padding:'8px 20px', fontWeight:900, fontSize:18 }}>
+                      {opp.action}
+                    </span>
+                    <div style={{ fontFamily:FM, fontWeight:800, fontSize:24, color:C.text }}>{opp.currentPrice}</div>
+                  </div>
+                </div>
+
+                {/* Trend badges */}
+                {(opp.trend || opp.entryQuality) && (
+                  <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:12 }}>
+                    {opp.trend && <Pill tone={opp.trend==='STRONG UPTREND'?'green':opp.trend==='PULLBACK IN UPTREND'?'blue':opp.trend==='RECOVERING'?'amber':'red'} size="sm">📈 {opp.trend}</Pill>}
+                    {opp.entryQuality && <Pill tone={opp.entryQuality==='EXCELLENT'?'green':opp.entryQuality==='GOOD'?'blue':opp.entryQuality==='AVERAGE'?'grey':'red'} size="sm">Entry: {opp.entryQuality}</Pill>}
+                  </div>
+                )}
+
+                {/* Price grid */}
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))', gap:10, marginBottom:14 }}>
+                  {[
+                    ['Entry Zone', opp.entryZone],
+                    ['Stop Loss',  opp.stopLoss],
+                    ['Target',     opp.takeProfit],
+                    ['Expected',   opp.expectedGain],
+                    ['Risk/Reward',opp.riskReward],
+                    ['Allocation', opp.allocation],
+                  ].filter(([,v]) => v).map(([l,v]) => (
+                    <div key={l} style={{ background:C.bg, borderRadius:10, padding:'10px 12px' }}>
+                      <div style={LBL}>{l}</div>
+                      <div style={{ ...VAL, fontSize:15 }}>{v}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Gates */}
+                <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:12 }}>
+                  <GateBadge label="15%+ PATH EXISTS" pass={opp.returnGate==='PASS'?true:opp.returnGate==='FAIL'?false:null}/>
+                  <GateBadge label="BEATS HOLDING CASH" pass={opp.cashChallenge==='PASS'?true:opp.cashChallenge==='FAIL'?false:null}/>
+                  <Pill tone="green" size="sm">✓ LIVE PRICE</Pill>
+                </div>
+
+                {/* Why + Risk */}
+                <div style={{ display:'grid', gridTemplateColumns:mob?'1fr':'1fr 1fr', gap:12, marginBottom:14 }}>
+                  <div style={{ background:C.upBg, borderRadius:10, padding:'12px 14px' }}>
+                    <div style={{ ...LBL, marginBottom:6 }}>WHY WE LIKE IT</div>
+                    <div style={{ color:C.sub, fontSize:14, lineHeight:1.6 }}>{opp.whyWeLikeIt}</div>
+                  </div>
+                  <div style={{ background:C.downBg, borderRadius:10, padding:'12px 14px' }}>
+                    <div style={{ ...LBL, marginBottom:6 }}>WHAT COULD GO WRONG</div>
+                    <div style={{ color:C.sub, fontSize:14, lineHeight:1.6 }}>{opp.whatCouldGoWrong}</div>
+                  </div>
+                </div>
+
+                {/* Upcoming event */}
+                {opp.eventDate && (
+                  <div style={{ background:C.amberBg, borderRadius:10, padding:'10px 14px', marginBottom:12 }}>
+                    <div style={LBL}>UPCOMING CATALYST</div>
+                    <div style={{ color:C.amber, fontWeight:800, fontSize:16, fontFamily:FM }}>{opp.upcomingEvent}</div>
+                    <div style={{ color:C.amber, fontSize:13 }}>{opp.eventDate}</div>
+                  </div>
+                )}
+
+                {/* Score */}
+                {opp.opportunityScore && (
+                  <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+                    <div style={{ color:C.muted, fontSize:13 }}>AI Confidence Score</div>
+                    <ScoreBar score={opp.opportunityScore} />
+                    <div style={{ fontFamily:FM, fontWeight:800, fontSize:18, color:C.accent }}>{opp.opportunityScore}</div>
+                  </div>
+                )}
+              </div>
+
+              {/* Deep dive section */}
+              <div style={card()}>
+                <div style={{ ...LBL, marginBottom:12 }}>🔬 DEEP DIVE ANALYSIS</div>
+                {r.deepDive ? (
+                  <div style={{ color:C.sub, fontSize:14, lineHeight:1.8, whiteSpace:'pre-wrap' }}>{r.deepDive}</div>
+                ) : portfolioLoading ? (
+                  <div style={{ color:C.muted }}>⟳ Running deep dive…</div>
+                ) : (
+                  <button
+                    onClick={async () => {
+                      setPortfolioLoading(true)
+                      try {
+                        const text = await claude(
+                          `Stock: ${opp.ticker} — ${opp.company}\nCurrent price: ${opp.currentPrice}\nRating: ${opp.action}\nEntry zone: ${opp.entryZone}\nStop loss: ${opp.stopLoss}\nTarget: ${opp.takeProfit}\nWhy: ${opp.whyWeLikeIt}\nRisk: ${opp.whatCouldGoWrong}\nUpcoming: ${opp.upcomingEvent||'N/A'} on ${opp.eventDate||'TBC'}\n\nWrite a clear, plain-English deep dive for a beginner investor. Short sentences. No jargon. Cover: why now, the upside case, the risk, and exactly what to watch for. Label each sentence (FACT), (ANALYSIS) or (OPINION). Under 280 words.`,
+                          'deepdive'
+                        )
+                        setPortfolioResult(prev => ({ ...prev, deepDive: text }))
+                      } catch(e) {
+                        setPortfolioResult(prev => ({ ...prev, deepDive: 'Error: ' + e.message }))
+                      } finally {
+                        setPortfolioLoading(false)
+                      }
+                    }}
+                    style={{ appearance:'none', background:C.accent, color:'#fff', border:'none', borderRadius:10, padding:'10px 20px', fontWeight:700, fontSize:14, cursor:'pointer' }}
+                  >
+                    ▶ Run deep dive
+                  </button>
+                )}
+              </div>
+            </div>
+          )
+        })()}
+
+        {/* Empty state */}
+        {!portfolioResult && !portfolioLoading && (
+          <div style={{ ...card({ textAlign:'center', padding:56 }) }}>
+            <div style={{ fontSize:48, marginBottom:14 }}>🔍</div>
+            <div style={{ color:C.text, fontWeight:700, fontSize:20, marginBottom:8 }}>Analyse any stock</div>
+            <div style={{ color:C.muted, fontSize:14, maxWidth:420, margin:'0 auto', lineHeight:1.7 }}>
+              Enter a ticker above and click Analyse. You'll get a full BUY / WATCH / AVOID verdict with entry price, stop loss, target, and deep dive — powered by live prices, SMA trends, analyst ratings and earnings history.
+            </div>
+          </div>
         )}
-        {!holdings.length && <div style={{ ...card({ textAlign:'center', padding:48 }) }}><div style={{ fontSize:40, marginBottom:12 }}>💼</div><div style={{ color:C.text, fontWeight:700, fontSize:18, marginBottom:8 }}>No holdings yet</div><div style={{ color:C.muted, fontSize:14, maxWidth:340, margin:'0 auto' }}>Add your first stock above — enter the ticker, price paid and shares, then click Analyse.</div></div>}
       </div>
     )
   }
 
-  // ── renderT212 ─────────────────────────────────────────────────────────────
   function renderT212() {
     const actionColor = a => a==='BUY MORE'?C.up:a==='HOLD'?C.accent:a==='TRIM'?C.amber:C.down
     const actionBg    = a => a==='BUY MORE'?C.upBg:a==='HOLD'?C.accentBg:a==='TRIM'?C.amberBg:C.downBg
