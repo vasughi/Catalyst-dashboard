@@ -147,16 +147,36 @@ const KNOWN_NAMES = {
 
 // ── Sanity price ranges — wide enough to not filter legitimate prices ─────────
 // Only stocks we know well — unknown stocks skip sanity check
+// Sanity ranges — wide enough to handle normal price swings but catch Finnhub glitches
+// Updated Jun 2026. Check quarterly as stocks move significantly.
+// Formula: use 52-week range as guide, set min = 52w_low * 0.7, max = 52w_high * 1.5
 const SANITY = {
-  NVDA:[50,500],   AMD:[50,500],    AVGO:[100,1200], TSM:[50,400],
-  MRVL:[30,600],   ARM:[50,900],    MSFT:[200,900],  GOOGL:[80,700],
-  META:[200,1200], PLTR:[20,600],   CRWD:[100,900],  PANW:[80,500],
-  ZS:[50,500],     LMT:[200,1200],  RTX:[30,400],    NOC:[200,1200],
-  AXON:[50,800],   VRT:[50,1000],   ETN:[100,800],   CEG:[50,800],
-  GEV:[100,2500],  VST:[20,600],    NOW:[300,2500],  FSLR:[30,700],
-  FCX:[10,250],    CCJ:[10,200],    ANET:[30,300],   RKLB:[3,150],
-  CRDO:[20,800],   ENPH:[10,500],   QCOM:[50,500],   AMZN:[100,400],
-  NFLX:[200,1500], TSLA:[50,600],   AAPL:[100,350],
+  // AI silicon & semiconductors
+  NVDA:[50,600],   AMD:[50,600],    AVGO:[100,1500], TSM:[50,500],
+  MRVL:[30,700],   ARM:[50,1000],   QCOM:[50,600],   INTC:[10,100],
+  MU:[50,300],     AMAT:[50,400],   LRCX:[50,600],   SMCI:[10,300],
+  CRDO:[20,900],   ANET:[30,400],   CIEN:[20,250],
+  // Big tech
+  MSFT:[200,1000], GOOGL:[80,800],  META:[200,1500], AMZN:[120,400],
+  AAPL:[100,400],  TSLA:[50,700],   NFLX:[50,300],   PLTR:[20,700],
+  // Cloud / SaaS — ORCL had a big rally, needs wider range
+  ORCL:[100,500],  NOW:[300,3000],  CRM:[100,600],   SNOW:[50,400],
+  DDOG:[50,400],   NET:[20,250],    ADBE:[100,600],
+  // Cybersecurity
+  CRWD:[100,1000], PANW:[80,600],   ZS:[50,600],     FTNT:[30,300],
+  S:[5,80],        OKTA:[20,300],
+  // Defence
+  LMT:[200,1500],  RTX:[30,400],    NOC:[200,1500],  AXON:[50,900],
+  GD:[100,600],    BA:[50,400],
+  // Power / energy
+  VRT:[50,1200],   ETN:[100,1000],  GEV:[100,3000],  CEG:[50,900],
+  VST:[20,600],    NRG:[20,400],    FSLR:[30,700],   ENPH:[10,500],
+  // Commodities
+  FCX:[10,300],    CCJ:[10,200],    MP:[3,80],
+  // Space / drones
+  RKLB:[3,200],    ASTS:[2,100],    ACHR:[1,60],     JOBY:[1,50],
+  // Quantum
+  IONQ:[2,80],     RGTI:[1,50],     QUBT:[1,40],
 }
 
 async function safeQuote(sym) {
