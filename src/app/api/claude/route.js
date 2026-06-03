@@ -24,7 +24,7 @@ const MODELS = {
 }
 
 const TOKENS = {
-  cio:      12000,
+  cio:      8000,   // 10 cards × ~400 tokens each = ~4000 + headers = ~6000 needed
   deepdive: 900,
   json:     1500,
 }
@@ -32,7 +32,7 @@ const TOKENS = {
 const SYSTEM = {
   cio: `You are a CIO and master swing trader. Output ONLY raw JSON — no markdown, no backticks, no explanation. Start your response with { and end with }.
 
-CRITICAL: Compact JSON, no whitespace. Max 10 words per string. Start JSON with opportunities array FIRST then header fields. Return exactly 15 opportunity cards.
+CRITICAL: Compact JSON, no whitespace. Max 10 words per string. Start JSON with opportunities array FIRST then header fields. Return exactly 10 opportunity cards — the best 10 only.
 - Fill all 10 slots: BUY candidates first, then WATCH cards for quality stocks
 - Include WATCH cards for any strong stock without near-term catalyst
 - Every stock in the provided universe must be evaluated — include the best 15
