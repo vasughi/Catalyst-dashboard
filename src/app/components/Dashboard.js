@@ -649,6 +649,7 @@ export default function Dashboard() {
   // Falls back to hardcoded EH if fetch fails
   const [liveEH,      setLiveEH]      = useState({})
   const [techMap,     setTechMap]     = useState({})  // SMA/trend data per ticker
+  const [newsData,    setNewsData]    = useState({})  // live news + analyst ratings per ticker
   // Portfolio holdings — persisted in localStorage
   const [holdings,      setHoldings]     = useState([])
   const [portfolioResult, setPortfolioResult] = useState(null)
@@ -704,6 +705,24 @@ export default function Dashboard() {
       if (i + BATCH < tickers.length) {
         await new Promise(r => setTimeout(r, 600))
       }
+    }
+  }, [])
+
+  // Fetch live news + analyst ratings + earnings results in background
+  const fetchNews = useCallback(async (tickers) => {
+    if (!tickers?.length) return
+    // Fetch in batches of 15 (API cap)
+    const BATCH = 15
+    for (let i = 0; i < tickers.length; i += BATCH) {
+      const batch = tickers.slice(i, i + BATCH)
+      try {
+        const r = await fetch('/api/news?symbols=' + batch.join(','), { cache: 'no-store' })
+        if (!r.ok) continue
+        const d = await r.json()
+        if (d?.results) {
+          setNewsData(prev => ({ ...prev, ...d.results }))
+        }
+      } catch {}
     }
   }, [])
 
@@ -797,6 +816,23 @@ export default function Dashboard() {
         return e.ticker+' → '+e.date+' ('+e.tradingDaysAway+'d) '+conf+(e.epsEstimate?' EPS_est=$'+e.epsEstimate:'')
       }).join('\n')
 
+      // Build live news context from background fetch
+      const newsLines = Object.entries(newsData)
+        .filter(([, d]) => d?.news?.length || d?.analyst || d?.lastEarnings)
+        .map(([ticker, d]) => {
+          const parts = []
+          if (d.analyst) parts.push('Analysts:'+d.analyst.consensus+'('+d.analyst.total+' covering)')
+          if (d.lastEarnings) {
+            const e = d.lastEarnings
+            parts.push('Last earnings:'+(e.beat?'BEAT':'MISS')+' by '+e.surprise+' ('+e.period+')')
+          }
+          if (d.news?.length) parts.push(...d.news.slice(0,2).map(n=>n.date+':'+n.headline.slice(0,80)))
+          return parts.length ? ticker+': '+parts.join(' | ') : null
+        })
+        .filter(Boolean)
+        .join('
+')
+
       const prompt = `TODAY: ${new Date().toDateString()}
 VIX: ${vix||'N/A'} (${vixRegime||'UNKNOWN'})
 SECTORS: ${sectorLines||'N/A'}
@@ -810,9 +846,13 @@ ${calLines||'None confirmed yet'}
 EARNINGS HISTORY:
 ${ehLines || Object.entries(EH).map(([k,v])=>(k+': '+v.label)).join(' | ')}
 
-KEY EVENTS:
-- AVGO: Reported 3 Jun 2026 after close — check result, update thesis
-- CRDO: Reported 1 Jun, beat but fell 14% — WATCH until stabilises at $190-210
+LIVE NEWS + ANALYST DATA (auto-fetched):
+${newsLines || 'Loading in background — refresh for live data'}
+
+KNOWN EVENTS (may be stale):
+- AVGO: Reported 3 Jun 2026 — check live news above for result
+- CRDO: Reported 1 Jun, beat but fell 14% — WATCH until $190-210
+- QCOM: Already reported Q2, weak Q3 guidance, Apple modem risk — max WATCH
 - GOOGL: $80B share issue = dilution = max WATCH
 - FCX: Mine production cut = fundamental problem = max WATCH
 
@@ -826,13 +866,29 @@ RULES:
 7. Plain English only. Short sentences. No jargon.
 8. watchList: 5-8 most interesting. avoidList: 5-8 to avoid.
 
-You MUST return EXACTLY 10 entries. Output COMPACT JSON — no spaces, no newlines between fields. Keep ALL string values under 12 words. Count them. If you have fewer than 10 BUYs, fill remaining slots with WATCH cards for: NVDA, MRVL, AVGO, GEV, FSLR, ETN, CEG, PLTR — whatever is needed to reach 10.
+You MUST return EXACTLY 15 entries. Output COMPACT JSON — no spaces, no newlines. Keep ALL string values under 12 words. Rank ALL stocks from the prices list by opportunity score — include the best 15 across BUY and WATCH ratings. Count them. If you have fewer than 10 BUYs, fill remaining slots with WATCH cards for: NVDA, MRVL, AVGO, GEV, FSLR, ETN, CEG, PLTR — whatever is needed to reach 10.
 
-Return ONLY this JSON (EXACTLY 10 opportunity cards — not fewer):
+Return ONLY this JSON (EXACTLY 15 opportunity cards — rank all universe stocks, best 15 only):
 {"marketCondition":"BUY SELECTIVELY","cashRecommendation":"one sentence","cashPct":30,"regime":"one sentence","cio":{"bestTradeToday":"TICKER","bestRiskReward":"TICKER","finalMarketDecision":"BUY SELECTIVELY","watchList":[{"ticker":"","reason":"max 8 words"}],"avoidList":[{"ticker":"","reason":"max 8 words"}]},"opportunities":[{"ticker":"","company":"","action":"BUY","currentPrice":"","entryZone":"$X-$Y","stopLoss":"$X","takeProfit":"$X","expectedGain":"15%","riskReward":"3:1","allocation":"10%","whyWeLikeIt":"max 15 words","whatCouldGoWrong":"max 10 words","upcomingEvent":"","eventDate":"DD Mon YYYY","trend":"","entryQuality":"GOOD","returnGate":"PASS","cashChallenge":"PASS","opportunityScore":75}]}`
 
 
       // Direct browser API call — no Vercel timeout
+      // Pre-fetch SMA for top 8 priority stocks BEFORE AI runs
+      // This means the AI prompt includes real technical data for these stocks
+      const TOP_PRIORITY = ['NVDA','AVGO','MRVL','ARM','VRT','GEV','META','PLTR']
+        .filter(t => (stocks||[]).some(s => s.ticker === t))
+      if (TOP_PRIORITY.length) {
+        try {
+          const techRes = await fetch('/api/technicals?symbols=' + TOP_PRIORITY.slice(0,5).join(','), { cache: 'no-store' })
+          if (techRes.ok) {
+            const techData = await techRes.json()
+            if (techData?.technicals) {
+              setTechMap(prev => ({ ...prev, ...techData.technicals }))
+            }
+          }
+        } catch {}
+      }
+
       const ai = repairJSON(await claude(prompt, 'cio'))
 
       // Ground all prices with verified live data
@@ -873,9 +929,10 @@ Return ONLY this JSON (EXACTLY 10 opportunity cards — not fewer):
       setData(p=>({...p, opportunities:{ ...ai, opportunities:grounded, earningsCalendar, vix, vixRegime, sectors, meta:md.meta }}))
       setLastUp(p=>({...p, opportunities:new Date().toISOString()}))
       if (grounded[0]) setSelected(grounded[0])
-      // Fetch SMA data in background — won't block anything
+      // Fetch SMA and news data in background — won't block anything
       const allTickers = (stocks||[]).map(s=>s.ticker)
       fetchTechnicals(allTickers)
+      fetchNews(allTickers)
     } catch(e) {
       setErrors(p=>({...p,opportunities:e.message}))
     } finally {
@@ -1416,7 +1473,7 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
     const d = data.opportunities
     if (!d) return null
     const opps = d.opportunities||[]
-    const visibleOpps = showAllOpps ? opps : opps.slice(0, 10)
+    const visibleOpps = showAllOpps ? opps : opps.slice(0, 8)
 
     return (
       <>
@@ -1435,9 +1492,9 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
                 )
               }
             </div>
-            {opps.length > 10 && (
+            {opps.length > 8 && (
               <button onClick={() => setShowAllOpps(s=>!s)} style={{ appearance:'none', background:C.card, border:'1.5px solid '+(showAllOpps?C.border:C.accent), color:showAllOpps?C.muted:C.accent, borderRadius:10, padding:'12px 24px', fontWeight:700, fontSize:14, cursor:'pointer', width:'100%', marginTop:14, marginBottom:4 }}>
-                {showAllOpps ? '▲ Show less' : '▼ Show '+(opps.length-10)+' more opportunities'}
+                {showAllOpps ? '▲ Show less' : '▼ Show '+(opps.length-8)+' more opportunities'}
               </button>
             )}
             <EarningsCalendar calendar={d.earningsCalendar} />
