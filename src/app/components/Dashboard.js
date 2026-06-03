@@ -1208,7 +1208,7 @@ Return ONLY compact JSON starting with opportunities array:
     setT212AnalysisLoad(true)
     try {
       // Fetch only the prices for stocks we actually hold — much faster
-      const t212Tickers = t212Data.positions.map(p => p.ticker)
+      const t212Tickers = t212Data.positions.map(p => p.ticker).slice(0, 15)
       const [priceRes, marketRes] = await Promise.all([
         fetch(`/api/prices?symbols=${t212Tickers.join(',')}`, { cache: 'no-store' }),
         fetch('/api/market?type=global', { cache: 'no-store' }),  // VIX + sectors only
@@ -1221,7 +1221,6 @@ Return ONLY compact JSON starting with opportunities array:
       })
 
       // Fetch SMA technicals and news for T212 positions in background
-      const t212Tickers = t212Data.positions.map(p => p.ticker).slice(0, 15)
       const [techBatch, newsBatch] = await Promise.allSettled([
         fetch('/api/technicals?symbols=' + t212Tickers.slice(0,5).join(','), { cache:'no-store' }).then(r=>r.ok?r.json():{}),
         fetch('/api/news?symbols=' + t212Tickers.slice(0,10).join(','), { cache:'no-store' }).then(r=>r.ok?r.json():{}),
