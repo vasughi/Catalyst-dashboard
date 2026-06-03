@@ -1191,7 +1191,7 @@ Return ONLY compact JSON (no spaces, no newlines):
 {"opportunities":[{"ticker":"${ticker}","company":"","action":"BUY|WATCH|AVOID","currentPrice":"$${livePrice?.toFixed(2)}","entryZone":"$X-$Y","stopLoss":"$X","takeProfit":"$X","expectedGain":"X%","riskReward":"X:1","allocation":"X%","whyWeLikeIt":"plain English max 20 words","whatCouldGoWrong":"plain English max 15 words","upcomingEvent":"next catalyst","eventDate":"DD Mon YYYY or TBC","trend":"from data","entryQuality":"from data","trendComment":"one plain sentence on chart setup","returnGate":"PASS|FAIL","cashChallenge":"PASS|FAIL","opportunityScore":0}]}`
 
 
-      const ai = repairJSON(await claude(prompt, 'cio'))
+      const ai = repairJSON(await claude(prompt, 'analyser'))
       setPortfolioResult({ ...ai, deepDive: null })
     } catch(e) {
       setPortfolioError(e.message)
@@ -1320,7 +1320,7 @@ Return ONLY this JSON:
       const res = await fetch('/api/claude', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, mode: 'cio' }),
+        body: JSON.stringify({ prompt, mode: 't212' }),
       })
       let rawT212Text
       if (res.headers.get('content-type')?.includes('text/plain')) {
