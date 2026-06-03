@@ -647,9 +647,9 @@ const PORTFOLIO_PASSWORD = (
 const TABS = [
   { key:'opportunities', label:'⚡ Opportunities' },
   { key:'portfolio',     label:'🔍 Stock Analyser' },
-  { key:'t212',          label:'🏦 T212 Live' },    // password protected — Trading 212 API
   { key:'global',        label:'🌍 Global Macro' },
   { key:'risk',          label:'⚠️ Risk' },
+  { key:'t212',          label:'🏦 T212 Live' },
 ]
 
 // ── Core watchlist — always visible on Opportunities tab ──────────────────────
@@ -1290,25 +1290,20 @@ ${pendingLines}
 
 MARKET CONTEXT:
 VIX: ${marketData.vix || 'N/A'} (${marketData.vixRegime || 'N/A'})
-Sectors today: ${(marketData.sectors || []).map(s => "${s.label} ${s.change}").join(', ')}
+      Sectors today: ${(marketData.sectors || []).map(s => s.label+' '+s.change).join(', ')}
 
 RULES:
-1. Use earnings dates from calendar — stocks 33-45 days to earnings are PRIME BUY candidates
-2. Stock up >8% today = max WATCH
-3. Only BUY if 15%+ gain path exists within 45 trading days
-4. DOWNTREND = max WATCH. PULLBACK IN UPTREND = ideal BUY entry.
-5. currentPrice MUST be exact dollar from PRICES above
-6. Include WATCH cards for NVDA, MRVL even without near-term earnings
-7. Sort: BUYs first, then WATCHes by score
+1. For each position give ONE action: BUY MORE / HOLD / TRIM / SELL ALL
+2. BUY MORE only if: catalyst upcoming, price at good entry, thesis intact
+3. TRIM if: up 15%+ and catalyst priced in, or position too large
+4. SELL ALL if: thesis broken, fundamental problem, or better opportunity
+5. Validate each pending order — KEEP, CANCEL, or MODIFY
+6. Consider the cash balance — over or underinvested?
+7. Use £ amounts throughout — this is a UK GBP account
+8. Plain English only. Short sentences.
 
-COVERAGE:
-- watchList: 5-8 most interesting stocks not in opportunities
-- avoidList: 5-8 stocks to avoid (gap-up, downtrend, broken thesis)
-
-LANGUAGE: Plain English, short sentences, beginner-friendly.
-
-Return ONLY this JSON (up to 10 cards):
-{"opportunities":[{"ticker":"","company":"","action":"BUY","currentPrice":"","entryZone":"$X-$Y","stopLoss":"$X","takeProfit":"$X","expectedGain":"15%","riskReward":"3:1","allocation":"10%","whyWeLikeIt":"max 12 words","whatCouldGoWrong":"max 8 words","upcomingEvent":"","eventDate":"DD Mon YYYY","trend":"","entryQuality":"GOOD","returnGate":"PASS","cashChallenge":"PASS","opportunityScore":75}],"marketCondition":"BUY SELECTIVELY","cashRecommendation":"one sentence","cashPct":30,"regime":"one sentence","cio":{"bestTradeToday":"TICKER","bestRiskReward":"TICKER","finalMarketDecision":"BUY SELECTIVELY","watchList":[{"ticker":"","reason":"max 6 words"}],"avoidList":[{"ticker":"","reason":"max 6 words"}]}}` 
+Return ONLY this JSON:
+{"portfolioHealth":"STRONG|GOOD|CAUTION|WEAK","overallSummary":"2 plain sentences on portfolio health","cashAdvice":"one sentence on cash","topAction":"most important action right now","holdings":[{"ticker":"","action":"BUY MORE|HOLD|TRIM|SELL ALL","confidence":"HIGH|MEDIUM|LOW","recommendation":"2 plain sentences what to do and why","urgency":"NOW|THIS WEEK|NO RUSH","entryIfBuyMore":"price if BUY MORE","exitIfSell":"price if TRIM or SELL ALL"}],"pendingOrdersAdvice":[{"ticker":"","verdict":"KEEP|CANCEL|MODIFY","reason":"one plain sentence"}]}` 
 
       const res = await fetch('/api/claude', {
         method: 'POST',
