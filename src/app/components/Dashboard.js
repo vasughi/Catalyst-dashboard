@@ -1142,42 +1142,54 @@ Keep total response under 280 words. Plain English only — no trading jargon.`,
       const gainIfEntry = livePrice ? ((livePrice - entryPrice) / entryPrice * 100).toFixed(1) : null
 
       const prompt = `TODAY: ${new Date().toDateString()}
+
 STOCK TO ANALYSE: ${ticker}
+${KNOWN_NAMES[ticker] ? 'Company: '+KNOWN_NAMES[ticker] : ''}
 Live price: $${livePrice?.toFixed(2)}
-${newBuyPrice ? 'User price (bought or considering): ' + newCurrency + newBuyPrice + (gainIfEntry ? ' (' + (gainIfEntry>=0?'+':'') + gainIfEntry + '% vs live)' : '') : 'No specific entry price given — use live price'}
+Today's change: ${q?.change1d || 'N/A'}
+${newBuyPrice ? 'User price (bought or target entry): '+newCurrency+newBuyPrice+(gainIfEntry ? ' ('+(parseFloat(gainIfEntry)>=0?'+':'')+gainIfEntry+'% vs current)' : '') : ''}
 
-TECHNICAL DATA:
-Trend: ${tc.trend || 'unknown'}
-Setup: ${tc.setup || 'unknown'}
+TECHNICAL ANALYSIS (computed from real 220-day price history):
+Trend: ${tc.trend || 'unknown — SMA still loading, estimate from price action'}
+Setup type: ${tc.setup || 'unknown'}
 Entry quality: ${tc.entryQuality || 'unknown'}
-SMA200: ${tc.sma200 ? '$'+tc.sma200+(tc.pctAbove200!=null?(' ('+(tc.pctAbove200>=0?'+':'')+tc.pctAbove200+'%)'):'') : 'not available'}
-SMA50: ${tc.sma50 ? '$'+tc.sma50+(tc.pctAbove50!=null?(' ('+(tc.pctAbove50>=0?'+':'')+tc.pctAbove50+'%)'):'') : 'not available'}
-Stop loss (calc): ${tc.suggestedStopLoss ? '$'+tc.suggestedStopLoss+' ('+tc.distToStopPct+'% below)' : 'not available'}
+SMA200: ${tc.sma200 ? '$'+tc.sma200+' (price is '+(tc.pctAbove200>=0?'+':'')+tc.pctAbove200+'% above/below)' : 'not yet loaded'}
+SMA50:  ${tc.sma50  ? '$'+tc.sma50+' (price is '+(tc.pctAbove50>=0?'+':'')+tc.pctAbove50+'% above/below)'  : 'not yet loaded'}
+Nearest support: ${tc.nearestSupport || 'not available'}
+Calculated stop loss: ${tc.suggestedStopLoss ? '$'+tc.suggestedStopLoss+' ('+tc.distToStopPct+'% below current)' : 'not available'}
 
-EARNINGS HISTORY: ${hist ? hist.label : 'not in history — estimate from sector'}
+EARNINGS DATA:
+Historical avg move: ${hist ? hist.label : 'not in database — research manually'}
+Last reported earnings: ${nd.lastEarnings ? '('+(nd.lastEarnings.beat?'BEAT':'MISS')+' by '+nd.lastEarnings.surprise+', period '+nd.lastEarnings.period+')' : 'not available'}
+Next earnings: unknown — check Finnhub calendar manually if critical
 
-ANALYST DATA:
-${nd.analyst ? 'Consensus: '+nd.analyst.consensus+' ('+nd.analyst.buy+' buy, '+nd.analyst.hold+' hold, '+nd.analyst.sell+' sell of '+nd.analyst.total+' analysts)' : 'No analyst data available'}
-${nd.lastEarnings ? 'Last earnings ('+nd.lastEarnings.period+'): '+(nd.lastEarnings.beat?'BEAT':'MISS')+' by '+nd.lastEarnings.surprise : 'No earnings history available'}
+ANALYST COVERAGE:
+${nd.analyst ? 'Current consensus: '+nd.analyst.consensus+' ('+nd.analyst.strongBuy+' strong buy, '+nd.analyst.buy+' buy, '+nd.analyst.hold+' hold, '+nd.analyst.sell+' sell — '+nd.analyst.total+' analysts total, data from '+nd.analyst.period+')' : 'No analyst data available from Finnhub'}
 
-RECENT NEWS (last 5 days):
-${nd.news?.length ? nd.news.map(n => n.date+': '+n.headline).join('\n') : 'No significant news'}
+RECENT NEWS (last 5 days from Finnhub):
+${nd.news?.length ? nd.news.map(n => n.date+': '+n.headline).join('\n') : 'No recent news found'}
 
-MARKET CONTEXT:
-VIX: ${marketData.vix || 'N/A'} (${marketData.vixRegime || 'N/A'})
-Sector: ${(marketData.sectors||[]).map(s=>s.label+' '+s.change).join(', ')}
+MARKET CONTEXT RIGHT NOW:
+VIX: ${marketData.vix || 'N/A'} — ${marketData.vixRegime==='HIGH_FEAR'?'Market fearful, reduce position sizes':marketData.vixRegime==='ELEVATED'?'Elevated uncertainty, be selective':'Market calm, normal position sizing'}
+Sectors today: ${(marketData.sectors||[]).map(s=>s.label+' '+s.change).join(' | ')}
 
-RULES:
-1. Give BUY if: uptrend, good entry, catalyst within 45 days or strong momentum
-2. Give WATCH if: good setup but no near-term catalyst, or slightly extended
-3. Give AVOID if: downtrend, post-earnings gap, fundamental problem, or no edge
-4. Use CALC_STOP if available for stop loss — real calculated level
-5. Calculate R/R from real numbers
-6. If user gave a buy price, factor in whether it is a good entry vs current price
-7. Plain English. Short sentences. No jargon.
+ANALYSIS RULES — follow strictly:
+1. ACTION must be one of: STRONG BUY / BUY / WATCH / AVOID
+2. BUY: uptrend + good entry + catalyst (earnings 15-45 days out OR strong momentum + analyst upgrades)
+3. WATCH: good company, good trend, but no near-term catalyst or entry is extended
+4. AVOID: downtrend (below 200 SMA), post-earnings gap >10%, broken thesis, fundamental problem
+5. STRONG BUY: only if earnings within 10 days + uptrend + excellent entry quality
+6. If TREND is DOWNTREND: maximum rating is WATCH — never recommend BUY in downtrend
+7. If TREND is PULLBACK IN UPTREND: this is IDEAL entry — weight strongly toward BUY
+8. Stop loss: use CALC_STOP if available (real support level). If not, use 7-10% below entry
+9. R/R: calculate from (takeProfit - entryZone_mid) / (entryZone_mid - stopLoss). Minimum 2:1 for BUY
+10. If user gave a price: assess whether it's a good entry vs current price and trend
+11. currentPrice MUST be $${livePrice?.toFixed(2)} — do not change this
+12. Plain English. Short sentences. No jargon. Write for a beginner investor.
 
-Return ONLY compact JSON starting with opportunities array:
-{"opportunities":[{"ticker":"","company":"","action":"BUY|WATCH|AVOID","currentPrice":"","entryZone":"$X-$Y","stopLoss":"$X","takeProfit":"$X","expectedGain":"15%","riskReward":"3:1","allocation":"10%","whyWeLikeIt":"plain English max 20 words","whatCouldGoWrong":"plain English max 15 words","upcomingEvent":"","eventDate":"DD Mon YYYY","trend":"","entryQuality":"GOOD","returnGate":"PASS","cashChallenge":"PASS","opportunityScore":75}]}`
+Return ONLY compact JSON (no spaces, no newlines):
+{"opportunities":[{"ticker":"${ticker}","company":"","action":"BUY|WATCH|AVOID","currentPrice":"$${livePrice?.toFixed(2)}","entryZone":"$X-$Y","stopLoss":"$X","takeProfit":"$X","expectedGain":"X%","riskReward":"X:1","allocation":"X%","whyWeLikeIt":"plain English max 20 words","whatCouldGoWrong":"plain English max 15 words","upcomingEvent":"next catalyst","eventDate":"DD Mon YYYY or TBC","trend":"from data","entryQuality":"from data","trendComment":"one plain sentence on chart setup","returnGate":"PASS|FAIL","cashChallenge":"PASS|FAIL","opportunityScore":0}]}`
+
 
       const ai = repairJSON(await claude(prompt, 'cio'))
       setPortfolioResult({ ...ai, deepDive: null })
