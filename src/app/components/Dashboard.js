@@ -589,6 +589,7 @@ export default function Dashboard() {
   const [drillLoad,   setDrillLoad]   = useState(false)
   const [lastUp,      setLastUp]      = useState({})
   const [showOverlay, setShowOverlay] = useState(false)
+  const [showAllOpps, setShowAllOpps] = useState(false)
   // Portfolio password gate — stored in sessionStorage (cleared on browser close)
   const [portfolioUnlocked, setPortfolioUnlocked] = useState(false)
   const [loadingStep, setLoadingStep] = useState('')
@@ -669,10 +670,36 @@ export default function Dashboard() {
   }, [liveEH])
 
   const claude = useCallback(async (prompt, mode='json') => {
-    const r = await fetch('/api/claude', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({prompt,mode}) })
+    // Call Anthropic directly from browser — bypasses Vercel's 10s function timeout
+    const systemMap = {
+      cio:      'You are a trading analyst. Output ONLY raw JSON. No markdown, no backticks. Start with { end with }. Rules: use live prices given, never guess dates, plain English output.',
+      deepdive: 'You are a trading analyst. Write clear analysis for beginners. Label each sentence FACT, ANALYSIS or OPINION. Under 280 words.',
+      json:     'Output ONLY raw JSON. No markdown, no backticks. Start with {',
+    }
+    const tokenMap = { cio: 3000, deepdive: 800, json: 1500 }
+    const modelMap  = { cio: 'claude-haiku-4-5-20251001', deepdive: 'claude-haiku-4-5-20251001', json: 'claude-haiku-4-5-20251001' }
+
+    const apiKey = process.env.NEXT_PUBLIC_ANTHROPIC_API_KEY
+    if (!apiKey) throw new Error('NEXT_PUBLIC_ANTHROPIC_API_KEY not set in Vercel environment variables')
+
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model:      modelMap[mode] || modelMap.json,
+        max_tokens: tokenMap[mode] || 1500,
+        system:     systemMap[mode] || systemMap.json,
+        messages:   [{ role: 'user', content: prompt.trim() }],
+      }),
+    })
     const d = await r.json()
-    if (!r.ok) throw new Error(d.error||`Claude ${r.status}`)
-    const tb = d.content?.find(b => b.type==='text')
+    if (!r.ok) throw new Error(d.error?.message || `Anthropic API error ${r.status}`)
+    const tb = d.content?.find(b => b.type === 'text')
     if (!tb) throw new Error('No text in Claude response')
     return tb.text
   }, [])
@@ -798,17 +825,8 @@ COVERAGE:
 Return ONLY this JSON (up to 10 opportunity cards):
 {"marketCondition":"BUY AGGRESSIVELY|BUY SELECTIVELY|WAIT|HOLD CASH","cashRecommendation":"one plain-English sentence","cashPct":30,"regime":"one plain-English sentence describing what the market is doing today","cio":{"bestTradeToday":"TICKER or NONE","bestRiskReward":"TICKER or NONE","finalMarketDecision":"BUY AGGRESSIVELY|BUY SELECTIVELY|WAIT|HOLD CASH","watchList":[{"ticker":"","reason":"plain English max 10 words — why watching not buying yet"}],"avoidList":[{"ticker":"","reason":"plain English max 10 words — specific reason to avoid right now"}]},"opportunities":[{"ticker":"","company":"","action":"STRONG BUY|BUY|WATCH|AVOID","currentPrice":"","entryZone":"$X-$Y","stopLoss":"use CALC_STOP from data","takeProfit":"$X","expectedGain":"15-20%","riskReward":"calculated e.g. 3:1","allocation":"10%","whyWeLikeIt":"plain English, max 20 words","whatCouldGoWrong":"plain English, max 15 words","upcomingEvent":"event name","eventDate":"DD Mon YYYY","trend":"from data","setup":"from data","entryQuality":"EXCELLENT|GOOD|AVERAGE|POOR","trendComment":"one plain sentence on chart","returnGate":"PASS|CONDITIONAL PASS|FAIL","cashChallenge":"PASS|FAIL","opportunityScore":75}]}`
 
-      // Timeout wrapper — Vercel hobby: 10s, Pro: 30s. Give Claude 28s max.
-      let aiText
-      try {
-        const timeout = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('AI analysis timed out — click Retry to try again')), 28000)
-        )
-        aiText = await Promise.race([claude(prompt, 'cio'), timeout])
-      } catch (e) {
-        throw new Error(e.message || 'AI analysis timed out — click Retry')
-      }
-      const ai = repairJSON(aiText)
+      // Direct browser API call — no Vercel timeout
+      const ai = repairJSON(await claude(prompt, 'cio'))
 
       // Ground all prices with verified live data
       const pm = Object.fromEntries((stocks||[]).map(s=>[s.ticker,s]))
@@ -1311,7 +1329,7 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
           <div>
             <div style={{ display:'grid', gridTemplateColumns:mob?'1fr':opps.length>3?'repeat(2,1fr)':'1fr', gap:14 }}>
             {opps.length
-              ? opps.map((o,i) => <OppCard key={`${o.ticker}-${i}`} opp={o} rank={i+1} active={selected?.ticker===o.ticker} onClick={handleClick} onDeepDive={handleCardDive} deepDiveLoading={!!cardDrillLoad[o.ticker]} deepDiveContent={cardDrills[o.ticker]} getEH={getEH} techMap={techMap} />)
+              ? (showAllOpps ? opps : opps.slice(0, 10)).map((o,i) => <OppCard key={`${o.ticker}-${i}`} opp={o} rank={i+1} active={selected?.ticker===o.ticker} onClick={handleClick} onDeepDive={handleCardDive} deepDiveLoading={!!cardDrillLoad[o.ticker]} deepDiveContent={cardDrills[o.ticker]} getEH={getEH} techMap={techMap} />)
               : (
                 <div style={{ ...card({ textAlign:'center', padding:48 }) }}>
                   <div style={{ fontSize:36, marginBottom:12 }}>💵</div>
@@ -1321,6 +1339,29 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
               )
             }
             </div>
+            {/* Load more / show less */}
+            {opps.length > 10 && (
+              <button
+                onClick={() => setShowAllOpps(s => !s)}
+                style={{ appearance:'none', background:C.card, border:`1.5px solid ${showAllOpps ? C.border : C.accent}`, color: showAllOpps ? C.muted : C.accent, borderRadius:10, padding:'12px 24px', fontWeight:700, fontSize:14, cursor:'pointer', width:'100%', marginTop:4 }}
+              >
+                {showAllOpps ? '▲ Show less' : `▼ Show ${opps.length - 10} more opportunities`}
+              </button>
+            )}
+            {/* Load more / show less */}
+            {opps.length > 10 && (
+              <button
+                onClick={() => setShowAllOpps(s => !s)}
+                style={{ appearance:'none', background:C.card, border:`1.5px solid ${showAllOpps ? C.border : C.accent}`, color: showAllOpps ? C.muted : C.accent, borderRadius:10, padding:'12px 24px', fontWeight:700, fontSize:14, cursor:'pointer', width:'100%', marginBottom:14 }}
+              >
+                {showAllOpps ? '▲ Show less' : `▼ Show ${opps.length - 10} more opportunities`}
+              </button>
+            )}
+            {opps.length > 10 && (
+              <button onClick={() => setShowAllOpps(s=>!s)} style={{ appearance:'none', background:C.card, border:'1.5px solid '+(showAllOpps?C.border:C.accent), color:showAllOpps?C.muted:C.accent, borderRadius:10, padding:'12px 24px', fontWeight:700, fontSize:14, cursor:'pointer', width:'100%', marginBottom:14 }}>
+                {showAllOpps ? '▲ Show less' : '▼ Show '+(opps.length-10)+' more opportunities'}
+              </button>
+            )}
             <EarningsCal calendar={d.earningsCalendar} />
           </div>
 
