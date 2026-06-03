@@ -30,7 +30,8 @@ function resp(body, status = 200) {
 }
 
 function buildAuthHeader() {
-  return `Basic ${Buffer.from(`${T212_KEY}:${T212_SECRET}`).toString('base64')}`
+  const creds = T212_KEY + ':' + T212_SECRET
+  return 'Basic ' + Buffer.from(creds).toString('base64')
 }
 
 async function t212(path) {
