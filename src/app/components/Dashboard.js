@@ -2184,16 +2184,19 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
             } else {
               // Merge duplicate direct holdings of same ticker
               if (drMap[p.ticker]) {
-                drMap[p.ticker].quantity   = (drMap[p.ticker].quantity||0) + (p.quantity||0)
-                drMap[p.ticker].totalValue = (drMap[p.ticker].totalValue||0) + (p.totalValue||0)
-                drMap[p.ticker].ppl        = (drMap[p.ticker].ppl||0) + (p.ppl||0)
-                // Weighted average buy price
-                const totalQty = drMap[p.ticker].quantity
-                drMap[p.ticker].averagePrice = totalQty > 0
-                  ? ((drMap[p.ticker].averagePrice||0) * (totalQty - (p.quantity||0)) + (p.averagePrice||0) * (p.quantity||0)) / totalQty
+                const existingQty = drMap[p.ticker].quantity || 0
+                const newQty      = p.quantity || 0
+                const combinedQty = existingQty + newQty
+                // Weighted average — use existing qty BEFORE adding new
+                const weightedAvg = combinedQty > 0
+                  ? ((drMap[p.ticker].averagePrice||0) * existingQty + (p.averagePrice||0) * newQty) / combinedQty
                   : drMap[p.ticker].averagePrice
-                drMap[p.ticker].gainPct = drMap[p.ticker].averagePrice > 0
-                  ? parseFloat(((drMap[p.ticker].currentPrice - drMap[p.ticker].averagePrice) / drMap[p.ticker].averagePrice * 100).toFixed(2))
+                drMap[p.ticker].quantity     = combinedQty
+                drMap[p.ticker].totalValue   = (drMap[p.ticker].totalValue||0) + (p.totalValue||0)
+                drMap[p.ticker].ppl          = (drMap[p.ticker].ppl||0) + (p.ppl||0)
+                drMap[p.ticker].averagePrice = weightedAvg
+                drMap[p.ticker].gainPct      = weightedAvg > 0
+                  ? parseFloat(((drMap[p.ticker].currentPrice - weightedAvg) / weightedAvg * 100).toFixed(2))
                   : 0
               } else {
                 drMap[p.ticker] = { ...p }
