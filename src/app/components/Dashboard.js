@@ -93,7 +93,7 @@ const EH = {
   NVDA:  { avg: 14.2, beats: 4, label: '14.2% avg · 4/4 beats — next: est Aug 2026' },
   AMD:   { avg: 9.8,  beats: 3, label: '9.8% avg · 3/4 beats' },
   AVGO:  { avg: 11.4, beats: 4, label: '11.4% avg · 4/4 beats — REPORTS 3 JUN 2026' },
-  MRVL:  { avg: 16.2, beats: 4, label: '16.2% avg · 4/4 beats — next: 20 Aug 2026' },
+  MRVL:  { avg: 16.2, beats: 4, label: '16.2% avg · 4/4 beats — next: est 20 Aug 2026' },
   ARM:   { avg: 12.8, beats: 3, label: '12.8% avg · 3/4 beats' },
   QCOM:  { avg: 7.4,  beats: 3, label: '7.4% avg · 3/4 beats' },
   // Networking
@@ -111,6 +111,7 @@ const EH = {
   // Cyber
   CRWD:  { avg: 13.1, beats: 4, label: '13.1% avg · 4/4 beats' },
   PANW:  { avg: 8.6,  beats: 3, label: '8.6% avg · 3/4 beats' },
+  MU:    { avg: 13.4, beats: 4, label: '13.4% avg · 4/4 beats — HBM/AI memory surge' },
   ZS:    { avg: 11.8, beats: 4, label: '11.8% avg · 4/4 beats' },
   // Defence
   LMT:   { avg: 4.2,  beats: 3, label: '4.2% avg · 3/4 beats — low volatility' },
@@ -721,6 +722,7 @@ export default function Dashboard() {
   const [t212PwInput,      setT212PwInput]      = useState('')
   const [t212PwError,      setT212PwError]      = useState(false)
   const [t212ViewMode,     setT212ViewMode]     = useState('pies') // 'pies' | 'stocks'
+  const [t212PriceCache,  setT212PriceCache]  = useState({})  // T212-sourced prices — always accurate
   const [expandedPies,     setExpandedPies]     = useState({})     // { pieName: bool }
   const loaded = useRef({})
   const w = useWindowWidth()
@@ -827,6 +829,14 @@ export default function Dashboard() {
     try {
       const md = await market('opportunities')
       setLoadingStep('Building AI analysis…')
+      // Override Finnhub prices with T212 prices where available (T212 is always accurate)
+      const enrichedStocks = stocks.map(s => {
+        const t212p = t212PriceCache[s.ticker]
+        if (t212p && t212p.price > 0) {
+          return { ...s, price: t212p.price, priceFormatted: '$'+t212p.price.toFixed(2), priceSource: 'T212' }
+        }
+        return { ...s, priceSource: 'Finnhub' }
+      })
       // Log discovery stats for debugging
       if (md.meta?.discoveredFromCalendar) {
         console.log('[CATALYST] Discovered', md.meta.discoveredFromCalendar, 'stocks from live calendar out of', md.meta.calendarScanned, 'scanned')
@@ -835,10 +845,10 @@ export default function Dashboard() {
 
       // Build stock lines for prompt
       // Only include stocks with valid live prices in the AI prompt
-      const stockLines = (stocks||[]).filter(s => s.price && s.price > 0).map(s => {
+      const stockLines = enrichedStocks.filter(s => s.price && s.price > 0).map(s => {
         const hist = getEH(s.ticker)
         const parts = [
-          s.ticker+'('+s.name+')'+(s.discoveredFromCalendar?' [CAL]':'')+': $'+s.price?.toFixed(2)+' '+s.change1d,
+          s.ticker+'('+s.name+')'+(s.discoveredFromCalendar?' [CAL]':'')+(s.priceSource==='T212'?' [T212]':' [FH]')+': $'+s.price?.toFixed(2)+' '+s.change1d,
           s.hasVerifiedEarnings
             ? ('EARNINGS='+s.earningsDate+' in_'+s.earningsTradingDaysAway+'d'+(s.earningsSource==='estimate'?' [EST]':' [VERIFIED]')+(s.epsEstimate?' EPS=$'+s.epsEstimate:''))
             : 'NO_EARNINGS',
@@ -861,7 +871,7 @@ export default function Dashboard() {
 
       // Build earnings history lines — use discovered stocks, not hardcoded list
       // This means any auto-discovered stock (e.g. PANW, ORCL) gets its history shown
-      const ehLines = (stocks||[]).map(s => {
+      const ehLines = enrichedStocks.map(s => {
         const h = getEH(s.ticker)
         if (!h) return null
         return s.ticker+': '+h.label+(h.live?' [LIVE]':' [CACHED]')
@@ -913,6 +923,8 @@ KNOWN EVENTS:
 - ORCL: Reports Jun 10 2026 confirmed — 9 days, strong AI cloud growth, BUY candidate
 - DOCU: Reports Jun 4 tonight — BUY if guidance strong, WATCH if billings disappoint
 - AVGO: Reported 3 Jun, beat revenue 48% YoY ($22.19B) BUT Q3 guidance disappointed — stock fell 15% after-hours to ~$413. Wait for stabilisation before buying. max WATCH.\n'
+      '
+- MU: Reporting Jun 24 2026 — stock at $1079 all-time high on HBM/AI memory demand. 4/4 beats. Prime catalyst play.\n'
       '
 - CRDO: Reported 1 Jun, beat but fell 14% on inline guidance — WATCH until stabilises
 - QCOM: Already reported Q2, weak Q3 guidance, Apple modem risk — max WATCH
@@ -1004,7 +1016,7 @@ Return ONLY this JSON (EXACTLY 10 opportunity cards — rank all universe stocks
       setLastUp(p=>({...p, opportunities:new Date().toISOString()}))
       if (grounded[0]) setSelected(grounded[0])
       // Fetch SMA and news data in background — won't block anything
-      const allTickers = (stocks||[]).map(s=>s.ticker)
+      const allTickers = enrichedStocks.map(s=>s.ticker)
       fetchTechnicals(allTickers)
       fetchNews(allTickers)
     } catch(e) {
@@ -1228,7 +1240,21 @@ Return ONLY compact JSON (no spaces, no newlines):
       const d = await r.json()
       if (!r.ok) throw new Error(d.error || `T212 error ${r.status}`)
       setT212Data(d)
-      setT212Result(null)  // clear previous analysis when data refreshes
+      setT212Result(null)
+      // Cache T212 prices — these are always accurate (direct from T212)
+      if (d.positions?.length) {
+        const priceCache = {}
+        d.positions.forEach(p => {
+          if (p.ticker && p.currentPrice > 0) {
+            priceCache[p.ticker] = {
+              price:     p.currentPrice,
+              changePct: p.gainPct || 0,
+              source:    'T212',
+            }
+          }
+        })
+        setT212PriceCache(priceCache)
+      }
     } catch (e) {
       setT212Error(e.message)
     } finally {
