@@ -28,7 +28,7 @@ const MODELS = {
 const TOKENS = {
   cio:      8000,   // 10 cards across many stocks
   analyser: 2000,   // 1 card for single ticker — much less needed
-  t212:     6000,   // 34 positions × ~50 tokens each = ~1700 + prompt = ~4000 needed   // holdings array — moderate size
+  t212:     3000,   // 20 positions × ~40 tokens = ~800 + prompt ~1000 = ~1800 needed
   deepdive: 900,
   json:     1500,
 }
