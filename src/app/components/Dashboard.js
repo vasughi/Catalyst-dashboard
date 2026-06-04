@@ -858,7 +858,7 @@ export default function Dashboard() {
           // Technicals — live SMA data from /api/technicals
           // Shows: trend, entry quality, % above/below 200 SMA, calculated stop
           (()=>{const t=techMap[s.ticker]||{}; return[
-            t.trend             ? 'TREND:'+t.trend               : 'TREND:unknown(SMA_loading)',
+            t.trend             ? 'TREND:'+t.trend               : '',
             t.entryQuality      ? 'ENTRY:'+t.entryQuality        : '',
             t.sma200            ? 'SMA200:$'+t.sma200+(t.pctAbove200!=null?'('+(t.pctAbove200>=0?'+':'')+t.pctAbove200+'%)':'') : '',
             t.sma50             ? 'SMA50:$'+t.sma50+(t.pctAbove50!=null?'('+(t.pctAbove50>=0?'+':'')+t.pctAbove50+'%)':'')     : '',
@@ -940,7 +940,7 @@ RULES:
 4. TREND:DOWNTREND = max WATCH — never BUY a downtrend
 5. TREND:PULLBACK_IN_UPTREND = ideal entry — prioritise these for BUY
 6. If SMA200 available: use CALC_STOP as stop loss, calculate R/R from real numbers
-7. If TREND:unknown(SMA_loading): AI estimates trend from price action
+7. If TREND not provided: estimate from price action and news context
 8. currentPrice MUST be exact dollar from PRICES above — if a stock shows no price, EXCLUDE it from recommendations entirely
 9. Plain English only. Short sentences. No jargon.
 10. watchList: 5-8 most interesting. avoidList: 5-8 to avoid.
@@ -1894,11 +1894,13 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
                 </div>
 
                 {/* Trend badges */}
-                {(opp.trend || opp.entryQuality) && (
+                {/* Only show if real SMA values — filter AI placeholder text */}
+                {(() => { const VALID_TRENDS=['UPTREND','PULLBACK','RECOVERING','DOWNTREND']; const VALID_ENTRY=['EXCELLENT','GOOD','AVERAGE','POOR','FAIR']; const t=opp.trend; const e=opp.entryQuality; const showT=t&&VALID_TRENDS.some(v=>t.toUpperCase().includes(v)); const showE=e&&VALID_ENTRY.includes(e.toUpperCase()); if(!showT&&!showE) return null; return (
                   <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:12 }}>
-                    {opp.trend && <Pill tone={opp.trend==='STRONG UPTREND'?'green':opp.trend==='PULLBACK IN UPTREND'?'blue':opp.trend==='RECOVERING'?'amber':'red'} size="sm">📈 {opp.trend}</Pill>}
-                    {opp.entryQuality && <Pill tone={opp.entryQuality==='EXCELLENT'?'green':opp.entryQuality==='GOOD'?'blue':opp.entryQuality==='AVERAGE'?'grey':'red'} size="sm">Entry: {opp.entryQuality}</Pill>}
+                    {showT && <Pill tone={t.includes('STRONG UP')?'green':t.includes('PULLBACK')?'blue':t.includes('RECOVER')?'amber':'red'} size="sm">📈 {t}</Pill>}
+                    {showE && <Pill tone={e==='EXCELLENT'?'green':e==='GOOD'?'blue':e==='AVERAGE'?'grey':'red'} size="sm">Entry: {e}</Pill>}
                   </div>
+                )})()}
                 )}
 
                 {/* Price grid */}
