@@ -2176,12 +2176,31 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
     // ── Main render ────────────────────────────────────────────────────────────
     const { pies: pieGroups, direct } = t212Data?.positions
       ? (() => {
-          const pg = {}, dr = []
+          const pg = {}, drMap = {}
           t212Data.positions.forEach(p => {
-            if (p.pieName) { if(!pg[p.pieName])pg[p.pieName]=[]; pg[p.pieName].push(p) }
-            else dr.push(p)
+            if (p.pieName) {
+              if(!pg[p.pieName]) pg[p.pieName] = []
+              pg[p.pieName].push(p)
+            } else {
+              // Merge duplicate direct holdings of same ticker
+              if (drMap[p.ticker]) {
+                drMap[p.ticker].quantity   = (drMap[p.ticker].quantity||0) + (p.quantity||0)
+                drMap[p.ticker].totalValue = (drMap[p.ticker].totalValue||0) + (p.totalValue||0)
+                drMap[p.ticker].ppl        = (drMap[p.ticker].ppl||0) + (p.ppl||0)
+                // Weighted average buy price
+                const totalQty = drMap[p.ticker].quantity
+                drMap[p.ticker].averagePrice = totalQty > 0
+                  ? ((drMap[p.ticker].averagePrice||0) * (totalQty - (p.quantity||0)) + (p.averagePrice||0) * (p.quantity||0)) / totalQty
+                  : drMap[p.ticker].averagePrice
+                drMap[p.ticker].gainPct = drMap[p.ticker].averagePrice > 0
+                  ? parseFloat(((drMap[p.ticker].currentPrice - drMap[p.ticker].averagePrice) / drMap[p.ticker].averagePrice * 100).toFixed(2))
+                  : 0
+              } else {
+                drMap[p.ticker] = { ...p }
+              }
+            }
           })
-          return { pies:pg, direct:dr }
+          return { pies:pg, direct:Object.values(drMap) }
         })()
       : { pies:{}, direct:[] }
 
@@ -2320,7 +2339,16 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
             {/* All Holdings view */}
             {t212ViewMode==='stocks' && (
               <div style={{ display:'grid', gridTemplateColumns:mob?'1fr 1fr':'repeat(auto-fill,minmax(200px,1fr))', gap:8, marginBottom:16 }}>
-                {t212Data.positions.map((p,i)=><StockCard key={i} p={p}/>)}
+                {/* Deduplicate for All Stocks view */}
+              {Object.values(t212Data.positions.reduce((acc,p) => {
+                if (!acc[p.ticker]) { acc[p.ticker] = {...p} }
+                else {
+                  acc[p.ticker].quantity   = (acc[p.ticker].quantity||0) + (p.quantity||0)
+                  acc[p.ticker].totalValue = (acc[p.ticker].totalValue||0) + (p.totalValue||0)
+                  acc[p.ticker].ppl        = (acc[p.ticker].ppl||0) + (p.ppl||0)
+                }
+                return acc
+              }, {})).map((p,i)=><StockCard key={i} p={p}/>)}
               </div>
             )}
           </>
