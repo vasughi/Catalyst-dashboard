@@ -1275,12 +1275,13 @@ Return ONLY compact JSON (no spaces, no newlines):
       const top20    = sorted.slice(0, 20)
       const tickers  = top20.map(p => p.ticker)
 
-      // Parallel fetch — prices + technicals + news + market context
-      const [priceRes, techRes, newsRes, marketRes] = await Promise.allSettled([
-        fetch('/api/prices?symbols='    + tickers.join(','),         { cache:'no-store' }),
+      // Parallel fetch — all in one go
+      const [priceRes, techRes, newsRes, marketRes, calRes] = await Promise.allSettled([
+        fetch('/api/prices?symbols='    + tickers.join(','),            { cache:'no-store' }),
         fetch('/api/technicals?symbols='+ tickers.slice(0,5).join(','), { cache:'no-store' }),
         fetch('/api/news?symbols='      + tickers.slice(0,8).join(','), { cache:'no-store' }),
-        fetch('/api/market?type=global',                              { cache:'no-store' }),
+        fetch('/api/market?type=global',                                { cache:'no-store' }),
+        fetch('/api/market?type=opportunities',                         { cache:'no-store' }),
       ])
 
       const priceData  = priceRes.status==='fulfilled'  && priceRes.value.ok  ? await priceRes.value.json()  : {}
@@ -1292,19 +1293,54 @@ Return ONLY compact JSON (no spaces, no newlines):
       if (Object.keys(localTechMap).length) setTechMap(prev => ({...prev,...localTechMap}))
       if (Object.keys(localNewsMap).length) setNewsData(prev => ({...prev,...localNewsMap}))
 
-      // Build concise position lines — max ~40 chars per position
-      const posLines = top20.map(p => {
-        const tc = localTechMap[p.ticker] || {}
-        const nd = localNewsMap[p.ticker] || {}
-        const eh = getEH(p.ticker)
+      // Deduplicate positions — combine pie + direct holdings of same ticker
+      const deduped = []
+      const seen = {}
+      top20.forEach(p => {
+        if (seen[p.ticker]) {
+          seen[p.ticker].totalValue = (seen[p.ticker].totalValue||0) + (p.totalValue||0)
+          seen[p.ticker].ppl        = (seen[p.ticker].ppl||0)        + (p.ppl||0)
+        } else {
+          seen[p.ticker] = { ...p }
+          deduped.push(seen[p.ticker])
+        }
+      })
+
+      // Calculate total portfolio value for position sizing
+      const totalPortfolioValue = deduped.reduce((s,p) => s+(p.totalValue||0), 0) || 1
+
+      // Build earnings context from parallel calendar fetch
+      const earningsContext = {}
+      if (calRes.status === 'fulfilled' && calRes.value.ok) {
+        try {
+          const calData = await calRes.value.json()
+          ;(calData.earningsCalendar||[]).forEach(e => {
+            if (seen[e.ticker]) earningsContext[e.ticker] = e
+          })
+        } catch {}
+      }
+
+      // Build rich position lines
+      const posLines = deduped.map(p => {
+        const tc   = localTechMap[p.ticker] || {}
+        const nd   = localNewsMap[p.ticker] || {}
+        const eh   = getEH(p.ticker)
         const live = priceData.prices?.[p.ticker]
+        const pct  = ((p.totalValue||0) / totalPortfolioValue * 100).toFixed(1)
+        const ec   = earningsContext[p.ticker]
         const parts = [
-          p.ticker + ':£' + (p.averagePrice||0).toFixed(0) + '→£' + (p.currentPrice||0).toFixed(0),
-          (p.gainPct>=0?'+':'') + p.gainPct + '%',
-          '£' + (p.totalValue||0).toFixed(0) + ' value',
-          tc.trend ? tc.trend.replace('PULLBACK IN ','PULLBACK/').replace(' UPTREND','').slice(0,12) : '',
-          nd.analyst?.consensus ? 'Analysts:'+nd.analyst.consensus : '',
-          eh?.label ? eh.label.split('·')[0].trim() : '',
+          p.ticker + ':£' + (p.averagePrice||0).toFixed(0) + '→£' + (p.currentPrice||0).toFixed(0)
+            + ' (' + (p.gainPct>=0?'+':'') + p.gainPct + '%) £' + (p.totalValue||0).toFixed(0)
+            + ' (' + pct + '% of portfolio)',
+          live?.changePct !== undefined ? 'today:' + (live.changePct>=0?'+':'') + live.changePct + '%' : '',
+          ec ? 'EARNINGS:' + ec.date + ' in ' + ec.tradingDaysAway + 'd' : '',
+          tc.trend ? 'TREND:' + tc.trend : '',
+          tc.pctAbove200 != null ? 'vs200SMA:' + (tc.pctAbove200>=0?'+':'') + tc.pctAbove200 + '%' : '',
+          tc.suggestedStopLoss ? 'STOP:£' + tc.suggestedStopLoss : '',
+          nd.analyst ? 'Analysts:' + nd.analyst.consensus + '(' + nd.analyst.buy + 'buy/' + nd.analyst.hold + 'hold/' + nd.analyst.sell + 'sell)' : '',
+          nd.lastEarnings ? 'LastEPS:' + (nd.lastEarnings.beat?'BEAT':'MISS') + nd.lastEarnings.surprise : '',
+          nd.news?.[0] ? 'News:' + nd.news[0].headline.slice(0,60) : '',
+          eh ? eh.label.split('·')[0].trim() : '',
         ]
         return parts.filter(Boolean).join(' | ')
       }).join('\n')
