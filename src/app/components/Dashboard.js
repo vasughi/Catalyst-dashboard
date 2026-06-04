@@ -1901,7 +1901,6 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
                     {showE && <Pill tone={e==='EXCELLENT'?'green':e==='GOOD'?'blue':e==='AVERAGE'?'grey':'red'} size="sm">Entry: {e}</Pill>}
                   </div>
                 )})()}
-                )}
 
                 {/* Price grid */}
                 <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))', gap:10, marginBottom:14 }}>
