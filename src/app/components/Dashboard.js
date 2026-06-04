@@ -894,7 +894,8 @@ ${newsLines || 'Loading in background — refresh for live data'}
 KNOWN EVENTS:
 - ORCL: Reports Jun 10 2026 confirmed — 9 days, strong AI cloud growth, BUY candidate
 - DOCU: Reports Jun 4 tonight — BUY if guidance strong, WATCH if billings disappoint
-- AVGO: Reported 3 Jun — check live news above for actual result and reaction
+- AVGO: Reported 3 Jun, beat revenue 48% YoY ($22.19B) BUT Q3 guidance disappointed — stock fell 15% after-hours to ~$413. Wait for stabilisation before buying. max WATCH.\n'
+      '
 - CRDO: Reported 1 Jun, beat but fell 14% on inline guidance — WATCH until stabilises
 - QCOM: Already reported Q2, weak Q3 guidance, Apple modem risk — max WATCH
 - GOOGL: $80B share issue = dilution = max WATCH
