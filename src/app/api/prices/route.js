@@ -28,14 +28,15 @@ async function fetchQuote(sym) {
     const price    = d.c
     const prevClose = d.pc
 
-    // Validation 1: prevClose must be present and non-zero
-    if (!prevClose || prevClose <= 0) return null
-
-    // Validation 2: drift check — reject if price moved >40% from yesterday
-    // This catches: split-adjusted prices (NFLX 1200% drift), stale cached data,
-    // and Finnhub glitches. It ALLOWS genuine gap-ups (MRVL +33% is fine).
-    const drift = Math.abs(price - prevClose) / prevClose
-    if (drift > 0.40) return null
+    // Validation 1: drift check — only if prevClose is available and valid
+    // If prevClose missing, accept price (can't validate drift without it)
+    if (prevClose && prevClose > 0) {
+      const drift = Math.abs(price - prevClose) / prevClose
+      // Reject if moved >40% in one day (catches split-price glitches)
+      if (drift > 0.40) return null
+    }
+    // Reject if price is implausibly low (< $0.001) or high (> $100000)
+    if (price < 0.001 || price > 100000) return null
 
     // Validation 3: minimal post-split overrides for known Finnhub issues
     // Only needed when Finnhub's prevClose itself is stale/wrong
