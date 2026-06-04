@@ -183,7 +183,6 @@ async function safeQuote(sym) {
     }
   } catch { return null }
 }
-}
 
 // Fetch prices in batches — max 10 parallel, 100ms between batches
 async function fetchPrices(syms) {
