@@ -57,16 +57,23 @@ async function t212(path, timeoutMs = 7000) {
   }
 }
 
-// Clean T212 ticker suffixes: NVDA_US_EQ → NVDA
+// Clean T212 ticker suffixes: NVDA_US_EQ → NVDA, ARMG_GBX_EQ → ARMG
+// T212 format: TICKER_EXCHANGE_TYPE e.g. NVDA_US_EQ, ARMG_GBX_EQ
+// We strip the exchange (_US, _GBX, _GBP, _LSE) and type (_EQ) suffixes
+// but preserve tickers that have underscores as part of their name (MDA_CA)
 function cleanTicker(raw) {
   if (!raw) return raw
-  return raw
-    .replace(/_US_EQ$/, '')
-    .replace(/_EQ$/, '')
-    .replace(/_US$/, '')
-    .replace(/_GBX_EQ$/, '')
-    .replace(/_GBP_EQ$/, '')
-    .replace(/_\w{2,}_\w{2,}$/, '')
+  // Strip known patterns: _XX_EQ where XX is a 2-3 char exchange code
+  let s = raw
+  // Known exchange+equity suffix combos (most specific first)
+  const patterns = [
+    /_US_EQ$/, /_GBX_EQ$/, /_GBP_EQ$/, /_EUR_EQ$/,
+    /_LSE_EQ$/, /_AMS_EQ$/, /_ETR_EQ$/, /_EPA_EQ$/,
+    // After removing _EQ, also strip bare exchange suffixes
+    /_EQ$/,    /_US$/,     /_GBX$/,    /_GBP$/,
+  ]
+  for (const p of patterns) { s = s.replace(p, '') }
+  return s
 }
 
 export async function GET() {
@@ -137,9 +144,11 @@ export async function GET() {
           }
         })
 
-        // Map every instrument in this pie to the pie name
+        // Map instruments to pie — use both cleaned ticker AND raw ticker
+        // as fallback to handle any suffix mismatches
         instruments.forEach(inst => {
-          if (inst.ticker) tickerToPie[inst.ticker] = pieName
+          if (inst.ticker)    tickerToPie[inst.ticker]    = pieName
+          if (inst.rawTicker) tickerToPie[inst.rawTicker] = pieName
         })
 
         const pieObj = {
@@ -216,7 +225,7 @@ export async function GET() {
           ppl:         parseFloat(ppl.toFixed(2)),
           gainPct,
           totalValue:  parseFloat((curPrice * qty).toFixed(2)),
-          pieName:     pieQty > 0 ? pieName : null,
+          pieName:     pieQty > 0 ? (pieName || tickerToPie[p.ticker] || null) : null,
         })
       }
     })
