@@ -1234,17 +1234,17 @@ Return ONLY compact JSON (no spaces, no newlines):
         if (q) priceMap[ticker] = q
       })
 
-      // Fetch SMA technicals and news for T212 positions in background
+      // Fetch SMA + news into LOCAL variables — NOT React state
+      // React setState is async and won't be ready when we build the prompt below
       const [techBatch, newsBatch] = await Promise.allSettled([
         fetch('/api/technicals?symbols=' + t212Tickers.slice(0,5).join(','), { cache:'no-store' }).then(r=>r.ok?r.json():{}),
         fetch('/api/news?symbols=' + t212Tickers.slice(0,10).join(','), { cache:'no-store' }).then(r=>r.ok?r.json():{}),
       ])
-      if (techBatch.status==='fulfilled' && techBatch.value?.technicals) {
-        setTechMap(prev => ({ ...prev, ...techBatch.value.technicals }))
-      }
-      if (newsBatch.status==='fulfilled' && newsBatch.value?.results) {
-        setNewsData(prev => ({ ...prev, ...newsBatch.value.results }))
-      }
+      const localTechMap = techBatch.status==='fulfilled' ? (techBatch.value?.technicals || {}) : {}
+      const localNewsMap = newsBatch.status==='fulfilled' ? (newsBatch.value?.results    || {}) : {}
+      // Also update React state so cards show badges after analysis
+      if (Object.keys(localTechMap).length) setTechMap(prev => ({ ...prev, ...localTechMap }))
+      if (Object.keys(localNewsMap).length) setNewsData(prev => ({ ...prev, ...localNewsMap }))
 
       // Enrich T212 positions
       const enriched = t212Data.positions.map(p => {
@@ -1264,8 +1264,8 @@ Return ONLY compact JSON (no spaces, no newlines):
 
       // Build AI prompt — enriched with SMA + news + analyst data from techMap/newsData
       const posLines = enriched.map(p => {
-        const tc = techMap[p.ticker] || {}
-        const nd = newsData[p.ticker] || {}
+        const tc = localTechMap[p.ticker] || techMap[p.ticker] || {}
+        const nd = localNewsMap[p.ticker] || newsData[p.ticker] || {}
         const parts = [
           p.ticker+': '+p.quantity+' shares @ £'+p.averagePrice+' → now £'+(p.currentPrice?.toFixed(2)||'?')+' P&L £'+p.ppl+' ('+(p.gainPct>=0?'+':'')+p.gainPct+'%)',
           p.change1d ? 'today '+p.change1d : '',
