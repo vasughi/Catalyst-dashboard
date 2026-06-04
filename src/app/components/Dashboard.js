@@ -976,6 +976,22 @@ Return ONLY this JSON (EXACTLY 10 opportunity cards — rank all universe stocks
         } catch {}
       }
 
+      // Fetch live news/analyst data BEFORE AI call so it's in the prompt
+      // (background fetchNews happens after, but won't help the current run)
+      if (Object.keys(newsData).length === 0) {
+        // First load — fetch inline so AI has real analyst data
+        try {
+          const topT = enrichedStocks.filter(s=>s.price>0).slice(0,10).map(s=>s.ticker).join(',')
+          if (topT) {
+            const nr = await fetch('/api/news?symbols='+topT, { cache:'no-store' })
+            if (nr.ok) {
+              const nd = await nr.json()
+              if (nd.results) setNewsData(prev => ({ ...prev, ...nd.results }))
+            }
+          }
+        } catch {}
+      }
+
       const ai = repairJSON(await claude(prompt, 'cio'))
 
       // Ground all prices with verified live data
@@ -1281,7 +1297,7 @@ Return ONLY compact JSON (no spaces, no newlines):
         fetch('/api/technicals?symbols='+ tickers.slice(0,5).join(','), { cache:'no-store' }),
         fetch('/api/news?symbols='      + tickers.slice(0,8).join(','), { cache:'no-store' }),
         fetch('/api/market?type=global',                                { cache:'no-store' }),
-        fetch('/api/market?type=opportunities',                         { cache:'no-store' }),
+        fetch('/api/earnings-history',                                    { cache:'no-store' }),
       ])
 
       const priceData  = priceRes.status==='fulfilled'  && priceRes.value.ok  ? await priceRes.value.json()  : {}
@@ -1298,8 +1314,22 @@ Return ONLY compact JSON (no spaces, no newlines):
       const seen = {}
       top20.forEach(p => {
         if (seen[p.ticker]) {
-          seen[p.ticker].totalValue = (seen[p.ticker].totalValue||0) + (p.totalValue||0)
-          seen[p.ticker].ppl        = (seen[p.ticker].ppl||0)        + (p.ppl||0)
+          const prev = seen[p.ticker]
+          const prevQty = prev.quantity || 0
+          const newQty  = p.quantity    || 0
+          const combQty = prevQty + newQty
+          prev.totalValue   = (prev.totalValue||0) + (p.totalValue||0)
+          prev.ppl          = (prev.ppl||0)        + (p.ppl||0)
+          prev.quantity     = combQty
+          // Weighted average price
+          prev.averagePrice = combQty > 0
+            ? ((prev.averagePrice||0) * prevQty + (p.averagePrice||0) * newQty) / combQty
+            : prev.averagePrice
+          // Recalculate gainPct from totals (ppl / invested)
+          const invested = prev.totalValue - prev.ppl
+          prev.gainPct = invested > 0
+            ? parseFloat((prev.ppl / invested * 100).toFixed(2))
+            : 0
         } else {
           seen[p.ticker] = { ...p }
           deduped.push(seen[p.ticker])
@@ -1309,12 +1339,14 @@ Return ONLY compact JSON (no spaces, no newlines):
       // Calculate total portfolio value for position sizing
       const totalPortfolioValue = deduped.reduce((s,p) => s+(p.totalValue||0), 0) || 1
 
-      // Build earnings context from parallel calendar fetch
+      // Build earnings context — lightweight, no full market scan needed
       const earningsContext = {}
       if (calRes.status === 'fulfilled' && calRes.value.ok) {
         try {
           const calData = await calRes.value.json()
-          ;(calData.earningsCalendar||[]).forEach(e => {
+          // earnings-history returns array of {ticker, date, daysAway, ...}
+          const earningsArr = Array.isArray(calData) ? calData : (calData.calendar || calData.earnings || [])
+          earningsArr.forEach(e => {
             if (seen[e.ticker]) earningsContext[e.ticker] = e
           })
         } catch {}
@@ -1332,7 +1364,9 @@ Return ONLY compact JSON (no spaces, no newlines):
           p.ticker + ':£' + (p.averagePrice||0).toFixed(0) + '→£' + (p.currentPrice||0).toFixed(0)
             + ' (' + (p.gainPct>=0?'+':'') + p.gainPct + '%) £' + (p.totalValue||0).toFixed(0)
             + ' (' + pct + '% of portfolio)',
-          live?.changePct !== undefined ? 'today:' + (live.changePct>=0?'+':'') + live.changePct + '%' : '',
+          live?.changePct !== undefined
+            ? 'today:' + (live.changePct>=0?'+':'') + live.changePct + '%'
+            : 'allTimeGain:' + (p.gainPct>=0?'+':'') + p.gainPct + '%',
           ec ? 'EARNINGS:' + ec.date + ' in ' + ec.tradingDaysAway + 'd' : '',
           tc.trend ? 'TREND:' + tc.trend : '',
           tc.pctAbove200 != null ? 'vs200SMA:' + (tc.pctAbove200>=0?'+':'') + tc.pctAbove200 + '%' : '',
@@ -2178,9 +2212,13 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
       ? (() => {
           const pg = {}, drMap = {}
           t212Data.positions.forEach(p => {
-            if (p.pieName) {
+            if (p.pieName && p.pieName !== '__pie_unknown__') {
               if(!pg[p.pieName]) pg[p.pieName] = []
               pg[p.pieName].push(p)
+            } else if (p.pieName === '__pie_unknown__') {
+              // In a pie but couldn't identify which — show in special group
+              if(!pg['In Pies (ungrouped)']) pg['In Pies (ungrouped)'] = []
+              pg['In Pies (ungrouped)'].push({...p, pieName:'In Pies (ungrouped)'})
             } else {
               // Merge duplicate direct holdings of same ticker
               if (drMap[p.ticker]) {
@@ -2274,6 +2312,25 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
           </div>
         )}
 
+        {/* ── Debug panel — shows what T212 API returned ─────────────────── */}
+        {t212Data?.debug && (
+          <div style={{ ...card({ marginBottom:10, padding:'8px 12px', background:'#1a1a2e', borderLeft:`3px solid ${C.accent}` }) }}>
+            <div style={{ color:C.accent, fontSize:11, fontWeight:700, marginBottom:4 }}>
+              T212 API Debug · {t212Data.debug.rawPositionCount} positions · {t212Data.debug.pieCount} pies
+            </div>
+            <div style={{ color:C.muted, fontSize:10, lineHeight:1.8 }}>
+              Tagged to pie: {t212Data.debug.taggedToPie} · Direct: {t212Data.debug.directHoldings} · tickerToPie entries: {t212Data.debug.tickerToPieEntries}
+              {t212Data.debug.piesWithoutDetails?.length > 0 && (
+                <span style={{ color:C.amber }}> · Pies missing instrument data: {t212Data.debug.piesWithoutDetails.join(', ')}</span>
+              )}
+            </div>
+            {Object.values(t212Data.errors||{}).some(Boolean) && (
+              <div style={{ color:C.down, fontSize:10, marginTop:4 }}>
+                Errors: {Object.entries(t212Data.errors).filter(([,v])=>v).map(([k,v])=>`${k}: ${v}`).join(' · ')}
+              </div>
+            )}
+          </div>
+        )}
         {/* ── AI portfolio summary ───────────────────────────────────────── */}
         {t212Result && (
           <div style={{ ...card({ marginBottom:14, borderLeft:`4px solid ${hc(t212Result.portfolioHealth)}` }) }}>
