@@ -39,6 +39,24 @@ const FB = `'DM Sans', system-ui, sans-serif`
 const FM = `'DM Mono', 'JetBrains Mono', monospace`
 
 // ─── Universe + history ───────────────────────────────────────────────────────
+// ── Company names lookup — used in Stock Analyser prompt ────────────────────────────
+const KNOWN_NAMES = {
+  NVDA:'NVIDIA',AVGO:'Broadcom',AMD:'AMD',TSM:'TSMC',MRVL:'Marvell',ARM:'Arm',
+  QCOM:'Qualcomm',INTC:'Intel',MU:'Micron',AMAT:'Applied Materials',
+  MSFT:'Microsoft',GOOGL:'Alphabet',META:'Meta',AMZN:'Amazon',AAPL:'Apple',
+  TSLA:'Tesla',NFLX:'Netflix',PLTR:'Palantir',ORCL:'Oracle',NOW:'ServiceNow',
+  CRM:'Salesforce',SNOW:'Snowflake',DDOG:'Datadog',NET:'Cloudflare',
+  ADBE:'Adobe',CRWD:'CrowdStrike',PANW:'Palo Alto',ZS:'Zscaler',FTNT:'Fortinet',
+  OKTA:'Okta',LMT:'Lockheed',RTX:'RTX Corp',NOC:'Northrop Grumman',
+  AXON:'Axon',GD:'Gen Dynamics',VRT:'Vertiv',ETN:'Eaton',GEV:'GE Vernova',
+  CEG:'Constellation Energy',VST:'Vistra',FSLR:'First Solar',ENPH:'Enphase',
+  FCX:'Freeport-McMoRan',CCJ:'Cameco',RKLB:'RocketLab',ASTS:'AST SpaceMobile',
+  IONQ:'IonQ',RGTI:'Rigetti',QUBT:'QuEra',IBM:'IBM',CRDO:'Credo Technology',
+  ANET:'Arista Networks',SMCI:'SuperMicro',DELL:'Dell',CRWV:'CoreWeave',
+  AVAV:'AeroVironment',KTOS:'Kratos Defense',ONDS:'Ondas',AMPX:'Amprius',
+  MXL:'MaxLinear',DOCU:'DocuSign',CFLT:'Confluent',COIN:'Coinbase',
+}
+
 // ── EARNINGS HISTORY REFERENCE ───────────────────────────────────────────────
 // UNIVERSE is now only used as a reference for the EH earnings history display.
 // The actual stock discovery is handled by market-route.js QUALITY_UNIVERSE.
@@ -837,7 +855,7 @@ export default function Dashboard() {
           ].filter(Boolean).join(' | ')})(),
         ]
         return parts.filter(Boolean).join(' | ')
-      }).join('\n')
+      }).join('\\n')
 
       const sectorLines = (sectors||[]).map(s=>s.label+': '+s.change+' ('+s.direction+')').join(', ')
 
@@ -1260,8 +1278,7 @@ Return ONLY compact JSON (no spaces, no newlines):
           eh?.label ? eh.label.split('·')[0].trim() : '',
         ]
         return parts.filter(Boolean).join(' | ')
-      }).join('
-')
+      }).join('\n')
 
       // Build pie summary
       const pieLines = Object.entries(
@@ -1273,8 +1290,7 @@ Return ONLY compact JSON (no spaces, no newlines):
           }
           return acc
         }, {})
-      ).map(([name,d]) => name+': £'+d.value.toFixed(0)+' ('+(d.ppl>=0?'+':'')+'£'+d.ppl.toFixed(0)+')').join('
-')
+      ).map(([name,d]) => name+': £'+d.value.toFixed(0)+' ('+(d.ppl>=0?'+':'')+'£'+d.ppl.toFixed(0)+')').join('\n')
 
       const pendingLines = (t212Data.pendingOrders||[]).map(o =>
         o.side+' '+o.quantity+' '+o.ticker+' @£'+o.limitPrice
