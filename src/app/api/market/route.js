@@ -147,69 +147,42 @@ const KNOWN_NAMES = {
 
 // ── Sanity price ranges — wide enough to not filter legitimate prices ─────────
 // Only stocks we know well — unknown stocks skip sanity check
-// Sanity ranges — wide enough to handle normal price swings but catch Finnhub glitches
-// Updated Jun 2026. Check quarterly as stocks move significantly.
-// Formula: use 52-week range as guide, set min = 52w_low * 0.7, max = 52w_high * 1.5
-// Sanity ranges — updated Jun 4 2026 based on REAL current prices
-// Reject prices outside range — catches Finnhub returning 52w-low or split-confusion values
-// Formula: min ~= current*0.45, max ~= current*2.5 (allows normal volatility, rejects bad data)
-const SANITY = {
-  // AI silicon & semiconductors
-  NVDA:[100,500],  AMD:[80,500],    AVGO:[200,1000], TSM:[100,500],
-  MRVL:[100,700],  ARM:[150,900],   QCOM:[100,500],  INTC:[10,100],
-  MU:[70,300],     AMAT:[100,500],  LRCX:[100,700],  SMCI:[15,200],
-  CRDO:[80,800],   ANET:[70,350],   CIEN:[30,200],
-  // Big tech
-  MSFT:[200,900],  GOOGL:[160,700], META:[280,1200], AMZN:[150,400],
-  AAPL:[150,400],  TSLA:[100,600],  NFLX:[50,200],   PLTR:[50,600],
-  // Cloud / SaaS
-  ORCL:[160,500],  NOW:[400,2500],  CRM:[100,500],   SNOW:[50,300],
-  DDOG:[50,350],   NET:[30,250],    ADBE:[150,500],
-  // Cybersecurity
-  CRWD:[150,900],  PANW:[120,550],  ZS:[60,450],     FTNT:[40,300],
-  S:[8,80],        OKTA:[30,250],
-  // Defence
-  LMT:[350,1200],  RTX:[50,350],    NOC:[300,1200],  AXON:[80,800],
-  GD:[150,600],    BA:[80,450],
-  // Power / energy
-  VRT:[100,1200],  ETN:[150,900],   GEV:[200,2500],  CEG:[80,800],
-  VST:[30,500],    NRG:[20,400],    FSLR:[50,600],   ENPH:[10,300],
-  // Commodities
-  FCX:[20,200],    CCJ:[15,180],    MP:[5,80],
-  // Space / drones
-  RKLB:[5,200],    ASTS:[2,100],    ACHR:[1,60],     JOBY:[1,50],
-  // Quantum
-  IONQ:[3,80],     RGTI:[1,50],     QUBT:[1,40],
-  // Additional
-  AVAV:[80,400],   DOCU:[25,120],   CFLT:[5,100],    SAIL:[0.5,20],
-  AEHR:[3,80],     AA:[15,80],
-}
+
 async function safeQuote(sym) {
   try {
     const d = await fhSafe(`/quote?symbol=${encodeURIComponent(sym)}`)
-    if (!d || d.c === 0) return null
+    if (!d || d.c === 0 || d.c === null) return null
 
-    // Sanity range check
-    const r = SANITY[sym]
-    if (r && (d.c < r[0] || d.c > r[1])) return null
+    const price    = d.c
+    const prevClose = d.pc
 
-    // Cross-check: if price and prevClose differ by >40%, something is wrong
-    // (Finnhub sometimes returns 52w-low in the c field)
-    if (d.pc && d.pc > 0) {
-      const drift = Math.abs(d.c - d.pc) / d.pc
-      if (drift > 0.40) return null  // >40% move in 1 day = bad data
+    // Validation 1: prevClose must be present and non-zero
+    if (!prevClose || prevClose <= 0) return null
+
+    // Validation 2: drift check — reject if price moved >40% from yesterday
+    // This catches: split-adjusted prices (NFLX 1200% drift), stale cached data,
+    // and Finnhub glitches. It ALLOWS genuine gap-ups (MRVL +33% is fine).
+    const drift = Math.abs(price - prevClose) / prevClose
+    if (drift > 0.40) return null
+
+    // Validation 3: minimal post-split overrides for known Finnhub issues
+    // Only needed when Finnhub's prevClose itself is stale/wrong
+    const POST_SPLIT = {
+      NFLX: [50, 150],   // 10-for-1 split Nov 2025. Real price ~$83-95
     }
-
-    // Reject if changePct is impossibly large (>30% in one day for large caps)
-    const bigCaps = new Set(['NVDA','AVGO','MSFT','GOOGL','META','AMZN','AAPL','TSLA','MSFT'])
-    if (bigCaps.has(sym) && Math.abs(d.dp ?? 0) > 30) return null
+    const splitRange = POST_SPLIT[sym]
+    if (splitRange && (price < splitRange[0] || price > splitRange[1])) return null
 
     return {
-      symbol: sym, price: d.c,
+      symbol:    sym,
+      price,
       changePct: parseFloat((d.dp ?? 0).toFixed(2)),
-      prevClose: d.pc,
+      change1d:  `${(d.dp ?? 0) >= 0 ? '+' : ''}${(d.dp ?? 0).toFixed(2)}%`,
+      direction: (d.dp ?? 0) >= 0 ? 'up' : 'down',
+      prevClose,
     }
   } catch { return null }
+}
 }
 
 // Fetch prices in batches — max 10 parallel, 100ms between batches
