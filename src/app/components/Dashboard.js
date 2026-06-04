@@ -1164,10 +1164,12 @@ Keep total response under 280 words. Plain English only — no trading jargon.`,
       const q  = priceData.prices?.[ticker]
       const tc = techData.technicals?.[ticker] || {}
       const nd = newsData.results?.[ticker] || {}
-      const livePrice  = q?.price || null
+      // Use T212 price cache as fallback if Finnhub fails drift check
+      const t212cached = t212PriceCache[ticker]
+      const livePrice  = q?.price || t212cached?.price || null
       const hist       = getEH(ticker)
 
-      if (!livePrice) throw new Error(`Could not fetch live price for ${ticker}. Check the ticker symbol is correct.`)
+      if (!livePrice) throw new Error(`No live price for ${ticker} — Finnhub returned invalid data. Try loading your T212 tab first (provides accurate prices for your holdings), or check the ticker is a valid US stock symbol.`)
 
       // Build prompt — same quality as Opportunities tab
       const entryPrice = newBuyPrice ? parseFloat(newBuyPrice) : livePrice
@@ -1347,9 +1349,7 @@ Return ONLY compact JSON:
       setT212Result({ ...parsed, enriched: top20.map(p => ({
         ...p,
         livePriceFormatted: priceData.prices?.[p.ticker] ? '£'+priceData.prices[p.ticker].price.toFixed(2) : null
-      }))}
-
-      )
+      }))})
     } catch(e) {
       setT212Error('Analysis failed: ' + e.message)
     } finally {
