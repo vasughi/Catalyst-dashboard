@@ -829,19 +829,20 @@ export default function Dashboard() {
     try {
       const md = await market('opportunities')
       setLoadingStep('Building AI analysis…')
+      // Destructure FIRST before using stocks
+      const { stocks, earningsCalendar, vix, vixRegime, sectors } = md
+      // Log discovery stats
+      if (md.meta?.discoveredFromCalendar) {
+        console.log('[CATALYST] Discovered', md.meta.discoveredFromCalendar, 'stocks from live calendar out of', md.meta.calendarScanned, 'scanned')
+      }
       // Override Finnhub prices with T212 prices where available (T212 is always accurate)
-      const enrichedStocks = stocks.map(s => {
+      const enrichedStocks = (stocks||[]).map(s => {
         const t212p = t212PriceCache[s.ticker]
         if (t212p && t212p.price > 0) {
           return { ...s, price: t212p.price, priceFormatted: '$'+t212p.price.toFixed(2), priceSource: 'T212' }
         }
         return { ...s, priceSource: 'Finnhub' }
       })
-      // Log discovery stats for debugging
-      if (md.meta?.discoveredFromCalendar) {
-        console.log('[CATALYST] Discovered', md.meta.discoveredFromCalendar, 'stocks from live calendar out of', md.meta.calendarScanned, 'scanned')
-      }
-      const { stocks, earningsCalendar, vix, vixRegime, sectors } = md
 
       // Build stock lines for prompt
       // Only include stocks with valid live prices in the AI prompt
