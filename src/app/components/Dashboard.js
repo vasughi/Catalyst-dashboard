@@ -674,13 +674,14 @@ const TABS = [
 // ── Core watchlist — always visible on Opportunities tab ──────────────────────
 // These are your mandatory stocks — you can always eyeball them
 // regardless of what the AI picks for the main 10 cards
-const CORE_WATCHLIST = {
+// CORE_WATCHLIST: sector groups for the watchlist panel
+// 'My Holdings' is derived dynamically from T212 price cache — not hardcoded
+const CORE_WATCHLIST_BASE = {
   'AI & Semis':   ['NVDA','AVGO','MRVL','ARM','PLTR','META','AMD'],
   'Cybersecurity':['CRWD','PANW','ZS','NET','FTNT','S'],
   'Quantum':      ['IONQ','RGTI','QUBT','IBM','QMCO'],
   'Power/Energy': ['VRT','GEV','ETN','CEG','VST'],
   'Defence':      ['LMT','AXON','NOC','RTX'],
-  'My Holdings':  ['NVDA','AVGO','CRDO','CRWV','ASTS'],
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
@@ -827,7 +828,9 @@ export default function Dashboard() {
     setErrors(p=>({...p,opportunities:null}))
     setLoadingStep('Fetching live prices…')
     try {
-      const md = await market('opportunities')
+      // Pass T212 holdings as extra tickers so they're always in discovery
+      const extraTickers = Object.keys(t212PriceCache).filter(t => t.length <= 6).join(',')
+      const md = await market('opportunities' + (extraTickers ? '&extra=' + extraTickers : ''))
       setLoadingStep('Building AI analysis…')
       // Destructure FIRST before using stocks
       const { stocks, earningsCalendar, vix, vixRegime, sectors } = md
@@ -1602,6 +1605,13 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
   function CoreWatchlistPanel({ priceMap }) {
     if (!priceMap || !Object.keys(priceMap).length) return null
 
+    // Build CORE_WATCHLIST dynamically — add 'My Holdings' from T212 cache
+    const myHoldings = Object.keys(t212PriceCache).filter(t => t.length <= 5)
+    const CORE_WATCHLIST = {
+      ...CORE_WATCHLIST_BASE,
+      ...(myHoldings.length > 0 ? { 'My Holdings': myHoldings.slice(0, 8) } : {}),
+    }
+
     return (
       <div style={{ ...card({ marginBottom:14 }), padding:'12px 16px' }}>
         <button
@@ -2116,8 +2126,9 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
               {ai?.urgency==='NOW' && <span style={{ color:C.down, fontSize:10, fontWeight:700 }}>🔴</span>}
             </div>
           </div>
-          {/* Row 2: prices + value */}
-          <div style={{ display:'flex', gap:8, fontSize:12, color:C.muted }}>
+          {/* Row 2: qty + prices + value */}
+          <div style={{ display:'flex', gap:8, fontSize:12, color:C.muted, flexWrap:'wrap' }}>
+            <span style={{ color:C.accent, fontWeight:700 }}>{p.quantity?.toFixed(p.quantity<10?4:2)} shares</span>
             <span>£{p.averagePrice?.toFixed(2)} → £{p.currentPrice?.toFixed(2)}</span>
             <span style={{ color:C.sub, fontWeight:600 }}>£{p.totalValue?.toFixed(0)}</span>
           </div>
@@ -2212,10 +2223,10 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
               // Tagged to a known pie from instrument list
               if (!pg[p.pieName]) pg[p.pieName] = []
               pg[p.pieName].push(p)
-            } else if (p.pieName === '__pie_unknown__') {
-              // In a pie but instrument list empty — group separately
-              if (!pg['In Pies (ungrouped)']) pg['In Pies (ungrouped)'] = []
-              pg['In Pies (ungrouped)'].push({...p, pieName:'In Pies (ungrouped)'})
+            } else if (p.pieName === 'My Pies') {
+              // In a pie but T212 API didn't return instrument data for it
+              if (!pg['My Pies']) pg['My Pies'] = []
+              pg['My Pies'].push(p)
             } else {
               // Direct holding — route already split pie/direct portions server-side
               // so each entry here is a genuine direct holding (no dedup needed)
@@ -2306,9 +2317,9 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
               T212 API Debug · {t212Data.debug.rawPositionCount} positions · {t212Data.debug.pieCount} pies
             </div>
             <div style={{ color:C.muted, fontSize:10, lineHeight:1.8 }}>
-              Tagged to pie: {t212Data.debug.taggedToPie} · Direct: {t212Data.debug.directHoldings} · tickerToPie entries: {t212Data.debug.tickerToPieEntries}
-              {t212Data.debug.piesWithoutDetails?.length > 0 && (
-                <span style={{ color:C.amber }}> · Pies missing instrument data: {t212Data.debug.piesWithoutDetails.join(', ')}</span>
+              Direct: {t212Data.debug.directCount} · Known pie: {t212Data.debug.knownPieCount} · My Pies: {t212Data.debug.myPiesCount}
+              {t212Data.debug.piesWithoutInstruments?.length > 0 && (
+                <span style={{ color:C.amber }}> · No instrument data for: {t212Data.debug.piesWithoutInstruments.join(', ')}</span>
               )}
             </div>
             {Object.values(t212Data.errors||{}).some(Boolean) && (
@@ -2349,6 +2360,30 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
             {/* By Pie view */}
             {t212ViewMode==='pies' && (
               <div>
+                {/* Show pie summary cards for ALL pies using /equity/pies data */}
+                {/* For pies with instrument data: PieCard with stocks inside */}
+                {/* For pies without instrument data: summary card only */}
+                {(t212Data.pies||[]).filter(pie => !pieGroups[pie.name]).map(pie => (
+                  <div key={pie.id} style={{ ...card({ padding:0, overflow:'hidden', marginBottom:12 }) }}>
+                    <div style={{ background:C.card, padding:'14px 16px', borderLeft:`4px solid ${C.muted}` }}>
+                      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:8 }}>
+                        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                          <span style={{ fontSize:18 }}>🥧</span>
+                          <div>
+                            <div style={{ color:C.text, fontWeight:800, fontSize:15 }}>{pie.name}</div>
+                            <div style={{ color:C.amber, fontSize:11 }}>Stocks shown in My Pies group below</div>
+                          </div>
+                        </div>
+                        <div style={{ textAlign:'right' }}>
+                          <div style={{ fontFamily:FM, fontWeight:800, fontSize:16, color:C.text }}>£{pie.totalValue?.toFixed(0)||'—'}</div>
+                          <div style={{ fontFamily:FM, fontWeight:700, fontSize:12, color:pie.ppl>=0?C.up:C.down }}>
+                            {pie.ppl>=0?'+':''}£{pie.ppl?.toFixed(0)||'0'} ({pie.gainPct>=0?'+':''}{pie.gainPct?.toFixed(1)||'0'}%)
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
                 {Object.entries(pieGroups).map(([name,stocks])=><PieCard key={name} pieName={name} stocks={stocks}/>)}
                 {direct.length>0 && (
                   <div style={{ ...card({ padding:0, overflow:'hidden' }) }}>
