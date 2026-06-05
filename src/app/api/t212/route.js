@@ -2,18 +2,18 @@
  * CATALYST — src/app/api/t212/route.js
  * READ-ONLY. Never places, modifies or cancels orders.
  *
- * KEY INSIGHT: T212 /equity/portfolio returns ONE entry per ticker
- * with pieQuantity = shares held inside pies.
- * So MU with 3 direct + pie shares comes as ONE entry.
- * We must SPLIT it into pie portion + direct portion.
+ * T212 API LIMITATION: /equity/portfolio has no pieId per position.
+ * We cannot reliably know which pie each stock belongs to unless the
+ * /equity/pies/{id} instruments endpoint returns data (works for ~2/8 pies).
  *
- * Grouping logic:
- * 1. Fetch pie instrument lists → build tickerToPie map
- * 2. For each position:
- *    - If pieQty > 0 AND directQty > 0 → split into two entries
- *    - If pieQty == qty → entirely in pie
- *    - If pieQty == 0 → entirely direct
- * 3. For positions in pies but not in instrument lists → __pie_unknown__
+ * Strategy:
+ * 1. Use instrument lists where available (SpaceX, DRAM → correct grouping)
+ * 2. For remaining pie stocks (pieQuantity > 0, no instrument match):
+ *    group them all under "My Pies" — honest, not misleading
+ * 3. Pie-level summaries (name, total value, P&L) come from /equity/pies
+ *    and are shown as summary cards regardless of instrument data
+ * 4. Direct holdings (pieQuantity == 0) shown separately
+ * 5. Positions split into pie portion + direct portion where both exist
  */
 
 import { NextResponse } from 'next/server'
@@ -49,10 +49,10 @@ async function t212fetch(path, timeoutMs = 8000) {
       signal: controller.signal,
     })
     clearTimeout(timer)
-    if (res.status === 401) throw new Error('T212 auth failed — check API key/secret in Vercel env vars.')
+    if (res.status === 401) throw new Error('T212 auth failed — check API key/secret in Vercel.')
     if (res.status === 403) throw new Error('T212 API key lacks permission.')
-    if (res.status === 429) throw new Error('T212 rate limit hit — wait a moment.')
-    if (!res.ok) throw new Error(`T212 API error: ${path} returned ${res.status}`)
+    if (res.status === 429) throw new Error('T212 rate limit hit.')
+    if (!res.ok) throw new Error(`T212 ${path} → ${res.status}`)
     return res.json()
   } catch (e) {
     clearTimeout(timer)
@@ -61,7 +61,6 @@ async function t212fetch(path, timeoutMs = 8000) {
   }
 }
 
-// Strip T212 exchange suffixes: NVDA_US_EQ → NVDA, ARMG_GBX_EQ → ARMG
 function cleanTicker(raw) {
   if (!raw) return raw
   let s = raw
@@ -73,19 +72,14 @@ function cleanTicker(raw) {
   for (const sfx of suffixes) {
     if (s.endsWith(sfx)) { s = s.slice(0, -sfx.length); break }
   }
-  // Strip trailing underscores (e.g. AVAV_)
-  s = s.replace(/_+$/, '')
-  return s
+  return s.replace(/_+$/, '')
 }
 
 export async function GET() {
   if (!T212_KEY || !T212_SECRET) {
     return resp({
       error: 'Trading 212 credentials not configured',
-      missing: [
-        !T212_KEY    && 'TRADING212_API_KEY',
-        !T212_SECRET && 'TRADING212_API_SECRET',
-      ].filter(Boolean),
+      missing: [!T212_KEY && 'TRADING212_API_KEY', !T212_SECRET && 'TRADING212_API_SECRET'].filter(Boolean),
     }, 500)
   }
 
@@ -106,48 +100,41 @@ export async function GET() {
       ? (Array.isArray(piesListRes.value) ? piesListRes.value : [])
       : []
 
-    // ── Phase 2: fetch each pie's instrument list ──────────────────────────────
-    const piesToFetch = rawPies.slice(0, 20)
+    // ── Phase 2: fetch pie details for instrument lists ────────────────────────
     const pieDetailResults = await Promise.allSettled(
-      piesToFetch.map(pie =>
-        t212fetch(`/equity/pies/${pie.id}`, 6000).catch(() => null)
-      )
+      rawPies.map(pie => t212fetch(`/equity/pies/${pie.id}`, 6000).catch(() => null))
     )
 
-    // ── Phase 3: build tickerToPie map from instrument lists ───────────────────
-    // tickerToPie: cleaned ticker → pie name (from instrument lists — reliable source)
-    const tickerToPie = new Map()
-    const pieObjects  = []
+    // ── Phase 3: build tickerToPie + pie summary objects ──────────────────────
+    const tickerToPie = new Map()  // cleaned/raw ticker → pieName (from instrument lists)
+    const pieObjects  = []         // pie summaries with their known data
 
-    piesToFetch.forEach((pie, idx) => {
-      const detail   = pieDetailResults[idx]?.status === 'fulfilled'
-        ? pieDetailResults[idx].value
-        : null
+    rawPies.forEach((pie, idx) => {
+      const detail    = pieDetailResults[idx]?.status === 'fulfilled' ? pieDetailResults[idx].value : null
+      const settings  = detail?.settings || pie.settings || {}
+      const pieName   = settings.name || `Pie ${pie.id}`
+      const result    = detail?.result || {}
 
-      const settings = detail?.settings || pie.settings || {}
-      const pieName  = settings.name || `Pie ${pie.id}`
-      const result   = detail?.result || {}
-
+      // Parse instruments where available
       const rawInstruments = detail?.instruments || []
       const instruments = rawInstruments.map(inst => {
-        const rawTick = inst.ticker || inst.tickerSymbol || ''
-        const ticker  = cleanTicker(rawTick)
+        const rawTick  = inst.ticker || inst.tickerSymbol || ''
+        const ticker   = cleanTicker(rawTick)
         const ownedQty = parseFloat(inst.ownedQuantity ?? inst.currentShare ?? 0)
-        const instValue = parseFloat(inst.result?.value ?? inst.value ?? (ownedQty * parseFloat(inst.currentPrice ?? 0)))
-        const instPPL   = parseFloat(inst.result?.resultValue ?? inst.result?.ppl ?? inst.ppl ?? 0)
-        const instGain  = inst.result?.resultCoeff != null
-          ? parseFloat((inst.result.resultCoeff * 100).toFixed(2))
-          : 0
+        const value    = parseFloat(inst.result?.value ?? (ownedQty * parseFloat(inst.currentPrice ?? 0)))
+        const ppl      = parseFloat(inst.result?.resultValue ?? 0)
+        const gainPct  = inst.result?.resultCoeff != null ? parseFloat((inst.result.resultCoeff * 100).toFixed(2)) : 0
 
-        // Register both cleaned and raw ticker
+        // Map both cleaned and raw ticker to this pie
         if (ticker)  tickerToPie.set(ticker,  pieName)
         if (rawTick) tickerToPie.set(rawTick, pieName)
 
-        return { ticker, rawTicker: rawTick, ownedQty, value: instValue, ppl: instPPL, gainPct: instGain }
+        return { ticker, rawTicker: rawTick, ownedQty, value, ppl, gainPct }
       })
 
+      // Pie-level financials
       const instrValueSum = instruments.reduce((s, i) => s + i.value, 0)
-      const instrPPLSum   = instruments.reduce((s, i) => s + i.ppl,   0)
+      const instrPPLSum   = instruments.reduce((s, i) => s + i.ppl, 0)
       const totalValue    = parseFloat(result.value       ?? instrValueSum ?? 0)
       const totalPPL      = parseFloat(result.returnValue ?? instrPPLSum   ?? 0)
       const investedValue = totalValue - totalPPL
@@ -156,23 +143,22 @@ export async function GET() {
         : parseFloat(result.returnPercent ?? 0)
 
       pieObjects.push({
-        id: pie.id, name: pieName, totalValue, ppl: totalPPL, gainPct,
-        instruments, hasDetails: rawInstruments.length > 0,
+        id:          pie.id,
+        name:        pieName,
+        totalValue,
+        ppl:         totalPPL,
+        gainPct,
+        instruments,                         // stocks we know about (from instrument list)
+        hasInstruments: instruments.length > 0,  // whether instrument list returned data
       })
     })
 
-    // ── Phase 4: split positions into pie + direct portions ────────────────────
-    //
-    // T212 returns ONE portfolio entry per ticker.
-    // p.quantity     = total shares (pie + direct)
-    // p.pieQuantity  = shares held inside a pie
-    // directQty      = p.quantity - p.pieQuantity
-    //
-    // MU example: quantity=3.22, pieQuantity=0.22 (in DRAM pie), directQty=3.0
-    // We create TWO entries: one for the pie portion, one for direct.
-    //
-    // For the pie portion we use the pie's avgPrice if we have it from instruments,
-    // otherwise use the overall avgPrice as best estimate.
+    // ── Phase 4: map positions to pie or direct ────────────────────────────────
+    // For each raw position, determine:
+    //   - pieQty: shares in pies
+    //   - directQty: shares held directly
+    // Split into two entries if both > 0
+    // Assign pieName from instrument lookup; if not found but pieQty>0 → 'My Pies'
 
     const positions = []
 
@@ -183,15 +169,14 @@ export async function GET() {
       const totalQty  = parseFloat(p.quantity     ?? 0)
       const pieQty    = parseFloat(p.pieQuantity  ?? 0)
       const directQty = Math.max(0, parseFloat((totalQty - pieQty).toFixed(8)))
-      const totalPPL  = parseFloat(p.ppl ?? 0)
 
-      // Look up pie name from instrument lists
+      // Pie name from instrument list (reliable), else 'My Pies' (honest fallback)
       const pieName = tickerToPie.get(ticker) ?? tickerToPie.get(p.ticker) ?? null
+      const assignedPieName = pieQty > 0 ? (pieName ?? 'My Pies') : null
 
-      // Helper: build a position entry
       const makeEntry = (qty, pName) => {
         const value   = parseFloat((curPrice * qty).toFixed(2))
-        const ppl     = avgPrice > 0 ? parseFloat(((curPrice - avgPrice) * qty).toFixed(2)) : 0
+        const ppl     = parseFloat(((curPrice - avgPrice) * qty).toFixed(2))
         const gainPct = avgPrice > 0 ? parseFloat(((curPrice - avgPrice) / avgPrice * 100).toFixed(2)) : 0
         return {
           ticker,
@@ -207,17 +192,13 @@ export async function GET() {
         }
       }
 
-      if (pieQty > 0 && directQty > 0.001) {
-        // SPLIT: position exists in both pie AND direct holdings
-        const assignedPieName = pieName ?? '__pie_unknown__'
-        positions.push(makeEntry(pieQty,    assignedPieName))  // pie portion
-        positions.push(makeEntry(directQty, null))             // direct portion
-      } else if (pieQty > 0) {
-        // Entirely in a pie
-        const assignedPieName = pieName ?? '__pie_unknown__'
+      if (pieQty > 0.001 && directQty > 0.001) {
+        // Split: in both pie and direct
+        positions.push(makeEntry(pieQty,    assignedPieName))
+        positions.push(makeEntry(directQty, null))
+      } else if (pieQty > 0.001) {
         positions.push(makeEntry(totalQty, assignedPieName))
       } else {
-        // Entirely direct (pieQty == 0)
         positions.push(makeEntry(totalQty, null))
       }
     }
@@ -238,26 +219,17 @@ export async function GET() {
     let pendingOrders = []
     if (ordersRes.status === 'fulfilled') {
       const rawOrders = Array.isArray(ordersRes.value)
-        ? ordersRes.value
-        : (ordersRes.value?.items ?? [])
-
+        ? ordersRes.value : (ordersRes.value?.items ?? [])
       pendingOrders = rawOrders
         .filter(o => ['PENDING', 'AWAITING_EXECUTION', 'PLACED', 'LOCAL'].includes(o.status))
         .map(o => ({
           ticker:     cleanTicker(o.ticker),
           side:       parseFloat(o.quantity ?? 0) > 0 ? 'BUY' : 'SELL',
-          orderType:  o.type ?? 'LIMIT',
           quantity:   Math.abs(parseFloat(o.quantity ?? 0)),
           limitPrice: parseFloat(o.limitPrice ?? 0).toFixed(2),
           status:     o.status,
-          created:    o.creationTime ?? null,
         }))
     }
-
-    // ── Summary stats ─────────────────────────────────────────────────────────
-    const taggedCount = positions.filter(p => p.pieName && p.pieName !== '__pie_unknown__').length
-    const unknownCount = positions.filter(p => p.pieName === '__pie_unknown__').length
-    const directCount = positions.filter(p => !p.pieName).length
 
     return resp({
       source:       'trading212',
@@ -269,18 +241,18 @@ export async function GET() {
       pendingOrders,
       debug: {
         rawPositionCount:   rawPositions.length,
-        splitPositions:     positions.length - rawPositions.length,  // how many were split
-        taggedToPie:        taggedCount,
-        inPiesUnknown:      unknownCount,
-        directHoldings:     directCount,
+        positionsAfterSplit: positions.length,
         pieCount:           pieObjects.length,
-        piesWithDetails:    pieObjects.filter(p => p.hasDetails).length,
-        piesWithoutDetails: pieObjects.filter(p => !p.hasDetails).map(p => p.name),
-        tickerToPieEntries: tickerToPie.size,
+        piesWithInstruments: pieObjects.filter(p => p.hasInstruments).map(p => p.name),
+        piesWithoutInstruments: pieObjects.filter(p => !p.hasInstruments).map(p => p.name),
+        tickerToPieCount:   tickerToPie.size,
+        directCount:        positions.filter(p => !p.pieName).length,
+        knownPieCount:      positions.filter(p => p.pieName && p.pieName !== 'My Pies').length,
+        myPiesCount:        positions.filter(p => p.pieName === 'My Pies').length,
       },
       errors: {
-        portfolio: portfolioRes.status  === 'rejected' ? portfolioRes.reason?.message  : null,
-        account:   accountRes.status    === 'rejected' ? accountRes.reason?.message    : null,
+        portfolio: portfolioRes.status  === 'rejected' ? portfolioRes.reason?.message : null,
+        account:   accountRes.status    === 'rejected' ? accountRes.reason?.message   : null,
         orders:    ordersRes.status     === 'rejected' ? ordersRes.reason?.message     : null,
         piesList:  piesListRes.status   === 'rejected' ? piesListRes.reason?.message   : null,
       },
