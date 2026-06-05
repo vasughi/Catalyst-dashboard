@@ -84,12 +84,16 @@ export async function GET() {
   }
 
   try {
-    // ── Phase 1: parallel fetches ──────────────────────────────────────────────
-    const [portfolioRes, accountRes, ordersRes, piesListRes] = await Promise.allSettled([
-      t212fetch('/equity/portfolio'),
+    // ── Phase 1: sequential fetches to avoid T212 rate limits ────────────────
+    // T212 rate limits aggressively — parallel calls trigger 429s
+    // Fetch pies list FIRST with priority, then other data
+    const piesListRes  = await t212fetch('/equity/pies').then(d => ({status:'fulfilled',value:d})).catch(e => ({status:'rejected',reason:e}))
+    await new Promise(r => setTimeout(r, 300))
+    const portfolioRes = await t212fetch('/equity/portfolio').then(d => ({status:'fulfilled',value:d})).catch(e => ({status:'rejected',reason:e}))
+    await new Promise(r => setTimeout(r, 300))
+    const [accountRes, ordersRes] = await Promise.allSettled([
       t212fetch('/equity/account/cash'),
       t212fetch('/equity/orders'),
-      t212fetch('/equity/pies'),
     ])
 
     const rawPositions = portfolioRes.status === 'fulfilled'
@@ -110,7 +114,7 @@ export async function GET() {
       } catch (e) {
         // On 429, wait longer and retry once
         if (e.message?.includes('429') || e.message?.includes('rate limit')) {
-          await new Promise(r => setTimeout(r, 1500))
+          await new Promise(r => setTimeout(r, 3000))
           try {
             const retry = await t212fetch(`/equity/pies/${pie.id}`, 6000)
             pieDetailResults.push({ status: 'fulfilled', value: retry })
@@ -121,8 +125,8 @@ export async function GET() {
           pieDetailResults.push({ status: 'rejected', reason: e })
         }
       }
-      // 300ms between each pie request — stay under T212 rate limit
-      await new Promise(r => setTimeout(r, 300))
+      // 500ms between each pie request — T212 rate limits at ~1 req/sec
+      await new Promise(r => setTimeout(r, 500))
     }
 
     // ── Phase 3: build tickerToPie + pie summary objects ──────────────────────
