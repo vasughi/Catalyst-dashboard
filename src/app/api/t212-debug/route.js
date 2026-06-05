@@ -1,12 +1,8 @@
 /**
  * CATALYST — src/app/api/t212-debug/route.js
- * Diagnostic endpoint — dumps raw T212 API responses
- * Visit: /api/t212-debug to see exactly what T212 returns
- * Remove this file once diagnosis is complete
+ * Shows ALL raw ticker strings + pie instrument details
  */
-
 import { NextResponse } from 'next/server'
-
 export const dynamic    = 'force-dynamic'
 export const maxDuration = 60
 
@@ -14,55 +10,62 @@ const T212_KEY    = process.env.TRADING212_API_KEY
 const T212_SECRET = process.env.TRADING212_API_SECRET
 const T212_BASE   = 'https://live.trading212.com/api/v0'
 
-function buildAuthHeader() {
-  return 'Basic ' + Buffer.from(T212_KEY + ':' + T212_SECRET).toString('base64')
-}
+function auth() { return 'Basic ' + Buffer.from(T212_KEY + ':' + T212_SECRET).toString('base64') }
+const delay = ms => new Promise(r => setTimeout(r, ms))
 
-async function t212fetch(path) {
-  const res = await fetch(`${T212_BASE}${path}`, {
-    headers: { 'Authorization': buildAuthHeader() },
-    cache: 'no-store',
-  })
+async function get(path) {
+  const res = await fetch(`${T212_BASE}${path}`, { headers:{'Authorization':auth()}, cache:'no-store' })
   const text = await res.text()
   try { return { status: res.status, data: JSON.parse(text) } }
-  catch { return { status: res.status, raw: text.slice(0, 500) } }
+  catch { return { status: res.status, raw: text.slice(0,200) } }
 }
 
 export async function GET() {
-  const [portfolio, pies] = await Promise.allSettled([
-    t212fetch('/equity/portfolio'),
-    t212fetch('/equity/pies'),
-  ])
+  const piesRes = await get('/equity/pies')
+  await delay(500)
+  const portRes = await get('/equity/portfolio')
+  await delay(300)
 
-  const portfolioData = portfolio.status === 'fulfilled' ? portfolio.value : { error: portfolio.reason?.message }
-  const piesData      = pies.status      === 'fulfilled' ? pies.value      : { error: pies.reason?.message }
+  const pieList  = piesRes.data || []
+  const positions = portRes.data || []
 
-  // Fetch first 3 pie details to see structure
-  const pieList = piesData?.data || []
-  const pieDetails = await Promise.allSettled(
-    pieList.slice(0, 5).map(async p => {
-      const d = await t212fetch(`/equity/pies/${p.id}`)
-      return { id: p.id, name: p.settings?.name, response: d }
-    })
-  )
+  // Raw tickers exactly as T212 returns them — no cleaning
+  const rawTickers = positions.map(p => ({
+    raw: p.ticker,
+    qty: p.quantity,
+    pieQty: p.pieQuantity,
+    frontend: p.frontend,
+  }))
 
-  const positions = portfolioData?.data || []
-  const tickers   = positions.map(p => p.ticker)
+  // Fetch pie details sequentially
+  const pieDetails = []
+  for (const pie of pieList) {
+    await delay(600)
+    const d = await get(`/equity/pies/${pie.id}`)
+    const name = d.data?.settings?.name || `Pie ${pie.id}`
+    const instruments = (d.data?.instruments || []).map(i => ({
+      rawTicker: i.ticker,
+      ownedQty: i.ownedQuantity,
+      expectedShare: i.expectedShare,
+    }))
+    pieDetails.push({ id: pie.id, name, status: d.status, instruments })
+  }
+
+  // Look specifically for NBIS and ASTS anywhere
+  const allRawTickers = rawTickers.map(t => t.raw)
+  const allPieTickers = pieDetails.flatMap(p => p.instruments.map(i => i.rawTicker))
 
   return NextResponse.json({
-    summary: {
-      portfolioPositionCount: positions.length,
-      tickers,
-      hasNBIS: tickers.some(t => t.includes('NBIS')),
-      hasASTS: tickers.some(t => t.includes('ASTS')),
-      hasMU:   tickers.some(t => t.includes('MU')),
-      pieCount: pieList.length,
-    },
-    rawPortfolioFirst5: positions.slice(0, 5),
-    rawPortfolioFields: positions.length > 0 ? Object.keys(positions[0]) : [],
-    rawPieList: pieList,
-    pieDetails: pieDetails.map(r => r.status === 'fulfilled' ? r.value : { error: r.reason?.message }),
-  }, {
-    headers: { 'Cache-Control': 'no-store' }
-  })
+    portfolioCount: positions.length,
+    pieCount: pieList.length,
+    // Specific search
+    nbisInPortfolio: allRawTickers.filter(t => t?.toUpperCase().includes('NBIS')),
+    astsInPortfolio: allRawTickers.filter(t => t?.toUpperCase().includes('ASTS')),
+    nbisInPies: allPieTickers.filter(t => t?.toUpperCase().includes('NBIS')),
+    astsInPies: allPieTickers.filter(t => t?.toUpperCase().includes('ASTS')),
+    // All raw portfolio tickers
+    allPortfolioTickers: rawTickers,
+    // Pie instrument details
+    pieDetails,
+  }, { headers: {'Cache-Control':'no-store'} })
 }
