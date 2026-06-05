@@ -119,9 +119,8 @@ const QUALITY_UNIVERSE = new Set([
   // ── Industrial / automation / robotics ───────────────────────────────────
   'HON','ROP','IDEX','ITW','PH','AME','GNRC','ROK',
   'ABB','ISRG','IRBT','NVEI','MZOR','GRBX',
-  // ── Your specific T212 holdings — always included ─────────────────────────
-  'CRWV','ASTS','MXL','UMAC','RCAT','NBIS','KTOS','ONDS',
-  'AMPX','AVAV','ARMG','TAKOF','ESLT',
+  // ── Additional high-quality stocks ──────────────────────────────────────
+  'CRWV','AVAV','KTOS','ASTS','RKLB',
 ])
 
 // Note: SECTOR_KEYWORDS approach was considered but Finnhub free tier
@@ -244,6 +243,10 @@ const FALLBACK_DATES = {
 // ── Route handler ─────────────────────────────────────────────────────────────
 
 export async function GET(request) {
+  // Support ?extra=TICK1,TICK2 to inject user's holdings into discovery
+  const extraParam = new URL(request.url).searchParams.get('extra') || ''
+  const extraTickers = extraParam ? extraParam.split(',').map(t => t.trim().toUpperCase()).filter(Boolean) : []
+
   const { searchParams } = new URL(request.url)
   const type = searchParams.get('type')
   if (!KEY) return resp({ error: 'FINNHUB_API_KEY not set' }, 500)
@@ -272,7 +275,7 @@ export async function GET(request) {
     // so we match on ticker symbol only (Layer 1 has 279 quality tickers)
     rawCalendar.forEach(e => {
       if (!e.symbol) return
-      if (!QUALITY_UNIVERSE.has(e.symbol)) return  // not a stock we follow
+      if (!QUALITY_UNIVERSE.has(e.symbol) && !extraTickers.includes(e.symbol)) return  // not in universe
 
       const days = tradingDaysUntil(e.date)
       if (days === null || days < 0 || days > 45) return
