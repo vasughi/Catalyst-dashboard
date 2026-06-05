@@ -101,9 +101,29 @@ export async function GET() {
       : []
 
     // ── Phase 2: fetch pie details for instrument lists ────────────────────────
-    const pieDetailResults = await Promise.allSettled(
-      rawPies.map(pie => t212fetch(`/equity/pies/${pie.id}`, 6000).catch(() => null))
-    )
+    // Fetch pie details SEQUENTIALLY with delay to avoid T212 rate limiting (429)
+    const pieDetailResults = []
+    for (const pie of rawPies) {
+      try {
+        const detail = await t212fetch(`/equity/pies/${pie.id}`, 6000)
+        pieDetailResults.push({ status: 'fulfilled', value: detail })
+      } catch (e) {
+        // On 429, wait longer and retry once
+        if (e.message?.includes('429') || e.message?.includes('rate limit')) {
+          await new Promise(r => setTimeout(r, 1500))
+          try {
+            const retry = await t212fetch(`/equity/pies/${pie.id}`, 6000)
+            pieDetailResults.push({ status: 'fulfilled', value: retry })
+          } catch {
+            pieDetailResults.push({ status: 'rejected', reason: e })
+          }
+        } else {
+          pieDetailResults.push({ status: 'rejected', reason: e })
+        }
+      }
+      // 300ms between each pie request — stay under T212 rate limit
+      await new Promise(r => setTimeout(r, 300))
+    }
 
     // ── Phase 3: build tickerToPie + pie summary objects ──────────────────────
     const tickerToPie = new Map()  // cleaned/raw ticker → pieName (from instrument lists)
@@ -188,18 +208,61 @@ export async function GET() {
           gainPct,
           totalValue:   value,
           pieName:      pName,
+          frontend:     p.frontend || null,
           initialDate:  p.initialFillDate ?? null,
         }
       }
 
+      // Use 'frontend' field: AUTOINVEST = created via pie, IOS/ANDROID = direct
+      const isAutoInvest = p.frontend === 'AUTOINVEST'
+
       if (pieQty > 0.001 && directQty > 0.001) {
-        // Split: in both pie and direct
+        // Split: shares in both pie and direct holdings
         positions.push(makeEntry(pieQty,    assignedPieName))
         positions.push(makeEntry(directQty, null))
-      } else if (pieQty > 0.001) {
+      } else if (pieQty > 0.001 || isAutoInvest) {
+        // Entirely in a pie (pieQty > 0, OR frontend=AUTOINVEST with pieQty=0)
         positions.push(makeEntry(totalQty, assignedPieName))
       } else {
+        // Direct holding
         positions.push(makeEntry(totalQty, null))
+      }
+    }
+
+    // ── Supplement with pie-only positions not in /equity/portfolio ─────────────
+    // T212 omits positions with 0 direct shares from /equity/portfolio
+    // We recover them from pie instrument lists
+    const portfolioTickers = new Set(positions.map(p => p.ticker))
+
+    for (const pie of pieObjects) {
+      for (const inst of pie.instruments) {
+        if (!inst.ticker) continue
+        if (portfolioTickers.has(inst.ticker)) continue  // already in portfolio
+
+        // This stock exists only in a pie — add it as a pie-only position
+        const curPrice = parseFloat(inst.currentPrice ?? 0) || 0
+        const avgPrice = inst.ownedQty > 0 && inst.value > 0
+          ? parseFloat((inst.value / inst.ownedQty).toFixed(4))
+          : 0
+        const gainPct  = avgPrice > 0 && curPrice > 0
+          ? parseFloat(((curPrice - avgPrice) / avgPrice * 100).toFixed(2))
+          : parseFloat((inst.gainPct ?? 0).toFixed(2))
+
+        positions.push({
+          ticker:       inst.ticker,
+          rawTicker:    inst.rawTicker || inst.ticker,
+          averagePrice: avgPrice,
+          currentPrice: curPrice,
+          quantity:     inst.ownedQty,
+          ppl:          parseFloat(inst.ppl.toFixed(2)),
+          gainPct,
+          totalValue:   parseFloat(inst.value.toFixed(2)),
+          pieName:      pie.name,
+          frontend:     'AUTOINVEST',
+          initialDate:  null,
+          fromInstruments: true,  // flag: recovered from pie instruments, not portfolio
+        })
+        portfolioTickers.add(inst.ticker)  // prevent duplicates
       }
     }
 
