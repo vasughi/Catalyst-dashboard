@@ -686,6 +686,10 @@ const CORE_WATCHLIST_BASE = {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function Dashboard() {
+  // T212 is configured if the API returns data (we can't check env vars client-side)
+  // We attempt a silent background load; if it fails we just don't populate the cache
+  const T212_KEY_CONFIGURED = true  // always attempt — route returns error if not configured
+
   const [activeTab,   setActiveTab]   = useState('opportunities')
   const [data,        setData]        = useState({})
   const [loading,     setLoading]     = useState({})
@@ -1485,6 +1489,14 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
   useEffect(() => {
     try { localStorage.setItem('catalyst_holdings', JSON.stringify(holdings)) } catch {}
   }, [holdings])
+  // Auto-load T212 in background on first visit so holdings are available
+  // for Opportunities discovery and Core Watchlist — user never needs to think about this
+  useEffect(() => {
+    if (T212_KEY_CONFIGURED && !t212Data && !t212Loading) {
+      fetchT212()
+    }
+  }, []) // eslint-disable-line
+
   useEffect(() => {
     if (!loaded.current[activeTab] && !loading[activeTab] && !data[activeTab]) {
       loaded.current[activeTab] = true
