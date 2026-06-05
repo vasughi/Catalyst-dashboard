@@ -105,28 +105,30 @@ export async function GET() {
       : []
 
     // ── Phase 2: fetch pie details for instrument lists ────────────────────────
-    // Fetch pie details SEQUENTIALLY with delay to avoid T212 rate limiting (429)
+    // Fetch pie details SEQUENTIALLY — retry up to 3x on 429 with backoff
     const pieDetailResults = []
     for (const pie of rawPies) {
-      try {
-        const detail = await t212fetch(`/equity/pies/${pie.id}`, 6000)
-        pieDetailResults.push({ status: 'fulfilled', value: detail })
-      } catch (e) {
-        // On 429, wait longer and retry once
-        if (e.message?.includes('429') || e.message?.includes('rate limit')) {
-          await new Promise(r => setTimeout(r, 3000))
-          try {
-            const retry = await t212fetch(`/equity/pies/${pie.id}`, 6000)
-            pieDetailResults.push({ status: 'fulfilled', value: retry })
-          } catch {
-            pieDetailResults.push({ status: 'rejected', reason: e })
-          }
-        } else {
-          pieDetailResults.push({ status: 'rejected', reason: e })
+      let lastErr = null
+      let result  = null
+      // Try up to 3 times with increasing delays: 1s, 3s, 6s
+      for (const waitMs of [0, 1000, 3000, 6000]) {
+        if (waitMs > 0) await new Promise(r => setTimeout(r, waitMs))
+        try {
+          result = await t212fetch(`/equity/pies/${pie.id}`, 8000)
+          lastErr = null
+          break  // success
+        } catch (e) {
+          lastErr = e
+          // Only retry on rate limit errors
+          if (!e.message?.includes('429') && !e.message?.includes('rate limit') && !e.message?.includes('timeout')) break
         }
       }
-      // 500ms between each pie request — T212 rate limits at ~1 req/sec
-      await new Promise(r => setTimeout(r, 500))
+      pieDetailResults.push(result
+        ? { status: 'fulfilled', value: result }
+        : { status: 'rejected', reason: lastErr }
+      )
+      // 800ms between pies — well under T212's rate limit
+      await new Promise(r => setTimeout(r, 800))
     }
 
     // ── Phase 3: build tickerToPie + pie summary objects ──────────────────────
