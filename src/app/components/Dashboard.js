@@ -728,6 +728,10 @@ export default function Dashboard() {
   const [t212PwError,      setT212PwError]      = useState(false)
   const [t212ViewMode,     setT212ViewMode]     = useState('pies') // 'pies' | 'stocks'
   const [t212PriceCache,  setT212PriceCache]  = useState({})  // T212-sourced prices — always accurate
+  const [t212PieMappings, setT212PieMappings] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('catalyst_pie_mappings') || '{}') } catch { return {} }
+  })  // user-defined pie→tickers mappings for T212 API blind spots
+  const [showPieEditor,   setShowPieEditor]   = useState(false)
   const [expandedPies,     setExpandedPies]     = useState({})     // { pieName: bool }
   const loaded = useRef({})
   const w = useWindowWidth()
@@ -1293,8 +1297,17 @@ Return ONLY compact JSON (no spaces, no newlines):
     setT212AnalysisLoad(true)
     setT212Error(null)
     try {
-      // Cap at 20 most valuable positions to keep prompt size manageable
-      const sorted   = [...t212Data.positions].sort((a,b) => (b.totalValue||0)-(a.totalValue||0))
+      // Resolve pie names first, then sort by value and cap at 20
+      const allWithPies = t212Data.positions.map(p => {
+        if (p.pieName === 'My Pies' || !p.pieName) {
+          const userPie = Object.entries(t212PieMappings).find(([, tickers]) =>
+            tickers.some(t => t.toUpperCase() === p.ticker.toUpperCase())
+          )?.[0]
+          if (userPie) return { ...p, pieName: userPie }
+        }
+        return p
+      })
+      const sorted   = [...allWithPies].sort((a,b) => (b.totalValue||0)-(a.totalValue||0))
       const top20    = sorted.slice(0, 20)
       const tickers  = top20.map(p => p.ticker)
 
@@ -1317,11 +1330,22 @@ Return ONLY compact JSON (no spaces, no newlines):
       if (Object.keys(localNewsMap).length) setNewsData(prev => ({...prev,...localNewsMap}))
 
       // Deduplicate positions — combine pie + direct holdings of same ticker
+      // Resolve correct pieName using user mappings for T212 API blind spots
+      const resolvedPositions = top20.map(p => {
+        if (p.pieName === 'My Pies' || !p.pieName) {
+          // Check user's manual pie mappings
+          const userPie = Object.entries(t212PieMappings).find(([, tickers]) =>
+            tickers.some(t => t.toUpperCase() === p.ticker.toUpperCase())
+          )?.[0]
+          if (userPie) return { ...p, pieName: userPie }
+        }
+        return p
+      })
+
       // Deduplicate by ticker+pieName — combine only identical (ticker, pieName) pairs
-      // Separate entries for pie portion vs direct portion are KEPT SEPARATE
       const deduped = []
       const seen = {}
-      top20.forEach(p => {
+      resolvedPositions.forEach(p => {
         const key = p.ticker + '|' + (p.pieName || 'direct')
         if (seen[key]) {
           const prev  = seen[key]
@@ -1382,17 +1406,30 @@ Return ONLY compact JSON (no spaces, no newlines):
         return parts.filter(Boolean).join(' | ')
       }).join('\n')
 
-      // Build pie summary
+      // Build pie summary using resolved positions (with user mappings applied)
+      const allResolved = t212Data.positions.map(p => {
+        if (p.pieName === 'My Pies' || !p.pieName) {
+          const userPie = Object.entries(t212PieMappings).find(([, tickers]) =>
+            tickers.some(t => t.toUpperCase() === p.ticker.toUpperCase())
+          )?.[0]
+          return userPie ? { ...p, pieName: userPie } : p
+        }
+        return p
+      })
       const pieLines = Object.entries(
-        t212Data.positions.reduce((acc,p) => {
-          if (p.pieName) {
-            if (!acc[p.pieName]) acc[p.pieName] = {value:0,ppl:0}
+        allResolved.reduce((acc,p) => {
+          if (p.pieName && p.pieName !== 'My Pies') {
+            if (!acc[p.pieName]) acc[p.pieName] = {value:0,ppl:0,tickers:[]}
             acc[p.pieName].value += p.totalValue||0
             acc[p.pieName].ppl   += p.ppl||0
+            acc[p.pieName].tickers.push(p.ticker)
           }
           return acc
         }, {})
-      ).map(([name,d]) => name+': £'+d.value.toFixed(0)+' ('+(d.ppl>=0?'+':'')+'£'+d.ppl.toFixed(0)+')').join('\n')
+      ).map(([name,d]) =>
+        name+': £'+d.value.toFixed(0)+' ('+(d.ppl>=0?'+':'')+'£'+d.ppl.toFixed(0)+')'
+        +' ['+d.tickers.join(',')+']'
+      ).join('\n')
 
       const pendingLines = (t212Data.pendingOrders||[]).map(o =>
         o.side+' '+o.quantity+' '+o.ticker+' @£'+o.limitPrice
@@ -1428,7 +1465,7 @@ Return ONLY compact JSON:
     } finally {
       setT212AnalysisLoad(false)
     }
-  }, [t212Data, getEH, claude])
+  }, [t212Data, getEH, claude, t212PieMappings])
 
 
   const loaders = { opportunities:loadOpps, global:loadGlobal, risk:loadRisk }
@@ -1489,6 +1526,9 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
   useEffect(() => {
     try { localStorage.setItem('catalyst_holdings', JSON.stringify(holdings)) } catch {}
   }, [holdings])
+  useEffect(() => {
+    try { localStorage.setItem('catalyst_pie_mappings', JSON.stringify(t212PieMappings)) } catch {}
+  }, [t212PieMappings])
   // Auto-load T212 in background on first visit so holdings are available
   // for Opportunities discovery and Core Watchlist — user never needs to think about this
   useEffect(() => {
@@ -2236,9 +2276,13 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
               if (!pg[p.pieName]) pg[p.pieName] = []
               pg[p.pieName].push(p)
             } else if (p.pieName === 'My Pies') {
-              // In a pie but T212 API didn't return instrument data for it
-              if (!pg['My Pies']) pg['My Pies'] = []
-              pg['My Pies'].push(p)
+              // Check if user has manually mapped this ticker to a pie
+              const userPie = Object.entries(t212PieMappings).find(([,tickers]) =>
+                tickers.some(t => t.toUpperCase() === p.ticker.toUpperCase())
+              )?.[0]
+              const groupName = userPie || 'My Pies'
+              if (!pg[groupName]) pg[groupName] = []
+              pg[groupName].push({...p, pieName: groupName})
             } else {
               // Direct holding — route already split pie/direct portions server-side
               // so each entry here is a genuine direct holding (no dedup needed)
@@ -2277,12 +2321,57 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
               </button>
             )}
             {t212AnalysisLoad && <span style={{ color:C.muted, fontSize:13, padding:'8px 0' }}>⟳ AI analysing…</span>}
+            <button onClick={()=>setShowPieEditor(s=>!s)}
+              style={{ appearance:'none', background:'none', border:`1px solid ${C.accent}`, borderRadius:8, padding:'8px 10px', color:C.accent, fontSize:12, cursor:'pointer', fontWeight:700 }}>
+              🥧 Map Pies
+            </button>
             <button onClick={()=>{setT212Unlocked(false);setT212PwInput('');try{sessionStorage.removeItem('catalyst_t212_auth')}catch{}}}
               style={{ appearance:'none', background:'none', border:`1px solid ${C.border}`, borderRadius:8, padding:'8px 10px', color:C.muted, fontSize:12, cursor:'pointer' }}>
               🔒
             </button>
           </div>
         </div>
+
+        {/* ── Pie mapping editor ───────────────────────────────────────────── */}
+        {showPieEditor && (
+          <div style={{ ...card({ marginBottom:14, borderLeft:`4px solid ${C.accent}` }) }}>
+            <div style={{ color:C.text, fontWeight:800, fontSize:15, marginBottom:8 }}>
+              🥧 Map Pies — T212 API Blind Spots
+            </div>
+            <div style={{ color:C.muted, fontSize:13, marginBottom:12, lineHeight:1.6 }}>
+              T212's API won't return instruments for some pies (rate limited). 
+              Enter your pie names and their tickers below so they group correctly.
+              Saved to your browser — never sent anywhere.
+            </div>
+            {Object.entries(t212PieMappings).map(([pieName, tickers]) => (
+              <div key={pieName} style={{ background:C.bg, borderRadius:8, padding:'10px 12px', marginBottom:8 }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
+                  <span style={{ fontWeight:700, color:C.text }}>{pieName}</span>
+                  <button onClick={()=>setT212PieMappings(prev=>{ const n={...prev}; delete n[pieName]; return n })}
+                    style={{ appearance:'none', background:'none', border:'none', color:C.down, cursor:'pointer', fontSize:16 }}>×</button>
+                </div>
+                <div style={{ color:C.muted, fontSize:12 }}>{tickers.join(', ')}</div>
+              </div>
+            ))}
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 2fr auto', gap:8, marginTop:8 }}>
+              <input id="pie-name-input" placeholder="Pie name e.g. Copy of SpaceX"
+                style={{ padding:'8px 10px', borderRadius:8, border:`1px solid ${C.border}`, fontSize:13, background:C.bg, color:C.text, outline:'none' }} />
+              <input id="pie-tickers-input" placeholder="Tickers e.g. ASTS,NBIS,RKLB,IRDM"
+                style={{ padding:'8px 10px', borderRadius:8, border:`1px solid ${C.border}`, fontSize:13, background:C.bg, color:C.text, outline:'none' }} />
+              <button onClick={()=>{
+                const name    = document.getElementById('pie-name-input').value.trim()
+                const tickStr = document.getElementById('pie-tickers-input').value.trim()
+                if (!name || !tickStr) return
+                const tickers = tickStr.split(',').map(t=>t.trim().toUpperCase()).filter(Boolean)
+                setT212PieMappings(prev=>({...prev, [name]: tickers}))
+                document.getElementById('pie-name-input').value    = ''
+                document.getElementById('pie-tickers-input').value = ''
+              }} style={{ appearance:'none', background:C.accent, color:'#fff', border:'none', borderRadius:8, padding:'8px 14px', fontWeight:700, fontSize:13, cursor:'pointer' }}>
+                Add
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Error / setup */}
         {t212Error && (
