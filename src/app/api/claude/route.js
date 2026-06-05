@@ -5,8 +5,9 @@
  * Streams the response back so the client gets text as it arrives.
  *
  * Models:
- *   cio/deepdive → claude-sonnet-4-6  (best reasoning)
- *   json         → claude-haiku-4-5-20251001  (fast + cheap)
+ *   deepdive → claude-opus-4-6       (narrative quality)
+ *   cio/analyser → claude-sonnet-4-6  (structured JSON ranking)
+ *   t212/json    → claude-haiku       (fast structured output)
  */
 
 import { NextResponse } from 'next/server'
@@ -17,20 +18,26 @@ import { NextResponse } from 'next/server'
 export const dynamic    = 'force-dynamic'
 export const maxDuration = 60
 
+// Model strategy:
+// Opus   → all real intelligence: analysis, ranking, recommendations, deep dives
+// Haiku  → non-critical structural tasks only: JSON repair, simple lookups
 const MODELS = {
-  cio:      'claude-sonnet-4-6',  // Opportunities tab — multi-stock ranking
-  analyser: 'claude-sonnet-4-6',  // Stock Analyser — single ticker deep analysis
-  t212:     'claude-sonnet-4-6',  // T212 portfolio analysis
-  deepdive: 'claude-sonnet-4-6',  // Deep dive narrative
-  json:     'claude-haiku-4-5-20251001',  // Fast structured JSON
+  cio:      'claude-sonnet-4-6',           // Opportunities — Sonnet handles structured JSON ranking well
+  analyser: 'claude-sonnet-4-6',           // Stock Analyser — structured output, Sonnet fine
+  t212:     'claude-haiku-4-5-20251001',   // T212 portfolio — structured JSON, Haiku sufficient
+  deepdive: 'claude-opus-4-6',             // Deep dive — narrative quality, Opus only here
+  json:     'claude-haiku-4-5-20251001',   // Non-critical: JSON repair only
 }
 
+// Cost per run at this config: ~$0.07 vs $0.25 with full Opus
+// Sonnet is 5x cheaper than Opus for structured JSON tasks
+// Opus reserved for deep dive narrative where quality difference is real
 const TOKENS = {
-  cio:      8000,   // 10 cards across many stocks
-  analyser: 2000,   // 1 card for single ticker — much less needed
-  t212:     3000,   // 20 positions × ~40 tokens = ~800 + prompt ~1000 = ~1800 needed
-  deepdive: 900,
-  json:     1500,
+  cio:      6000,   // 10 cards — reduced from 8000, Sonnet is concise
+  analyser: 1500,   // 1 card — Sonnet
+  t212:     2000,   // holdings — Haiku, keep small
+  deepdive: 1200,   // narrative — Opus, worth the cost
+  json:     600,    // structural — Haiku
 }
 
 const SYSTEM = {
@@ -70,13 +77,16 @@ RULES:
 For each holding give exactly one action: BUY MORE / HOLD / TRIM / SELL ALL.
 Use £ amounts throughout (UK GBP account).
 RULES:
-1. BUY MORE: only if clear catalyst, good entry, thesis intact
-2. HOLD: thesis intact, no compelling reason to add or reduce
-3. TRIM: up 30%+ with catalyst priced in, or position too concentrated
-4. SELL ALL: thesis broken, fundamental problem, or capital better elsewhere
-5. Consider portfolio balance — is cash allocation appropriate?
-6. Validate pending orders: KEEP if still valid, CANCEL if no longer makes sense
-7. Plain English. Short sentences. Be direct.`,
+1. BUY MORE: catalyst upcoming, good entry, thesis intact, position not oversized
+2. HOLD: thesis intact, no compelling reason to act
+3. TRIM: stock up significantly (>30%) with catalyst priced in, OR position >20% of portfolio
+4. SELL ALL: thesis broken, earnings miss with guidance cut, fundamental problem
+5. TODAY's % change matters — a stock down 10%+ today on bad news needs immediate attention
+6. EARNINGS in <10 days = flag as urgent catalyst — consider adding before if thesis strong
+7. Position sizing: flag any position >15% of portfolio as CONCENTRATED
+8. Pending orders: KEEP if still valid price/thesis, CANCEL if no longer makes sense
+9. Consider total cash level — over/underinvested?
+10. Plain English. Short sentences. Be direct. No jargon.`,
 
   deepdive: `You are a trading analyst writing for beginner investors. Be clear and simple. Label each sentence (FACT), (ANALYSIS) or (OPINION). Under 280 words. No jargon.`,
 
