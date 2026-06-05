@@ -1310,29 +1310,25 @@ Return ONLY compact JSON (no spaces, no newlines):
       if (Object.keys(localNewsMap).length) setNewsData(prev => ({...prev,...localNewsMap}))
 
       // Deduplicate positions — combine pie + direct holdings of same ticker
+      // Deduplicate by ticker+pieName — combine only identical (ticker, pieName) pairs
+      // Separate entries for pie portion vs direct portion are KEPT SEPARATE
       const deduped = []
       const seen = {}
       top20.forEach(p => {
-        if (seen[p.ticker]) {
-          const prev = seen[p.ticker]
-          const prevQty = prev.quantity || 0
-          const newQty  = p.quantity    || 0
-          const combQty = prevQty + newQty
+        const key = p.ticker + '|' + (p.pieName || 'direct')
+        if (seen[key]) {
+          const prev  = seen[key]
+          const prevQ = prev.quantity || 0
+          const newQ  = p.quantity   || 0
+          const combQ = prevQ + newQ
           prev.totalValue   = (prev.totalValue||0) + (p.totalValue||0)
           prev.ppl          = (prev.ppl||0)        + (p.ppl||0)
-          prev.quantity     = combQty
-          // Weighted average price
-          prev.averagePrice = combQty > 0
-            ? ((prev.averagePrice||0) * prevQty + (p.averagePrice||0) * newQty) / combQty
-            : prev.averagePrice
-          // Recalculate gainPct from totals (ppl / invested)
-          const invested = prev.totalValue - prev.ppl
-          prev.gainPct = invested > 0
-            ? parseFloat((prev.ppl / invested * 100).toFixed(2))
-            : 0
+          prev.quantity     = combQ
+          const invested    = prev.totalValue - prev.ppl
+          prev.gainPct      = invested > 0 ? parseFloat((prev.ppl / invested * 100).toFixed(2)) : 0
         } else {
-          seen[p.ticker] = { ...p }
-          deduped.push(seen[p.ticker])
+          seen[key] = { ...p }
+          deduped.push(seen[key])
         }
       })
 
@@ -2213,32 +2209,23 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
           const pg = {}, drMap = {}
           t212Data.positions.forEach(p => {
             if (p.pieName && p.pieName !== '__pie_unknown__') {
-              if(!pg[p.pieName]) pg[p.pieName] = []
+              // Tagged to a known pie from instrument list
+              if (!pg[p.pieName]) pg[p.pieName] = []
               pg[p.pieName].push(p)
             } else if (p.pieName === '__pie_unknown__') {
-              // In a pie but couldn't identify which — show in special group
-              if(!pg['In Pies (ungrouped)']) pg['In Pies (ungrouped)'] = []
+              // In a pie but instrument list empty — group separately
+              if (!pg['In Pies (ungrouped)']) pg['In Pies (ungrouped)'] = []
               pg['In Pies (ungrouped)'].push({...p, pieName:'In Pies (ungrouped)'})
             } else {
-              // Merge duplicate direct holdings of same ticker
-              if (drMap[p.ticker]) {
-                const existingQty = drMap[p.ticker].quantity || 0
-                const newQty      = p.quantity || 0
-                const combinedQty = existingQty + newQty
-                // Weighted average — use existing qty BEFORE adding new
-                const weightedAvg = combinedQty > 0
-                  ? ((drMap[p.ticker].averagePrice||0) * existingQty + (p.averagePrice||0) * newQty) / combinedQty
-                  : drMap[p.ticker].averagePrice
-                drMap[p.ticker].quantity     = combinedQty
-                drMap[p.ticker].totalValue   = (drMap[p.ticker].totalValue||0) + (p.totalValue||0)
-                drMap[p.ticker].ppl          = (drMap[p.ticker].ppl||0) + (p.ppl||0)
-                drMap[p.ticker].averagePrice = weightedAvg
-                drMap[p.ticker].gainPct      = weightedAvg > 0
-                  ? parseFloat(((drMap[p.ticker].currentPrice - weightedAvg) / weightedAvg * 100).toFixed(2))
-                  : 0
-              } else {
-                drMap[p.ticker] = { ...p }
-              }
+              // Direct holding — route already split pie/direct portions server-side
+              // so each entry here is a genuine direct holding (no dedup needed)
+              drMap[p.ticker] = drMap[p.ticker]
+                ? { ...drMap[p.ticker],
+                    quantity:   (drMap[p.ticker].quantity||0) + (p.quantity||0),
+                    totalValue: (drMap[p.ticker].totalValue||0) + (p.totalValue||0),
+                    ppl:        (drMap[p.ticker].ppl||0) + (p.ppl||0),
+                  }
+                : { ...p }
             }
           })
           return { pies:pg, direct:Object.values(drMap) }
@@ -2400,15 +2387,7 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
             {t212ViewMode==='stocks' && (
               <div style={{ display:'grid', gridTemplateColumns:mob?'1fr 1fr':'repeat(auto-fill,minmax(200px,1fr))', gap:8, marginBottom:16 }}>
                 {/* Deduplicate for All Stocks view */}
-              {Object.values(t212Data.positions.reduce((acc,p) => {
-                if (!acc[p.ticker]) { acc[p.ticker] = {...p} }
-                else {
-                  acc[p.ticker].quantity   = (acc[p.ticker].quantity||0) + (p.quantity||0)
-                  acc[p.ticker].totalValue = (acc[p.ticker].totalValue||0) + (p.totalValue||0)
-                  acc[p.ticker].ppl        = (acc[p.ticker].ppl||0) + (p.ppl||0)
-                }
-                return acc
-              }, {})).map((p,i)=><StockCard key={i} p={p}/>)}
+              {t212Data.positions.map((p,i)=><StockCard key={p.ticker+(p.pieName||'d')+i} p={p}/>)}
               </div>
             )}
           </>
