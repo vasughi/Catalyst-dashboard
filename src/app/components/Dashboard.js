@@ -248,6 +248,57 @@ function repairJSON(str) {
         }
       }
     } catch {}
+
+    // T212 salvage: extract whatever holdings completed before truncation
+    try {
+      if (fixed.includes('"holdings"') || fixed.includes('"portfolioHealth"')) {
+        const result = {}
+        // Extract scalar fields
+        const scalarFields = ['portfolioHealth','overallSummary','cashAdvice','topAction']
+        for (const field of scalarFields) {
+          const m = fixed.match(new RegExp(`"${field}"\\s*:\\s*"([^"]*?)"`))
+          if (m) result[field] = m[1]
+        }
+        // Extract pies array — take all complete objects
+        if (fixed.includes('"pies"')) {
+          const pStart = fixed.indexOf('[', fixed.indexOf('"pies"'))
+          if (pStart !== -1) {
+            const pies = []
+            let depth = 0, objStart = -1
+            for (let k = pStart; k < fixed.length; k++) {
+              if (fixed[k] === '{') { if (depth === 0) objStart = k; depth++ }
+              else if (fixed[k] === '}') { depth--; if (depth === 0 && objStart !== -1) {
+                try { pies.push(JSON.parse(fixed.slice(objStart, k+1))) } catch {}
+                objStart = -1
+              }}
+              else if (fixed[k] === ']' && depth === 0) break
+            }
+            if (pies.length) result.pies = pies
+          }
+        }
+        // Extract holdings array — take all complete objects
+        if (fixed.includes('"holdings"')) {
+          const hStart = fixed.indexOf('[', fixed.indexOf('"holdings"'))
+          if (hStart !== -1) {
+            const holdings = []
+            let depth = 0, objStart = -1
+            for (let k = hStart; k < fixed.length; k++) {
+              if (fixed[k] === '{') { if (depth === 0) objStart = k; depth++ }
+              else if (fixed[k] === '}') { depth--; if (depth === 0 && objStart !== -1) {
+                try { holdings.push(JSON.parse(fixed.slice(objStart, k+1))) } catch {}
+                objStart = -1
+              }}
+              else if (fixed[k] === ']' && depth === 0) break
+            }
+            if (holdings.length) result.holdings = holdings
+          }
+        }
+        if (result.holdings?.length || result.portfolioHealth) {
+          result.overallSummary = (result.overallSummary || '') + ' (response truncated — some holdings may be missing)'
+          return result
+        }
+      }
+    } catch {}
     throw new Error(`Cannot parse AI JSON: "${s.slice(0,120)}"`)
   }
 }
@@ -1491,6 +1542,7 @@ VIX: ${marketData.vix||'N/A'} (${marketData.vixRegime||'N/A'})
 Sectors: ${(marketData.sectors||[]).map(s=>s.label+' '+s.change).join(' | ')}
 
 CRITICAL: The pies array must have exactly ${pieNameList.length} entries — one for each pie above. Use the exact name string. Every pie needs a verdict (HOLD/TRIM/ADD) and a reason (max 10 words).
+Output ONLY compact JSON — no spaces, no newlines, no pretty-printing.
 
 Return ONLY compact JSON:
 {"portfolioHealth":"STRONG|GOOD|CAUTION|WEAK","overallSummary":"2 sentences","cashAdvice":"one sentence","topAction":"most urgent action","pies":[{"name":"EXACT PIE NAME HERE","verdict":"HOLD|TRIM|ADD","reason":"max 10 words"}],"holdings":[{"ticker":"","action":"BUY MORE|HOLD|TRIM|SELL ALL","urgency":"NOW|THIS WEEK|NO RUSH","recommendation":"max 15 words","entryIfBuyMore":"","exitIfSell":""}],"pendingOrdersAdvice":[{"ticker":"","verdict":"KEEP|CANCEL","reason":"max 8 words"}]}`
@@ -2263,18 +2315,18 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
       const gainPct   = totalVal > 0 ? (totalPPL / (totalVal - totalPPL) * 100) : 0
       const stockActs = stocks.map(p=>t212Result?.holdings?.find(h=>h.ticker===p.ticker)?.action).filter(Boolean)
 
-      // Find pie AI verdict — exact name first, then fuzzy match (handles emoji/spacing differences)
+      // Find pie AI verdict — exact name first, then fuzzy (strips emoji/punctuation)
       const norm  = s => s?.toLowerCase().replace(/[^\w\s]/g,'').trim()
       const pieAI = t212Result?.pies?.find(x => x.name === pieName)
                  || t212Result?.pies?.find(x => norm(x.name) === norm(pieName))
 
-      // Always show a verdict — fallback derived from stock actions if AI didn't return one
+      // Always show a verdict after analysis — fallback derived from stock actions
       const fallback = (() => {
         if (!t212Result) return null
-        if (stockActs.some(a=>a==='SELL ALL'))                                    return { verdict:'TRIM',  reason:'Some positions need review' }
-        if (stockActs.filter(a=>a==='TRIM').length > stockActs.length / 2)        return { verdict:'TRIM',  reason:'Multiple positions extended' }
-        if (stockActs.some(a=>a==='BUY MORE'))                                    return { verdict:'ADD',   reason:'Opportunities within pie' }
-        if (stockActs.length > 0)                                                 return { verdict:'HOLD',  reason:'Thesis intact — hold through volatility' }
+        if (stockActs.some(a=>a==='SELL ALL'))                             return { verdict:'TRIM', reason:'Some positions need review' }
+        if (stockActs.filter(a=>a==='TRIM').length > stockActs.length/2)   return { verdict:'TRIM', reason:'Multiple positions extended' }
+        if (stockActs.some(a=>a==='BUY MORE'))                             return { verdict:'ADD',  reason:'Opportunities within pie' }
+        if (stockActs.length > 0)                                          return { verdict:'HOLD', reason:'Thesis intact — hold through volatility' }
         return null
       })()
 
@@ -2301,7 +2353,7 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
                     {totalPPL>=0?'+':''}£{totalPPL.toFixed(0)} ({gainPct>=0?'+':''}{gainPct.toFixed(1)}%)
                   </div>
                 </div>
-                {/* Verdict badge — always shown after analysis runs, fallback if AI missed this pie */}
+                {/* Verdict badge — always shown after analysis, fallback if AI missed this pie */}
                 {display && (
                   <div style={{ background:col+'22', border:`1px solid ${col}`, borderRadius:8, padding:'4px 10px', textAlign:'center', minWidth:64 }}>
                     <div style={{ color:col, fontWeight:800, fontSize:13 }}>{display.verdict}</div>
