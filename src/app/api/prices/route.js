@@ -139,7 +139,7 @@ async function fetchQuote(sym) {
       symbol:    sym,
       price,
       changePct: parseFloat((d.dp ?? 0).toFixed(2)),
-      change1d:  `${(d.dp ?? 0) >= 0 ? '+' : ''}${(d.dp ?? 0).toFixed(2)}%`,
+      change1d:  (d.dp ?? 0) >= 0 ? '+' + (d.dp ?? 0).toFixed(2) + '%' : (d.dp ?? 0).toFixed(2) + '%',
       direction: (d.dp ?? 0) >= 0 ? 'up' : 'down',
       prevClose,
     }
