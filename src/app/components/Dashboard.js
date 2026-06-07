@@ -1463,6 +1463,14 @@ Return ONLY compact JSON (no spaces, no newlines):
         o.side+' '+o.quantity+' '+o.ticker+' @£'+o.limitPrice
       ).join(' | ') || 'None'
 
+      // Build explicit pie name list so AI can match them exactly
+      const pieNameList = Object.keys(
+        allResolved.reduce((acc,p) => {
+          if (p.pieName && p.pieName !== 'My Pies') acc[p.pieName] = true
+          return acc
+        }, {})
+      )
+
       const prompt = `Today: ${new Date().toDateString()}
 UK Trading 212 account. All amounts in GBP (£).
 
@@ -1471,16 +1479,21 @@ CASH: Free £${t212Data.cash?.free||'?'} | Invested £${t212Data.cash?.invested|
 TOP 20 POSITIONS BY VALUE:
 ${posLines}
 
-PIE GROUPS:
+PIE GROUPS (you MUST return a verdict for EVERY pie listed here — use the EXACT name):
 ${pieLines || 'No pies'}
+
+EXACT PIE NAMES (copy these verbatim into the pies array — one entry per pie, no exceptions):
+${pieNameList.map((n,i)=>`${i+1}. "${n}"`).join('\n') || 'None'}
 
 PENDING ORDERS: ${pendingLines}
 
 VIX: ${marketData.vix||'N/A'} (${marketData.vixRegime||'N/A'})
 Sectors: ${(marketData.sectors||[]).map(s=>s.label+' '+s.change).join(' | ')}
 
+CRITICAL: The pies array must have exactly ${pieNameList.length} entries — one for each pie above. Use the exact name string. Every pie needs a verdict (HOLD/TRIM/ADD) and a reason (max 10 words).
+
 Return ONLY compact JSON:
-{"portfolioHealth":"STRONG|GOOD|CAUTION|WEAK","overallSummary":"2 sentences","cashAdvice":"one sentence","topAction":"most urgent action","pies":[{"name":"","verdict":"HOLD|TRIM|ADD","reason":"max 10 words"}],"holdings":[{"ticker":"","action":"BUY MORE|HOLD|TRIM|SELL ALL","urgency":"NOW|THIS WEEK|NO RUSH","recommendation":"max 15 words","entryIfBuyMore":"","exitIfSell":""}],"pendingOrdersAdvice":[{"ticker":"","verdict":"KEEP|CANCEL","reason":"max 8 words"}]}`
+{"portfolioHealth":"STRONG|GOOD|CAUTION|WEAK","overallSummary":"2 sentences","cashAdvice":"one sentence","topAction":"most urgent action","pies":[{"name":"EXACT PIE NAME HERE","verdict":"HOLD|TRIM|ADD","reason":"max 10 words"}],"holdings":[{"ticker":"","action":"BUY MORE|HOLD|TRIM|SELL ALL","urgency":"NOW|THIS WEEK|NO RUSH","recommendation":"max 15 words","entryIfBuyMore":"","exitIfSell":""}],"pendingOrdersAdvice":[{"ticker":"","verdict":"KEEP|CANCEL","reason":"max 8 words"}]}`
 
       const rawText = await claude(prompt, 't212')
       const parsed  = repairJSON(rawText)
@@ -2248,9 +2261,26 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
       const totalVal  = stocks.reduce((s,p)=>s+(p.totalValue||0),0)
       const totalPPL  = stocks.reduce((s,p)=>s+(p.ppl||0),0)
       const gainPct   = totalVal > 0 ? (totalPPL / (totalVal - totalPPL) * 100) : 0
-      const pieAI     = t212Result?.pies?.find(x=>x.name===pieName)
-      const col       = pieAI?.verdict==='ADD'?C.up:pieAI?.verdict==='TRIM'?C.amber:pieAI?.verdict==='HOLD'?C.accent:C.muted
       const stockActs = stocks.map(p=>t212Result?.holdings?.find(h=>h.ticker===p.ticker)?.action).filter(Boolean)
+
+      // Find pie AI verdict — exact name first, then fuzzy match (handles emoji/spacing differences)
+      const norm  = s => s?.toLowerCase().replace(/[^\w\s]/g,'').trim()
+      const pieAI = t212Result?.pies?.find(x => x.name === pieName)
+                 || t212Result?.pies?.find(x => norm(x.name) === norm(pieName))
+
+      // Always show a verdict — fallback derived from stock actions if AI didn't return one
+      const fallback = (() => {
+        if (!t212Result) return null
+        if (stockActs.some(a=>a==='SELL ALL'))                                    return { verdict:'TRIM',  reason:'Some positions need review' }
+        if (stockActs.filter(a=>a==='TRIM').length > stockActs.length / 2)        return { verdict:'TRIM',  reason:'Multiple positions extended' }
+        if (stockActs.some(a=>a==='BUY MORE'))                                    return { verdict:'ADD',   reason:'Opportunities within pie' }
+        if (stockActs.length > 0)                                                 return { verdict:'HOLD',  reason:'Thesis intact — hold through volatility' }
+        return null
+      })()
+
+      const display = pieAI || fallback
+      const col = display?.verdict==='ADD'?C.up : display?.verdict==='TRIM'?C.amber : display?.verdict==='HOLD'?C.accent : C.muted
+
       return (
         <div style={{ ...card({ padding:0, overflow:'hidden', marginBottom:12 }) }}>
           {/* Pie header */}
@@ -2271,10 +2301,11 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
                     {totalPPL>=0?'+':''}£{totalPPL.toFixed(0)} ({gainPct>=0?'+':''}{gainPct.toFixed(1)}%)
                   </div>
                 </div>
-                {pieAI && (
-                  <div style={{ background:col+'22', border:`1px solid ${col}`, borderRadius:8, padding:'4px 10px', textAlign:'center' }}>
-                    <div style={{ color:col, fontWeight:800, fontSize:13 }}>{pieAI.verdict}</div>
-                    {pieAI.reason && <div style={{ color:C.muted, fontSize:10 }}>{pieAI.reason}</div>}
+                {/* Verdict badge — always shown after analysis runs, fallback if AI missed this pie */}
+                {display && (
+                  <div style={{ background:col+'22', border:`1px solid ${col}`, borderRadius:8, padding:'4px 10px', textAlign:'center', minWidth:64 }}>
+                    <div style={{ color:col, fontWeight:800, fontSize:13 }}>{display.verdict}</div>
+                    {display.reason && <div style={{ color:C.muted, fontSize:10, maxWidth:120 }}>{display.reason}</div>}
                   </div>
                 )}
                 <span style={{ color:C.muted, fontSize:16 }}>{isOpen?'▲':'▼'}</span>
