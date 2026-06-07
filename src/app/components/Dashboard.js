@@ -859,8 +859,12 @@ export default function Dashboard() {
   }, [])
 
   // Fetch shared macro context — called once on mount, result reused by all tabs
+  // Use a ref for in-flight guard so the callback doesn't need macroLoading in deps
+  const macroLoadingRef = useRef(false)
   const fetchMacroContext = useCallback(async () => {
-    if (macroContext || macroLoading) return macroContext  // already loaded
+    if (macroContext) return macroContext        // already have data
+    if (macroLoadingRef.current) return null     // already in flight
+    macroLoadingRef.current = true
     setMacroLoading(true)
     try {
       const r = await fetch('/api/macro', { cache: 'no-store' })
@@ -869,8 +873,8 @@ export default function Dashboard() {
       setMacroContext(d)
       return d
     } catch { return null }
-    finally { setMacroLoading(false) }
-  }, [macroContext, macroLoading])
+    finally { macroLoadingRef.current = false; setMacroLoading(false) }
+  }, [macroContext])  // only macroContext — once set, returns immediately without fetch
 
   // ── Opportunities ──────────────────────────────────────────────────────────
   const loadOpps = useCallback(async () => {
@@ -1086,7 +1090,7 @@ Return ONLY this JSON (EXACTLY 10 opportunity cards — rank all universe stocks
       setLoading(p=>({...p,opportunities:false}))
       setLoadingStep('')
     }
-  }, [market, claude, fetchMacroContext, t212PriceCache, getEH, newsData, techMap])
+  }, [market, claude, fetchMacroContext])  // t212PriceCache/newsData/techMap intentionally excluded — changes in those should not re-fire loadOpps
 
   // ── Global macro ───────────────────────────────────────────────────────────
   const loadGlobal = useCallback(async () => {
