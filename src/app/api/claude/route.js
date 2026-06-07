@@ -24,7 +24,7 @@ export const maxDuration = 60
 const MODELS = {
   cio:      'claude-sonnet-4-6',           // Opportunities — Sonnet handles structured JSON ranking well
   analyser: 'claude-sonnet-4-6',           // Stock Analyser — structured output, Sonnet fine
-  t212:     'claude-haiku-4-5-20251001',   // T212 portfolio — structured JSON, Haiku sufficient
+  t212:     'claude-sonnet-4-6',            // T212 portfolio — Sonnet follows compact JSON instruction reliably
   deepdive: 'claude-opus-4-6',             // Deep dive — narrative quality, Opus only here
   json:     'claude-haiku-4-5-20251001',   // Non-critical: JSON repair only
 }
@@ -35,7 +35,7 @@ const MODELS = {
 const TOKENS = {
   cio:      6000,   // 10 cards with richer reasoning
   analyser: 2000,   // 1 card — more allocation/sizing detail
-  t212:     3000,   // more holdings context + recovery signals
+  t212:     5000,   // raised: Sonnet may pretty-print; 5000 ensures full portfolio fits
   deepdive: 1800,   // 400-500 words needs more tokens
   json:     600,    // structural only
 }
