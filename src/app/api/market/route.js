@@ -1,195 +1,558 @@
 /**
- * CATALYST — src/app/api/claude/route.js
+ * CATALYST v5 — src/app/api/market/route.js
  *
- * Edge runtime — NO timeout limit (unlike serverless which caps at 10-30s)
- * Streams the response back so the client gets text as it arrives.
+ * EVENT-DRIVEN DISCOVERY — no hardcoded stock list for opportunities.
  *
- * Models:
- *   deepdive → claude-opus-4-6       (narrative quality)
- *   cio/analyser → claude-sonnet-4-6  (structured JSON ranking)
- *   t212/json    → claude-haiku       (fast structured output)
+ * How it works:
+ * 1. Pull Finnhub earnings calendar for next 45 days — ALL companies
+ * 2. Filter to quality candidates (in our sector watchlist of ~160 tickers)
+ * 3. Fetch live prices for the top 40 candidates
+ * 4. Return ranked by days-to-earnings + sector strength
+ *
+ * This means PANW, CRWD, or any other stock with upcoming earnings
+ * surfaces automatically — no manual list needed.
+ *
+ * Timeout safety:
+ * - All Finnhub calls wrapped in 5s per-request timeout
+ * - Max 3 parallel fetch batches
+ * - Total budget: ~8s for market data phase
+ *
+ * Runtime: Node.js + maxDuration:60
  */
 
 import { NextResponse } from 'next/server'
 
-// Node.js runtime with extended maxDuration
-// Edge runtime has a 25s first-byte limit which kills Sonnet (15-20s generation)
-// maxDuration=60 gives Sonnet plenty of time
-export const dynamic    = 'force-dynamic'
+export const dynamic     = 'force-dynamic'
 export const maxDuration = 60
 
-// Model strategy:
-// Opus   → all real intelligence: analysis, ranking, recommendations, deep dives
-// Haiku  → non-critical structural tasks only: JSON repair, simple lookups
-const MODELS = {
-  cio:      'claude-sonnet-4-6',           // Opportunities — Sonnet handles structured JSON ranking well
-  analyser: 'claude-sonnet-4-6',           // Stock Analyser — structured output, Sonnet fine
-  t212:     'claude-haiku-4-5-20251001',   // T212 portfolio — structured JSON, Haiku sufficient
-  deepdive: 'claude-opus-4-6',             // Deep dive — narrative quality, Opus only here
-  json:     'claude-haiku-4-5-20251001',   // Non-critical: JSON repair only
+const FH  = 'https://finnhub.io/api/v1'
+
+function fmtChange(pct) {
+  const p = parseFloat(pct) || 0
+  return (p >= 0 ? '+' : '') + p.toFixed(2) + '%'
+}
+const KEY = process.env.FINNHUB_API_KEY
+
+function resp(body, status = 200) {
+  return NextResponse.json(body, { status, headers: { 'Cache-Control':'no-store' } })
 }
 
-// Cost per run at this config: ~$0.07 vs $0.25 with full Opus
-// Sonnet is 5x cheaper than Opus for structured JSON tasks
-// Opus reserved for deep dive narrative where quality difference is real
-const TOKENS = {
-  cio:      6000,   // 10 cards with richer reasoning
-  analyser: 2000,   // 1 card — more allocation/sizing detail
-  t212:     3000,   // more holdings context + recovery signals
-  deepdive: 1800,   // 400-500 words needs more tokens
-  json:     600,    // structural only
-}
-
-const SYSTEM = {
-  // ── Opportunities tab — ranks multiple stocks, returns 10 cards ────────────
-  cio: `You are a CIO and master swing trader. Output ONLY raw JSON — no markdown, no backticks, no explanation. Start with { and end with }.
-CRITICAL: Compact JSON, no whitespace. Max 20 words per string value.
-Return exactly 10 opportunity cards — the best 10 from the universe provided.
-
-RULES:
-1. GAP-UP >8% today = max WATCH — never chase a gap
-2. DOWNTREND (below 200 SMA) = max WATCH — never BUY a downtrend
-3. PULLBACK IN UPTREND = ideal BUY entry — prioritise these
-4. Earnings timing: <10 days = high risk, only if exceptional setup. 10-45 days = prime catalyst window. >45 days = needs strong momentum to justify BUY
-5. Minimum 2:1 R/R required for BUY — below that, max WATCH
-6. Use CALC_STOP as stop loss. Calculate R/R from real prices. Show your working
-7. VIX context: VIX>20 = reduce BUYs, tighten criteria. VIX>25 = only highest-conviction setups get BUY, rest WATCH
-8. Sector context: if a sector ETF is down >3% today, downgrade BUY→WATCH for that sector UNLESS stock has specific positive catalyst (earnings beat, upgrade, contract win)
-9. Plain English, no jargon. Be direct about risk`,
-
-  // ── Stock Analyser — single ticker, thorough analysis ─────────────────────
-  analyser: `You are a master swing trader and analyst. Output ONLY raw JSON — no markdown, no backticks. Start with {.
-CRITICAL: Compact JSON, no whitespace. Use the EXACT live price provided — do not change it.
-Analyse this stock on its own merits using ALL data provided:
-- Technical trend and SMA levels determine entry quality
-- Analyst consensus and recent news determine fundamental direction
-- Earnings history determines expected volatility and timing
-- VIX and sector context determine market backdrop
-RULES:
-1. BUY: uptrend or pullback in uptrend + good/excellent entry + catalyst within 45 days or strong momentum + minimum 2:1 R/R
-2. WATCH: decent setup but entry extended, or catalyst >45 days away, or mixed signals, or VIX>20 with sector weakness
-3. AVOID: confirmed downtrend, broken thesis, R/R <1:1, fundamental deterioration
-4. Allocation guidance: HIGH conviction BUY = 8-12% of portfolio. MEDIUM = 5-8%. LOW/WATCH = 2-4%
-5. Always provide entry zone, stop loss (use SMA200 or recent support), and price target based on earnings history avg move
-6. If stock recently sold off on sector news but company thesis intact = note as potential entry opportunity`, post-gap, fundamental problem
-4. DOWNTREND (below 200 SMA) = AVOID or WATCH — never BUY
-5. PULLBACK IN UPTREND = best entry — prioritise for BUY
-6. If earnings within 30 days: weight this heavily as catalyst
-7. R/R must be at least 2:1 to recommend BUY
-8. Be honest — if data is insufficient, say WATCH not BUY
-9. Plain English only. Write for a beginner. Short sentences.`,
-
-  // ── T212 portfolio analysis — per-holding recommendations ─────────────────
-  t212: `You are a portfolio manager reviewing a real UK Trading 212 account. Output ONLY raw JSON — no markdown, no backticks. Start with {.
-For each holding give exactly one action: BUY MORE / HOLD / TRIM / SELL ALL.
-Use £ amounts throughout (UK GBP account).
-
-RULES:
-1. BUY MORE: clear upcoming catalyst, good entry point, company thesis intact, position not oversized. Earnings in 10-30 days with strong history = strong BUY MORE signal
-2. HOLD: company thesis intact, no compelling reason to add or reduce. Default action when uncertain
-3. TRIM: ONLY if ALL of these: catalyst already fully priced in + stock extended above fair value + no major catalyst in next 30 days. OR position genuinely >25% of portfolio with no near-term catalyst. NEVER trim solely because market/sector is weak — temporary pullbacks are normal
-4. SELL ALL: company-specific fundamental problem ONLY — earnings miss WITH guidance cut, fraud, business model broken, competition destroying moat. NOT for sector selloffs
-5. DIAGNOSING WEAKNESS — CRITICAL: stock down 10%+ today — ask WHY before acting. Company-specific bad news (own earnings miss, own guidance cut, scandal) = consider SELL ALL. Sector/market selloff with company thesis intact = HOLD or BUY MORE on weakness
-6. RECOVERY SIGNAL: stock down 15%+ this week but company fundamentals intact + earnings in <30 days = flag as RECOVERY BUY candidate with reasoning
-7. EARNINGS in <10 days = urgent catalyst — if thesis strong, BUY MORE. If uncertain, HOLD and wait for print
-8. PORTFOLIO HEALTH: flag if >60% in semis/AI. Flag if free cash <5% of total portfolio value. Suggest rebalancing if needed
-9. Position sizing: flag any single position >20% of portfolio as CONCENTRATED — suggest trimming only if no near-term catalyst
-10. Pending orders: validate against current thesis — KEEP if still valid, CANCEL if conditions changed
-11. Plain English. Short sentences. Be direct. Explain your reasoning briefly`,
-
-  deepdive: `You are a trading analyst writing for beginner investors. Be clear, direct and simple. Label each sentence: (FACT), (ANALYSIS) or (OPINION). 400-500 words. No jargon. Structure: 1) What the company does and why it matters (2-3 sentences). 2) Why the stock is interesting RIGHT NOW — catalyst, setup, recent news. 3) The bull case — what needs to go right. 4) The bear case — what could go wrong, be honest. 5) Your overall take — clear recommendation with reasoning. Never be vague. If you would not buy it, say so.`,
-
-  json: `Output ONLY raw JSON. No markdown, no backticks, no explanation. Start with {`,
-}
-
-export async function POST(request) {
-  const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) {
-    return NextResponse.json(
-      { error: 'ANTHROPIC_API_KEY not set in Vercel environment variables' },
-      { status: 500 }
-    )
-  }
-
-  let body
+// Per-request timeout wrapper — prevents any single Finnhub call hanging
+async function fhSafe(path, timeoutMs = 4000) {
   try {
-    body = await request.json()
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
-  }
-
-  const { prompt, mode = 'json' } = body
-  if (!prompt?.trim()) {
-    return NextResponse.json({ error: 'Missing prompt' }, { status: 400 })
-  }
-
-  const model     = MODELS[mode]  || MODELS.json
-  const maxTokens = TOKENS[mode]  || 1500
-  const system    = SYSTEM[mode]  || SYSTEM.json
-
-  try {
-    // Call Anthropic with stream: true
-    const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type':      'application/json',
-        'x-api-key':         apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: maxTokens,
-        system,
-        stream: true,
-        messages: [{ role: 'user', content: prompt.trim() }],
-      }),
+    const sep = path.includes('?') ? '&' : '?'
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    const r = await fetch(`${FH}${path}${sep}token=${KEY}`, {
+      cache: 'no-store',
+      signal: controller.signal,
     })
+    clearTimeout(timer)
+    if (!r.ok) return null
+    return r.json()
+  } catch { return null }
+}
 
-    if (!anthropicRes.ok) {
-      const err = await anthropicRes.json().catch(() => ({}))
-      return NextResponse.json(
-        { error: `Anthropic API error: ${err.error?.message || anthropicRes.status}` },
-        { status: anthropicRes.status }
-      )
-    }
+// ── Quality watchlist ─────────────────────────────────────────────────────────
+// ~160 tickers across AI, semiconductors, cloud, cyber, defence, energy, power.
+// This is a QUALITY FILTER not a display list — any stock with upcoming earnings
+// that appears in this list gets surfaced automatically.
+// Add/remove tickers here to change which sectors you follow.
+// ── QUALITY UNIVERSE — your sector watchlist ─────────────────────────────────
+// Two layers of coverage:
+//
+// Layer 1: QUALITY_UNIVERSE — named tickers you follow.
+//   Any stock in this set with upcoming earnings surfaces automatically.
+//   Add new tickers freely — the calendar scan catches them.
+//
+// Layer 2: SECTOR_KEYWORDS — catch-all for unknown stocks.
+//   Any stock from the Finnhub earnings calendar whose company name
+//   contains these keywords also gets included, even if not in Layer 1.
+//   This catches new IPOs, renamed companies, and stocks not yet on your radar.
 
-    // Stream the response text back to the client
-    // We collect all text_delta events and return the full text
-    const reader  = anthropicRes.body.getReader()
-    const decoder = new TextDecoder()
-    let fullText  = ''
+const QUALITY_UNIVERSE = new Set([
+  // ── AI silicon & semiconductors ───────────────────────────────────────────
+  'NVDA','AMD','AVGO','TSM','MRVL','ARM','QCOM','INTC','MU',
+  'AMAT','LRCX','KLAC','SNPS','CDNS','TXN','ADI','MCHP','ON',
+  'SWKS','QRVO','CRUS','SMCI','DELL','HPE','NTAP','STX','WDC',
+  'CRDO','ANET','CIEN','INFN','LITE','COHR','VIAV','IIVI',
+  'WOLF','ALGM','MPWR','DIOD','SITM','AMBA','SLAB','FORM',
+  // ── Big tech / AI platforms ───────────────────────────────────────────────
+  'MSFT','GOOGL','GOOG','META','AMZN','AAPL','TSLA','NFLX',
+  'CRM','ORCL','SAP','NOW','SNOW','DDOG','NET','CFLT','MDB',
+  'ESTC','GTLB','PATH','AI','PLTR','PEGA','BBAI','SOUN',
+  'UBER','LYFT','SPOT','PINS','SNAP','RDDT','HOOD',
+  // ── AI infrastructure / data centre ──────────────────────────────────────
+  'EQIX','DLR','AMT','CCI','SBAC','CONE','QTS','SWITCH',
+  // ── Cybersecurity ─────────────────────────────────────────────────────────
+  'CRWD','PANW','ZS','FTNT','S','CYBR','TENB','RPD',
+  'VRNT','RDWR','CHKP','SAIL','QLYS','OKTA','PING','JAMF',
+  'NET','OSPN','SCWX','CFLT','SAIL','ZTNA','DDOG',
+  // ── Quantum computing ──────────────────────────────────────────────────────
+  'IONQ','RGTI','QUBT','QMCO','IBM','QTUM','ARQQ',
+  'QBTS','BFLY','DEFN','SPIR','QUBT','ATOS','HON',
+  // ── Defence & aerospace ───────────────────────────────────────────────────
+  'LMT','RTX','NOC','GD','BA','HII','AXON','KTOS','AVAV',
+  'HEI','TDG','TXT','LDOS','SAIC','CACI','BAH','MRCY',
+  'VEC','L3H','FLIR','DRS','PARSONS','BWXT','CW','HEICO',
+  'MOOG','DXC','CSPI','OSIS','VRSN',
+  // ── Space, drones & autonomy ──────────────────────────────────────────────
+  'RKLB','LUNR','ACHR','JOBY','ASTS','SPCE','MNTS','LLAP',
+  'ASTR','IRDM','MAXR','BKSY','SATL','GSAT','SWIR',
+  // ── Power grid, data centre power, energy transition ─────────────────────
+  'VRT','ETN','EMR','GEV','CEG','VST','NRG','EXC','AEP',
+  'NEE','PCG','EIX','XEL','FSLR','ENPH','RUN','ARRY',
+  'CWEN','BE','PLUG','BLDP','NEP','ORA','AES','ELP',
+  'AMRC','NOVA','SPWR','SHLS','REGI','GNRC','FLNC',
+  // ── Nuclear ───────────────────────────────────────────────────────────────
+  'CCJ','LEU','SMR','NNE','OKLO','BWX','BWXT','X-ENERGY',
+  // ── Critical minerals, commodities & supply chain ─────────────────────────
+  'FCX','NEM','GOLD','AEM','WPM','RIO','BHP','CLF',
+  'AA','CENX','MP','UUUU','LTHM','LAC','PLL','SLI',
+  'ALB','SGML','NOVS','CRAG',
+  // ── Fintech, payments & crypto infrastructure ─────────────────────────────
+  'V','MA','PYPL','SQ','AFRM','SOFI','NU','COIN',
+  'MSTR','MARA','RIOT','CLSK','HIVE','HUT','BTBT',
+  // ── Cloud / SaaS / enterprise software ───────────────────────────────────
+  'ADBE','INTU','WDAY','TEAM','ZM','DOCU','COUP','HUBS',
+  'MNDY','BILL','PCTY','PAYC','VEEV','SMAR','BOX','DBX',
+  // ── Semiconductors equipment & materials ──────────────────────────────────
+  'ONTO','COHU','ACLS','ICHR','UCTT','AEHR','MKSI','ENTG',
+  // ── Healthcare / biotech (selective — high-move names) ────────────────────
+  'UNH','LLY','ABBV','MRK','PFE','AMGN','GILD','REGN',
+  'VRTX','MRNA','BNTX','NVAX','SGEN','ALNY','BMRN',
+  // ── Industrial / automation / robotics ───────────────────────────────────
+  'HON','ROP','IDEX','ITW','PH','AME','GNRC','ROK',
+  'ABB','ISRG','IRBT','NVEI','MZOR','GRBX',
+  // ── Additional high-quality stocks ──────────────────────────────────────
+  'CRWV','AVAV','KTOS','ASTS','RKLB',
+])
 
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      const chunk = decoder.decode(value, { stream: true })
-      // Parse SSE lines
-      for (const line of chunk.split('\n')) {
-        if (!line.startsWith('data: ')) continue
-        const data = line.slice(6).trim()
-        if (data === '[DONE]') continue
-        try {
-          const evt = JSON.parse(data)
-          if (evt.type === 'content_block_delta' && evt.delta?.type === 'text_delta') {
-            fullText += evt.delta.text
-          }
-        } catch {}
+// Note: SECTOR_KEYWORDS approach was considered but Finnhub free tier
+// doesn't return company names in earnings calendar — so symbol-based
+// matching via QUALITY_UNIVERSE is the reliable approach.
+
+// Known company names — auto-extended from calendar data
+const KNOWN_NAMES = {
+  NVDA:'NVIDIA', AMD:'AMD', AVGO:'Broadcom', TSM:'TSMC', MRVL:'Marvell',
+  ARM:'Arm', INTC:'Intel', QCOM:'Qualcomm', ANET:'Arista', CRDO:'Credo',
+  CIEN:'Ciena', MSFT:'Microsoft', GOOGL:'Alphabet', GOOG:'Alphabet',
+  META:'Meta', AMZN:'Amazon', AAPL:'Apple', PLTR:'Palantir',
+  NOW:'ServiceNow', DELL:'Dell', SMCI:'SuperMicro', CRWD:'CrowdStrike',
+  PANW:'Palo Alto', ZS:'Zscaler', S:'SentinelOne', FTNT:'Fortinet',
+  LMT:'Lockheed', RTX:'RTX', NOC:'Northrop', AXON:'Axon', GD:'Gen Dynamics',
+  RKLB:'RocketLab', ASTS:'AST SpaceMobile', VRT:'Vertiv', ETN:'Eaton',
+  CEG:'Constellation', VST:'Vistra', GEV:'GE Vernova', NRG:'NRG Energy',
+  FSLR:'First Solar', ENPH:'Enphase', FCX:'Freeport', CCJ:'Cameco',
+  CRM:'Salesforce', ORCL:'Oracle', SNOW:'Snowflake', DDOG:'Datadog',
+  NET:'Cloudflare', NFLX:'Netflix', TSLA:'Tesla', COIN:'Coinbase',
+  KTOS:'Kratos Defense', AVAV:'AeroVironment', BA:'Boeing', HON:'Honeywell',
+}
+
+// ── Sanity price ranges — wide enough to not filter legitimate prices ─────────
+// Only stocks we know well — unknown stocks skip sanity check
+
+
+// ── Twelve Data — primary price source ──────────────────────────────────────
+// Batch endpoint: fetch up to 120 symbols in ONE API credit
+const TD_BASE = 'https://api.twelvedata.com'
+const TD_KEY  = process.env.TWELVE_DATA_API_KEY
+
+function parseTdQuote(sym, d) {
+  if (!d || d.status === 'error' || !d.close) return null
+  const price     = parseFloat(d.close)
+  const prevClose = parseFloat(d.previous_close)
+  const changePct = parseFloat(d.percent_change || 0)
+  if (!price || price <= 0) return null
+  if (prevClose > 0 && Math.abs(price - prevClose) / prevClose > 0.40) return null
+  if (price < 0.001 || price > 100000) return null
+  return {
+    symbol:    sym,
+    price,
+    changePct: parseFloat(changePct.toFixed(2)),
+    change1d:  fmtChange(changePct),
+    direction: changePct >= 0 ? 'up' : 'down',
+    prevClose,
+    source:    'twelvedata',
+  }
+}
+
+// Batch fetch — one API credit for all symbols
+async function tdBatch(symbols) {
+  if (!TD_KEY || !symbols.length) return {}
+  try {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 10000)
+    const syms = symbols.join(',')
+    const res = await fetch(
+      `${TD_BASE}/quote?symbol=${encodeURIComponent(syms)}&apikey=${TD_KEY}`,
+      { cache: 'no-store', signal: controller.signal }
+    )
+    clearTimeout(timer)
+    if (!res.ok) return {}
+    const data = await res.json()
+    const result = {}
+    // Single symbol returns object directly; multiple returns {SYM: {...}, ...}
+    if (symbols.length === 1) {
+      const q = parseTdQuote(symbols[0], data)
+      if (q) result[symbols[0]] = q
+    } else {
+      for (const sym of symbols) {
+        if (data[sym]) {
+          const q = parseTdQuote(sym, data[sym])
+          if (q) result[sym] = q
+        }
       }
     }
+    return result
+  } catch { return {} }
+}
 
-    // Return as plain text — client handles parsing
-    return new Response(fullText, {
-      status: 200,
-      headers: {
-        'Content-Type':  'text/plain; charset=utf-8',
-        'Cache-Control': 'no-store',
-      },
+async function tdQuote(sym) {
+  const r = await tdBatch([sym])
+  return r[sym] || null
+}
+
+async function safeQuote(sym) {
+  // Try Twelve Data first (accurate, reliable)
+  const td = await tdQuote(sym)
+  if (td) return td
+
+  // Fall back to Finnhub
+  try {
+    const d = await fhSafe(`/quote?symbol=${encodeURIComponent(sym)}`)
+    if (!d || d.c === 0 || d.c === null) return null
+    const price     = d.c
+    const prevClose = d.pc
+    // Drift check
+    if (prevClose && prevClose > 0) {
+      const drift = Math.abs(price - prevClose) / prevClose
+      if (drift > 0.40) return null
+    }
+    if (price < 0.001 || price > 100000) return null
+    // NFLX post-split override
+    const POST_SPLIT = { NFLX: [50, 150] }
+    const splitRange = POST_SPLIT[sym]
+    if (splitRange && (price < splitRange[0] || price > splitRange[1])) return null
+    return {
+      symbol:    sym,
+      price,
+      changePct: parseFloat((d.dp ?? 0).toFixed(2)),
+      change1d:  fmtChange(d.dp ?? 0),
+      direction: (d.dp ?? 0) >= 0 ? 'up' : 'down',
+      prevClose,
+      source:    'finnhub',
+    }
+  } catch { return null }
+}
+
+// Fetch prices — TD batch first (1 credit), Finnhub for any misses
+async function fetchPrices(syms) {
+  const map = {}
+
+  // Step 1: Twelve Data batch — all symbols in ONE API credit
+  if (TD_KEY && syms.length > 0) {
+    const tdResults = await tdBatch(syms)
+    Object.assign(map, tdResults)
+  }
+
+  // Step 2: Finnhub fallback for any symbols TD missed
+  const missed = syms.filter(s => !map[s])
+  if (missed.length > 0) {
+    const BATCH = 10, DELAY = 50
+    for (let i = 0; i < missed.length; i += BATCH) {
+      const batch = missed.slice(i, i + BATCH)
+      const res   = await Promise.allSettled(batch.map(safeQuote))
+      res.forEach((r, j) => {
+        if (r.status === 'fulfilled' && r.value) map[batch[j]] = r.value
+      })
+      if (i + BATCH < missed.length) await new Promise(r => setTimeout(r, DELAY))
+    }
+  }
+  return map
+}
+
+// ── Date helpers ──────────────────────────────────────────────────────────────
+function isoDate(d) { return d.toISOString().split('T')[0] }
+function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); return r }
+function tradingDaysUntil(dateStr) {
+  if (!dateStr) return null
+  const target = new Date(dateStr), now = new Date()
+  if (target < now) return -1
+  let days = 0, cur = new Date(now)
+  while (cur < target) {
+    cur.setDate(cur.getDate() + 1)
+    const dow = cur.getDay()
+    if (dow !== 0 && dow !== 6) days++
+  }
+  return days
+}
+
+// ── Fallback earnings dates ───────────────────────────────────────────────────
+// Used when Finnhub calendar misses a confirmed date
+const FALLBACK_DATES = {
+  META: { date:'2026-07-29', note:'confirmed' },
+  VRT:  { date:'2026-08-05', note:'confirmed' },
+  MRVL: { date:'2026-08-20', note:'confirmed' },
+  ARM:  { date:'2026-07-29', note:'confirmed' },
+  GEV:  { date:'2026-07-23', note:'est' },
+  NOW:  { date:'2026-07-23', note:'est' },
+  FCX:  { date:'2026-07-16', note:'est' },
+  GOOGL:{ date:'2026-07-22', note:'est' },
+  MSFT: { date:'2026-07-28', note:'est' },
+  AMD:  { date:'2026-07-29', note:'est' },
+  ANET: { date:'2026-07-29', note:'est' },
+  PLTR: { date:'2026-08-04', note:'est' },
+  SMCI: { date:'2026-08-05', note:'est' },
+  VST:  { date:'2026-08-07', note:'est' },
+  CEG:  { date:'2026-08-07', note:'est' },
+  CCJ:  { date:'2026-08-07', note:'est' },
+  NVDA: { date:'2026-08-27', note:'est' },
+  CRWD: { date:'2026-08-26', note:'est' },
+  ORCL: { date:'2026-06-10', note:'confirmed' },  // Confirmed Jun 10 2026
+  ADBE: { date:'2026-06-17', note:'est' },
+}
+
+// ── Route handler ─────────────────────────────────────────────────────────────
+
+export async function GET(request) {
+  // Support ?extra=TICK1,TICK2 to inject user's holdings into discovery
+  const extraParam = new URL(request.url).searchParams.get('extra') || ''
+  const extraTickers = extraParam ? extraParam.split(',').map(t => t.trim().toUpperCase()).filter(Boolean) : []
+
+  const { searchParams } = new URL(request.url)
+  const type = searchParams.get('type')
+  if (!KEY) return resp({ error: 'FINNHUB_API_KEY not set' }, 500)
+
+  // ── OPPORTUNITIES — event-driven discovery ─────────────────────────────────
+  if (type === 'opportunities') {
+    const today = new Date()
+    const in45  = addDays(today, 45)
+
+    // Phase 1: Fetch everything in parallel
+    // - Full earnings calendar (all stocks) for next 45 days
+    // - Sector ETF prices for context
+    // - VIX
+    const [rawCalendar, sectorQ, vixQ] = await Promise.all([
+      fhSafe('/calendar/earnings?from=' + isoDate(today) + '&to=' + isoDate(in45)).then(d => d?.earningsCalendar || []),
+      fetchPrices(['XLK','ITA','XSD','CIBR','XLE']),
+      safeQuote('VIXY'),
+    ])
+
+    // Phase 2: Filter calendar to quality universe
+    // Build a map of upcoming earnings for quality stocks only
+    const earningsMap = {}
+
+    // From live calendar — filter to quality universe
+    // Finnhub free tier doesn't return company names in calendar,
+    // so we match on ticker symbol only (Layer 1 has 279 quality tickers)
+    rawCalendar.forEach(e => {
+      if (!e.symbol) return
+      if (!QUALITY_UNIVERSE.has(e.symbol) && !extraTickers.includes(e.symbol)) return  // not in universe
+
+      const days = tradingDaysUntil(e.date)
+      if (days === null || days < 0 || days > 45) return
+
+      // Keep the entry with the soonest date if duplicate
+      if (!earningsMap[e.symbol] || days < earningsMap[e.symbol].tradingDaysAway) {
+        earningsMap[e.symbol] = {
+          ticker:          e.symbol,
+          date:            e.date,
+          tradingDaysAway: days,
+          epsEstimate:     e.epsEstimate ?? null,
+          source:          'finnhub',
+          discoveryMethod: 'calendar',
+        }
+      }
     })
 
-  } catch (err) {
-    return NextResponse.json(
-      { error: `Server error: ${err.message}` },
-      { status: 500 }
-    )
+    // Fill gaps with fallback dates
+    Object.entries(FALLBACK_DATES).forEach(([ticker, fb]) => {
+      if (!earningsMap[ticker]) {
+        const days = tradingDaysUntil(fb.date)
+        if (days !== null && days >= 0 && days <= 45) {
+          earningsMap[ticker] = {
+            ticker, date: fb.date, tradingDaysAway: days,
+            epsEstimate: null,
+            source: fb.note === 'confirmed' ? 'confirmed' : 'estimate',
+            discoveryMethod: 'fallback',
+          }
+        }
+      }
+    })
+
+    // Phase 3: Also include quality stocks WITHOUT confirmed earnings
+    // (so NVDA, MRVL etc still appear as WATCH candidates)
+    // Add top watchlist stocks that aren't already in earningsMap
+    // Core stocks — always appear regardless of earnings calendar
+    // Split into: AI/semis core, cybersecurity core, quantum core, energy/defence core
+    const ALWAYS_INCLUDE = [
+      // AI & semiconductors — your core
+      'NVDA','AMD','AVGO','MRVL','ARM','PLTR','META','MSFT','GOOGL','AMZN',
+      // Cybersecurity — always visible
+      'CRWD','PANW','ZS','NET','FTNT','S',
+      // Quantum computing — always visible
+      'IONQ','RGTI','QUBT','IBM','QMCO',
+      // Power / energy / defence
+      'VRT','GEV','ETN','CEG','LMT','AXON',
+      // Other core holdings
+      'CRDO','ANET','NOW','TSLA',
+    ]
+    ALWAYS_INCLUDE.forEach(ticker => {
+      if (!earningsMap[ticker]) {
+        // Check fallback for extended dates (45-90 days)
+        const fb = FALLBACK_DATES[ticker]
+        if (fb) {
+          const days = tradingDaysUntil(fb.date)
+          if (days !== null && days >= 0) {
+            earningsMap[ticker] = {
+              ticker, date: fb.date, tradingDaysAway: days,
+              epsEstimate: null, source: fb.note === 'confirmed' ? 'confirmed' : 'estimate',
+            }
+          }
+        } else {
+          // Include as watchlist with no earnings date
+          earningsMap[ticker] = {
+            ticker, date: null, tradingDaysAway: null,
+            epsEstimate: null, source: null,
+            discoveryMethod: 'watchlist',
+          }
+        }
+      }
+    })
+
+    // Phase 4: Fetch prices for all candidates (up to 50)
+    const candidates = Object.keys(earningsMap)
+    // Prioritise: earnings within 45 days first, then watches
+    const prioritised = candidates.sort((a, b) => {
+      const aD = earningsMap[a].tradingDaysAway ?? 999
+      const bD = earningsMap[b].tradingDaysAway ?? 999
+      return aD - bD
+    }).slice(0, 45)  // cap at 45 — quality filter keeps this manageable
+
+    const priceMap = await fetchPrices(prioritised)
+
+    // Phase 5: Build stock objects
+    const stocks = prioritised
+      .filter(sym => priceMap[sym])  // only include stocks with valid prices
+      .map(sym => {
+        const q  = priceMap[sym]
+        const ec = earningsMap[sym]
+        return {
+          ticker:       sym,
+          name:         KNOWN_NAMES[sym] || sym,
+          price:        q.price,
+          priceFormatted: '$' + q.price.toFixed(2),
+          changePct:    q.changePct,
+          change1d:     fmtChange(q.changePct),
+          direction:    q.changePct >= 0 ? 'up' : 'down',
+          bigMoverToday: Math.abs(q.changePct) > 8,
+          earningsDate:            ec.date ?? null,
+          earningsTradingDaysAway: ec.tradingDaysAway ?? null,
+          epsEstimate:             ec.epsEstimate ?? null,
+          earningsSource:          ec.source ?? null,
+          hasVerifiedEarnings:     !!ec.date,
+          discoveredFromCalendar:  ec.source === 'finnhub',
+          discoveryMethod:         ec.discoveryMethod || null,  // 'calendar' | 'fallback' | 'watchlist'
+        }
+      })
+      .sort((a, b) => {
+        const aD = a.earningsTradingDaysAway ?? 999
+        const bD = b.earningsTradingDaysAway ?? 999
+        if (aD !== bD) return aD - bD
+        return Math.abs(b.changePct) - Math.abs(a.changePct)
+      })
+
+    // Build earnings calendar for UI display
+    const calendarItems = Object.values(earningsMap)
+      .filter(e => e.date)
+      .sort((a, b) => (a.tradingDaysAway ?? 999) - (b.tradingDaysAway ?? 999))
+
+    // VIX + sectors
+    const vix    = vixQ?.price ?? null
+    const regime = vix ? (vix > 25 ? 'HIGH_FEAR' : vix > 18 ? 'ELEVATED' : 'CALM') : 'UNKNOWN'
+
+    const mkSector = (sym, label) => {
+      const q = sectorQ[sym]; if (!q) return null
+      return {
+        label, changePct: q.changePct,
+        direction: q.changePct >= 0 ? 'BULLISH' : 'BEARISH',
+        change: fmtChange(q.changePct),
+      }
+    }
+    const sectors = [
+      mkSector('XLK','Technology'), mkSector('XSD','Semiconductors'),
+      mkSector('ITA','Defence'),    mkSector('CIBR','Cybersecurity'),
+      mkSector('XLE','Energy'),
+    ].filter(Boolean)
+
+    return resp({
+      meta: {
+        fetchedAt:        new Date().toISOString(),
+        stocksReturned:   stocks.length,
+        discoveredFromCalendar: stocks.filter(s => s.discoveredFromCalendar).length,
+        calendarScanned:  rawCalendar.length,
+      },
+      vix, vixRegime: regime, sectors, stocks, companyNews: {},
+      earningsCalendar: calendarItems,
+    })
   }
+
+  // ── GLOBAL MACRO ─────────────────────────────────────────────────────────────
+  if (type === 'global') {
+    const fxQ = async sym => {
+      try {
+        const d = await fhSafe(`/quote?symbol=${encodeURIComponent(sym)}`)
+        if (!d || d.c === 0) return null
+        return { price: d.c, changePct: d.dp ?? 0 }
+      } catch { return null }
+    }
+
+    const [indices, comms, sectorQ, vixQ, gbpusd, eurusd, usdjpy] = await Promise.all([
+      fetchPrices(['SPY','QQQ','DIA','IWM','EWG','EWQ','EWJ']),
+      fetchPrices(['USO','GLD','CPER']),
+      fetchPrices(['XLK','ITA','XSD','CIBR','XLE','XLI']),
+      safeQuote('VIXY'),
+      fxQ('GBPUSD'), fxQ('EURUSD'), fxQ('USDJPY'),
+    ])
+
+    const vix    = vixQ?.price ?? null
+    const regime = vix ? (vix>25?'HIGH_FEAR':vix>18?'ELEVATED':'CALM') : 'UNKNOWN'
+    const fmtQ   = (q, name) => !q ? null : {
+      name, value: q.price.toLocaleString('en-US', { maximumFractionDigits:2 }),
+      change: fmtChange(q.changePct??0),
+      direction: (q.changePct??0) >= 0 ? 'up' : 'down',
+    }
+    const mkS = (sym, label) => {
+      const q = sectorQ[sym]; if (!q) return null
+      return { label, changePct:q.changePct, direction:q.changePct>=0?'up':'down', change:fmtChange(q.changePct) }
+    }
+
+    return resp({
+      meta: { fetchedAt: new Date().toISOString() }, vix, vixRegime: regime,
+      indices: [
+        fmtQ(indices['SPY'],'S&P 500'),   fmtQ(indices['QQQ'],'NASDAQ 100'),
+        fmtQ(indices['DIA'],'Dow Jones'),  fmtQ(indices['IWM'],'Russell 2000'),
+        fmtQ(indices['EWG'],'DAX'),        fmtQ(indices['EWQ'],'CAC 40'),
+        fmtQ(indices['EWJ'],'Nikkei'),
+      ].filter(Boolean),
+      sectors: [
+        mkS('XLK','Technology'), mkS('XSD','Semiconductors'),
+        mkS('ITA','Defence'),    mkS('CIBR','Cybersecurity'),
+        mkS('XLE','Energy'),     mkS('XLI','Industrials'),
+      ].filter(Boolean),
+      commodities: [
+        comms['USO']  && comms['USO'].price  < 200 ? fmtQ(comms['USO'], 'WTI Oil')  : null,
+        comms['GLD']  && comms['GLD'].price  < 500 ? fmtQ(comms['GLD'], 'Gold')     : null,
+        comms['CPER'] && comms['CPER'].price < 100 ? fmtQ(comms['CPER'],'Copper')   : null,
+      ].filter(Boolean),
+      currencies: [
+        gbpusd ? { pair:'GBP/USD', value:gbpusd.price.toFixed(4), change:fmtChange(gbpusd.changePct) } : null,
+        eurusd ? { pair:'EUR/USD', value:eurusd.price.toFixed(4), change:fmtChange(eurusd.changePct) } : null,
+        usdjpy ? { pair:'USD/JPY', value:usdjpy.price.toFixed(2),  change:fmtChange(usdjpy.changePct) } : null,
+      ].filter(Boolean),
+    })
+  }
+
+  return resp({ error: 'Unknown type: ' + type }, 400)
 }
