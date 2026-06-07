@@ -190,8 +190,26 @@ export async function GET() {
 
     for (const p of rawPositions) {
       const ticker    = cleanTicker(p.ticker)
-      const avgPrice  = parseFloat(p.averagePrice ?? 0)
-      const curPrice  = parseFloat(p.currentPrice ?? 0)
+
+      // Detect GBX (pence-denominated) stocks:
+      // _GBX_EQ suffix = explicit pence
+      // _EQ only (no _US, no _GBP) + averagePrice > 200 + no fxPpl = heuristic pence detection
+      // This correctly identifies FTCl_EQ, SMTl_EQ, SMSNl_EQ as pence-denominated
+      const rawAvg   = parseFloat(p.averagePrice ?? 0)
+      const rawCur   = parseFloat(p.currentPrice ?? 0)
+      const rawFxPpl = p.fxPpl
+      const isExplicitGBX = p.ticker?.includes('_GBX')
+      const isHeuristicGBX = !p.ticker?.includes('_US') &&
+                             !p.ticker?.includes('_GBP') &&
+                             !p.ticker?.includes('_EUR') &&
+                             !p.ticker?.includes('_GBX') &&
+                             rawAvg > 200 &&
+                             (rawFxPpl === null || rawFxPpl === undefined)
+      const isGBX   = isExplicitGBX || isHeuristicGBX
+      const fx      = isGBX ? 0.01 : 1  // pence → pounds
+
+      const avgPrice = rawAvg * fx
+      const curPrice = rawCur * fx
       const totalQty  = parseFloat(p.quantity     ?? 0)
       const pieQty    = parseFloat(p.pieQuantity  ?? 0)
       const directQty = Math.max(0, parseFloat((totalQty - pieQty).toFixed(8)))
@@ -200,9 +218,15 @@ export async function GET() {
       const pieName = tickerToPie.get(ticker) ?? tickerToPie.get(p.ticker) ?? null
       const assignedPieName = pieQty > 0 ? (pieName ?? 'My Pies') : null
 
+      // Use fxPpl (already in GBP account currency) scaled to qty fraction
+      const totalPplGbp = parseFloat(p.fxPpl ?? p.ppl ?? 0)
+
       const makeEntry = (qty, pName) => {
         const value   = parseFloat((curPrice * qty).toFixed(2))
-        const ppl     = parseFloat(((curPrice - avgPrice) * qty).toFixed(2))
+        // Scale fxPpl proportionally — fxPpl covers the full position
+        const ppl     = totalQty > 0
+          ? parseFloat((totalPplGbp * qty / totalQty).toFixed(2))
+          : parseFloat(((curPrice - avgPrice) * qty).toFixed(2))
         const gainPct = avgPrice > 0 ? parseFloat(((curPrice - avgPrice) / avgPrice * 100).toFixed(2)) : 0
         return {
           ticker,
@@ -215,6 +239,7 @@ export async function GET() {
           totalValue:   value,
           pieName:      pName,
           frontend:     p.frontend || null,
+          isGBX,
           initialDate:  p.initialFillDate ?? null,
         }
       }
