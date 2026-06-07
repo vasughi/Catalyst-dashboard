@@ -154,7 +154,7 @@ const GEO_FLAGS = [
     severity: 'HIGH',
     bullish: ['US domestic manufacturers', 'Reshoring plays', 'US-listed defence'],
     bearish: ['TSMC-dependent companies (NVDA, AVGO)', 'Global supply chains'],
-    detail: 'Semiconductor tariffs a recurring risk. Check current status in today's news. AI infrastructure buildout faces cost headwinds when tariffs active.',
+    detail: 'Semiconductor tariffs a recurring risk. Check current status in live news. AI infrastructure buildout faces cost headwinds when tariffs active.',
   },
   {
     risk: 'China-Taiwan Geopolitical Risk',
