@@ -39,6 +39,28 @@ const FB = `'DM Sans', system-ui, sans-serif`
 const FM = `'DM Mono', 'JetBrains Mono', monospace`
 
 // ─── Universe + history ───────────────────────────────────────────────────────
+// ── SPAC / merger ticker aliases ─────────────────────────────────────────────
+// Maps old SPAC shell tickers to current real tickers + company names
+// T212 often holds the original SPAC ticker from before the merger
+const SPAC_MAP = {
+  // Old ticker → { current: 'NEW_TICKER', name: 'Company Name' }
+  IPAX:  { current: 'LUNR', name: 'Intuitive Machines' },
+  GNPK:  { current: 'RDW',  name: 'Redwire Corporation' },
+  VACQ:  { current: 'RKLB', name: 'Rocket Lab' },
+  DMYQ:  { current: 'PL',   name: 'Planet Labs' },
+  NPA:   { current: 'ASTS', name: 'AST SpaceMobile' },
+  ARNC:  { current: 'HWM',  name: 'Howmet Aerospace' },
+  SFTW:  { current: 'BKSY', name: 'Blacksky Technology' },
+  AJAX:  { current: 'AJAX', name: 'Ajax Financial' },
+  CCIV:  { current: 'LCID', name: 'Lucid Group' },
+  ACIC:  { current: 'GXII', name: 'GX Acquisition' },
+}
+
+function resolveSpac(ticker) {
+  const upper = ticker?.toUpperCase()
+  return SPAC_MAP[upper] || null
+}
+
 // ── Company names lookup — used in Stock Analyser prompt ────────────────────────────
 const KNOWN_NAMES = {
   NVDA:'NVIDIA',AVGO:'Broadcom',AMD:'AMD',TSM:'TSMC',MRVL:'Marvell',ARM:'Arm',
@@ -1380,6 +1402,7 @@ Return ONLY compact JSON (no spaces, no newlines):
       }
 
       // Build rich position lines
+      // Resolve SPAC/merger tickers to current company names
       const posLines = deduped.map(p => {
         const tc   = localTechMap[p.ticker] || {}
         const nd   = localNewsMap[p.ticker] || {}
@@ -1388,7 +1411,12 @@ Return ONLY compact JSON (no spaces, no newlines):
         const pct  = ((p.totalValue||0) / totalPortfolioValue * 100).toFixed(1)
         const ec   = earningsContext[p.ticker]
         const parts = [
-          p.ticker + ':£' + (p.averagePrice||0).toFixed(0) + '→£' + (p.currentPrice||0).toFixed(0)
+          (() => {
+            const spac = resolveSpac(p.ticker)
+            const displayTicker = spac ? p.ticker + '→' + spac.current : p.ticker
+            const displayName   = spac ? spac.name : ''
+            return displayTicker + (displayName ? '(' + displayName + ')' : '') + ':£' + (p.averagePrice||0).toFixed(0) + '→£' + (p.currentPrice||0).toFixed(0)
+          })()
             + ' (' + (p.gainPct>=0?'+':'') + p.gainPct + '%) £' + (p.totalValue||0).toFixed(0)
             + ' (' + pct + '% of portfolio)',
           live?.changePct !== undefined
@@ -2171,7 +2199,14 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
         <div style={{ background:C.bg, borderRadius:10, padding:'10px 12px', borderLeft:`3px solid ${col}`, display:'flex', flexDirection:'column', gap:4 }}>
           {/* Row 1: ticker + % + action */}
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-            <span style={{ fontFamily:FM, fontWeight:800, fontSize:15, color:C.text }}>{p.ticker}</span>
+            <span style={{ fontFamily:FM, fontWeight:800, fontSize:15, color:C.text }}>
+            {p.ticker}
+            {resolveSpac(p.ticker) && (
+              <span style={{ color:C.accent, fontSize:11, marginLeft:4, fontWeight:600 }}>
+                →{resolveSpac(p.ticker).current}
+              </span>
+            )}
+          </span>
             <div style={{ display:'flex', gap:5, alignItems:'center' }}>
               <span style={{ color:up?C.up:C.down, fontWeight:700, fontSize:13 }}>{up?'+':''}{p.gainPct}%</span>
               {ai && <span style={{ background:abg(ai.action), color:ac(ai.action), borderRadius:5, padding:'2px 7px', fontWeight:800, fontSize:11 }}>{ai.action}</span>}
