@@ -996,10 +996,14 @@ RULES:
 9. Plain English only. Short sentences. No jargon.
 10. watchList: 5-8 most interesting. avoidList: 5-8 to avoid.
 
-EXACTLY 10 entries. COMPACT JSON, no spaces. Max 10 words per string. Start with opportunities array. Rank all stocks, best 10. Count them. If fewer than 10 are BUY, fill remaining slots with the best WATCH candidates from the universe above.
+EXACTLY 10 entries. COMPACT JSON, no spaces. Max 10 words per string. Start with opportunities array.
+IMPORTANT: Most cards should be WATCH. BUY only when ALL hard stops and quality gates pass.
+The JSON template shows WATCH as default — only change to BUY when fully justified.
+If VIX>25: only 1 BUY maximum. If VIX 20-25: maximum 3 BUYs. Fill the rest with WATCH.
+Every whatCouldGoWrong must name a specific real risk, not a generic phrase.
 
 Return ONLY this JSON (EXACTLY 10 opportunity cards — rank all universe stocks, best 10 only):
-{"opportunities":[{"ticker":"","company":"","action":"BUY","currentPrice":"","entryZone":"$X-$Y","stopLoss":"$X","takeProfit":"$X","expectedGain":"15%","riskReward":"3:1","allocation":"10%","whyWeLikeIt":"max 10 words","whatCouldGoWrong":"max 8 words","upcomingEvent":"","eventDate":"DD Mon YYYY","trend":"","entryQuality":"GOOD","returnGate":"PASS","cashChallenge":"PASS","opportunityScore":75}],"marketCondition":"BUY SELECTIVELY","cashRecommendation":"one sentence","cashPct":30,"regime":"one sentence","cio":{"bestTradeToday":"TICKER","bestRiskReward":"TICKER","finalMarketDecision":"BUY SELECTIVELY","watchList":[{"ticker":"","reason":"max 6 words"}],"avoidList":[{"ticker":"","reason":"max 6 words"}]}}`
+{"opportunities":[{"ticker":"","company":"","action":"WATCH","currentPrice":"","entryZone":"$X-$Y","stopLoss":"$X","takeProfit":"$X","expectedGain":"15%","riskReward":"3:1","allocation":"10%","whyWeLikeIt":"max 10 words","whatCouldGoWrong":"max 8 words","upcomingEvent":"","eventDate":"DD Mon YYYY","trend":"","entryQuality":"GOOD","returnGate":"PASS","cashChallenge":"PASS","opportunityScore":75}],"marketCondition":"BUY SELECTIVELY","cashRecommendation":"one sentence","cashPct":30,"regime":"one sentence","cio":{"bestTradeToday":"TICKER","bestRiskReward":"TICKER","finalMarketDecision":"BUY SELECTIVELY","watchList":[{"ticker":"","reason":"max 6 words"}],"avoidList":[{"ticker":"","reason":"max 6 words"}]}}`
 
 
       // Direct browser API call — no Vercel timeout
