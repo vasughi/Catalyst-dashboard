@@ -19,7 +19,7 @@
 import { NextResponse } from 'next/server'
 
 export const dynamic    = 'force-dynamic'
-export const maxDuration = 60
+export const maxDuration = 90
 
 const T212_KEY    = process.env.TRADING212_API_KEY
 const T212_SECRET = process.env.TRADING212_API_SECRET
@@ -85,16 +85,30 @@ export async function GET() {
 
   try {
     // ── Phase 1: sequential fetches to avoid T212 rate limits ────────────────
-    // T212 rate limits aggressively — parallel calls trigger 429s
-    // Fetch pies list FIRST with priority, then other data
-    const piesListRes  = await t212fetch('/equity/pies').then(d => ({status:'fulfilled',value:d})).catch(e => ({status:'rejected',reason:e}))
+    // T212 rate limits aggressively — all calls must be sequential with delays.
+    // The pies list is the most important call — retry up to 3x if it 429s.
+
+    // Helper: fetch with retry on 429
+    const fetchWithRetry = async (path, delays = [0, 1500, 3000]) => {
+      let lastErr = null
+      for (const wait of delays) {
+        if (wait > 0) await new Promise(r => setTimeout(r, wait))
+        try { return { status: 'fulfilled', value: await t212fetch(path) } }
+        catch (e) {
+          lastErr = e
+          if (!e.message?.includes('429') && !e.message?.includes('rate limit')) break
+        }
+      }
+      return { status: 'rejected', reason: lastErr }
+    }
+
+    const piesListRes  = await fetchWithRetry('/equity/pies', [0, 2000, 4000])
+    await new Promise(r => setTimeout(r, 500))
+    const portfolioRes = await fetchWithRetry('/equity/portfolio', [0, 1500, 3000])
+    await new Promise(r => setTimeout(r, 500))
+    const accountRes   = await fetchWithRetry('/equity/account/cash', [0, 1500])
     await new Promise(r => setTimeout(r, 300))
-    const portfolioRes = await t212fetch('/equity/portfolio').then(d => ({status:'fulfilled',value:d})).catch(e => ({status:'rejected',reason:e}))
-    await new Promise(r => setTimeout(r, 300))
-    const [accountRes, ordersRes] = await Promise.allSettled([
-      t212fetch('/equity/account/cash'),
-      t212fetch('/equity/orders'),
-    ])
+    const ordersRes    = await fetchWithRetry('/equity/orders', [0, 1500])
 
     const rawPositions = portfolioRes.status === 'fulfilled'
       ? (Array.isArray(portfolioRes.value) ? portfolioRes.value : [])
@@ -127,8 +141,8 @@ export async function GET() {
         ? { status: 'fulfilled', value: result }
         : { status: 'rejected', reason: lastErr }
       )
-      // 800ms between pies — well under T212's rate limit
-      await new Promise(r => setTimeout(r, 800))
+      // 1200ms between pies — T212 rate limit is tight, give it room
+      await new Promise(r => setTimeout(r, 1200))
     }
 
     // ── Phase 3: build tickerToPie + pie summary objects ──────────────────────
