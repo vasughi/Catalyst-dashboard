@@ -20,7 +20,96 @@ const KEY = process.env.FINNHUB_API_KEY
 
 
 
+
+// ── Twelve Data — primary price source ──────────────────────────────────────
+// Batch endpoint: fetch up to 120 symbols in ONE API credit
+const TD_BASE = 'https://api.twelvedata.com'
+const TD_KEY  = process.env.TWELVE_DATA_API_KEY
+
+function parseTdQuote(sym, d) {
+  if (!d || d.status === 'error' || !d.close) return null
+  const price     = parseFloat(d.close)
+  const prevClose = parseFloat(d.previous_close)
+  const changePct = parseFloat(d.percent_change || 0)
+  if (!price || price <= 0) return null
+  if (prevClose > 0 && Math.abs(price - prevClose) / prevClose > 0.40) return null
+  if (price < 0.001 || price > 100000) return null
+  return {
+    symbol:    sym,
+    price,
+    changePct: parseFloat(changePct.toFixed(2)),
+    change1d:  `${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%`,
+    direction: changePct >= 0 ? 'up' : 'down',
+    prevClose,
+    source:    'twelvedata',
+  }
+}
+
+// Batch fetch — one API credit for all symbols
+async function tdBatch(symbols) {
+  if (!TD_KEY || !symbols.length) return {}
+  try {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 10000)
+    const syms = symbols.join(',')
+    const res = await fetch(
+      `${TD_BASE}/quote?symbol=${encodeURIComponent(syms)}&apikey=${TD_KEY}`,
+      { cache: 'no-store', signal: controller.signal }
+    )
+    clearTimeout(timer)
+    if (!res.ok) return {}
+    const data = await res.json()
+    const result = {}
+    // Single symbol returns object directly; multiple returns {SYM: {...}, ...}
+    if (symbols.length === 1) {
+      const q = parseTdQuote(symbols[0], data)
+      if (q) result[symbols[0]] = q
+    } else {
+      for (const sym of symbols) {
+        if (data[sym]) {
+          const q = parseTdQuote(sym, data[sym])
+          if (q) result[sym] = q
+        }
+      }
+    }
+    return result
+  } catch { return {} }
+}
+
+async function tdQuote(sym) {
+  const r = await tdBatch([sym])
+  return r[sym] || null
+}
+
 async function fetchQuote(sym) {
+  // Try Twelve Data first
+  const td = await tdQuote(sym)
+  if (td) return td
+
+  // Fall back to Finnhub
+  try {
+    const d = await fhSafe(`/quote?symbol=${encodeURIComponent(sym)}`)
+    if (!d || d.c === 0 || d.c === null) return null
+    const price     = d.c
+    const prevClose = d.pc
+    if (prevClose && prevClose > 0) {
+      if (Math.abs(price - prevClose) / prevClose > 0.40) return null
+    }
+    if (price < 0.001 || price > 100000) return null
+    const POST_SPLIT = { NFLX: [50, 150] }
+    const splitRange = POST_SPLIT[sym]
+    if (splitRange && (price < splitRange[0] || price > splitRange[1])) return null
+    return {
+      symbol:    sym,
+      price,
+      changePct: parseFloat((d.dp ?? 0).toFixed(2)),
+      change1d:  `${(d.dp ?? 0) >= 0 ? '+' : ''}${(d.dp ?? 0).toFixed(2)}%`,
+      direction: (d.dp ?? 0) >= 0 ? 'up' : 'down',
+      prevClose,
+      source:    'finnhub',
+    }
+  } catch { return null }
+}
   try {
     const d = await fhSafe(`/quote?symbol=${encodeURIComponent(sym)}`)
     if (!d || d.c === 0 || d.c === null) return null
@@ -71,19 +160,24 @@ export async function GET(request) {
     return NextResponse.json({ error: 'No symbols provided. Use ?symbols=NVDA,AVGO,CRDO' }, { status: 400 })
   }
 
-  // Fire all requests in parallel — for small portfolios this is fast
-  // For 10-15 stocks this takes ~1-2 seconds vs ~5 seconds for the full universe
-  const results = await Promise.allSettled(symbols.map(fetchQuote))
-
+  // Step 1: Twelve Data batch — all symbols in ONE API credit
   const prices = {}
-  results.forEach((r, i) => {
-    if (r.status === 'fulfilled' && r.value) {
-      prices[symbols[i]] = r.value
-    } else {
-      // Return null entry so caller knows which ones failed
-      prices[symbols[i]] = null
-    }
-  })
+  if (TD_KEY) {
+    const tdResults = await tdBatch(symbols)
+    Object.assign(prices, tdResults)
+  }
+
+  // Step 2: Finnhub fallback for any TD misses
+  const missed = symbols.filter(s => !prices[s])
+  if (missed.length > 0) {
+    const results = await Promise.allSettled(missed.map(fetchQuote))
+    results.forEach((r, i) => {
+      prices[missed[i]] = r.status === 'fulfilled' && r.value ? r.value : null
+    })
+  }
+
+  // Fill nulls for any completely missing symbols
+  symbols.forEach(s => { if (!(s in prices)) prices[s] = null })
 
   return NextResponse.json({
     prices,
