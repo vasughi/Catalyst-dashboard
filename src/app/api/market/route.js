@@ -245,41 +245,6 @@ async function safeQuote(sym) {
     }
   } catch { return null }
 }
-  try {
-    const d = await fhSafe(`/quote?symbol=${encodeURIComponent(sym)}`)
-    if (!d || d.c === 0 || d.c === null) return null
-
-    const price    = d.c
-    const prevClose = d.pc
-
-    // Validation 1: drift check — only if prevClose is available and valid
-    // If prevClose missing, accept price (can't validate drift without it)
-    if (prevClose && prevClose > 0) {
-      const drift = Math.abs(price - prevClose) / prevClose
-      // Reject if moved >40% in one day (catches split-price glitches)
-      if (drift > 0.40) return null
-    }
-    // Reject if price is implausibly low (< $0.001) or high (> $100000)
-    if (price < 0.001 || price > 100000) return null
-
-    // Validation 3: minimal post-split overrides for known Finnhub issues
-    // Only needed when Finnhub's prevClose itself is stale/wrong
-    const POST_SPLIT = {
-      NFLX: [50, 150],   // 10-for-1 split Nov 2025. Real price ~$83-95
-    }
-    const splitRange = POST_SPLIT[sym]
-    if (splitRange && (price < splitRange[0] || price > splitRange[1])) return null
-
-    return {
-      symbol:    sym,
-      price,
-      changePct: parseFloat((d.dp ?? 0).toFixed(2)),
-      change1d:  fmtChange(d.dp ?? 0),
-      direction: (d.dp ?? 0) >= 0 ? 'up' : 'down',
-      prevClose,
-    }
-  } catch { return null }
-}
 
 // Fetch prices — TD batch first (1 credit), Finnhub for any misses
 async function fetchPrices(syms) {
