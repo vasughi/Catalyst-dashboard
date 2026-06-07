@@ -248,57 +248,6 @@ function repairJSON(str) {
         }
       }
     } catch {}
-
-    // T212 salvage: extract whatever holdings completed before truncation
-    try {
-      if (fixed.includes('"holdings"') || fixed.includes('"portfolioHealth"')) {
-        const result = {}
-        // Extract scalar fields
-        const scalarFields = ['portfolioHealth','overallSummary','cashAdvice','topAction']
-        for (const field of scalarFields) {
-          const m = fixed.match(new RegExp(`"${field}"\\s*:\\s*"([^"]*?)"`))
-          if (m) result[field] = m[1]
-        }
-        // Extract pies array — take all complete objects
-        if (fixed.includes('"pies"')) {
-          const pStart = fixed.indexOf('[', fixed.indexOf('"pies"'))
-          if (pStart !== -1) {
-            const pies = []
-            let depth = 0, objStart = -1
-            for (let k = pStart; k < fixed.length; k++) {
-              if (fixed[k] === '{') { if (depth === 0) objStart = k; depth++ }
-              else if (fixed[k] === '}') { depth--; if (depth === 0 && objStart !== -1) {
-                try { pies.push(JSON.parse(fixed.slice(objStart, k+1))) } catch {}
-                objStart = -1
-              }}
-              else if (fixed[k] === ']' && depth === 0) break
-            }
-            if (pies.length) result.pies = pies
-          }
-        }
-        // Extract holdings array — take all complete objects
-        if (fixed.includes('"holdings"')) {
-          const hStart = fixed.indexOf('[', fixed.indexOf('"holdings"'))
-          if (hStart !== -1) {
-            const holdings = []
-            let depth = 0, objStart = -1
-            for (let k = hStart; k < fixed.length; k++) {
-              if (fixed[k] === '{') { if (depth === 0) objStart = k; depth++ }
-              else if (fixed[k] === '}') { depth--; if (depth === 0 && objStart !== -1) {
-                try { holdings.push(JSON.parse(fixed.slice(objStart, k+1))) } catch {}
-                objStart = -1
-              }}
-              else if (fixed[k] === ']' && depth === 0) break
-            }
-            if (holdings.length) result.holdings = holdings
-          }
-        }
-        if (result.holdings?.length || result.portfolioHealth) {
-          result.overallSummary = (result.overallSummary || '') + ' (response truncated — some holdings may be missing)'
-          return result
-        }
-      }
-    } catch {}
     throw new Error(`Cannot parse AI JSON: "${s.slice(0,120)}"`)
   }
 }
@@ -806,6 +755,12 @@ export default function Dashboard() {
   })  // user-defined pie→tickers mappings for T212 API blind spots
   const [showPieEditor,   setShowPieEditor]   = useState(false)
   const [expandedPies,     setExpandedPies]     = useState({})     // { pieName: bool }
+  // ── Shared macro context — fetched ONCE, injected into ALL AI prompts ─────
+  // This is the single source of truth for: bonds, oil, gold, DXY, Fed dates,
+  // tariff expiry, geopolitical flags, Trump dynamics.
+  // Every tab (Opportunities, Analyser, T212, Global, Risk) reads from this.
+  const [macroContext,     setMacroContext]     = useState(null)
+  const [macroLoading,     setMacroLoading]     = useState(false)
   const loaded = useRef({})
   const w = useWindowWidth()
   const mob = w < 900
@@ -903,15 +858,31 @@ export default function Dashboard() {
     return d
   }, [])
 
+  // Fetch shared macro context — called once on mount, result reused by all tabs
+  const fetchMacroContext = useCallback(async () => {
+    if (macroContext || macroLoading) return macroContext  // already loaded
+    setMacroLoading(true)
+    try {
+      const r = await fetch('/api/macro', { cache: 'no-store' })
+      if (!r.ok) return null
+      const d = await r.json()
+      setMacroContext(d)
+      return d
+    } catch { return null }
+    finally { setMacroLoading(false) }
+  }, [macroContext, macroLoading])
+
   // ── Opportunities ──────────────────────────────────────────────────────────
   const loadOpps = useCallback(async () => {
     setLoading(p=>({...p,opportunities:true}))
     setErrors(p=>({...p,opportunities:null}))
     setLoadingStep('Fetching live prices…')
     try {
-      // Pass T212 holdings as extra tickers so they're always in discovery
-      const extraTickers = Object.keys(t212PriceCache).filter(t => t.length <= 6).join(',')
-      const md = await market('opportunities' + (extraTickers ? '&extra=' + extraTickers : ''))
+      // Fetch macro context in parallel with market data
+      const [md, mc] = await Promise.all([
+        market('opportunities' + (Object.keys(t212PriceCache).filter(t=>t.length<=6).length ? '&extra='+Object.keys(t212PriceCache).filter(t=>t.length<=6).join(',') : '')),
+        fetchMacroContext(),
+      ])
       setLoadingStep('Building AI analysis…')
       // Destructure FIRST before using stocks
       const { stocks, earningsCalendar, vix, vixRegime, sectors } = md
@@ -991,6 +962,8 @@ export default function Dashboard() {
 VIX: ${vix||'N/A'} (${vixRegime||'UNKNOWN'})
 SECTORS: ${sectorLines||'N/A'}
 
+${mc?.macroBlock || ''}
+
 DISCOVERED STOCKS (auto-detected from earnings calendar + quality filter):
 Note: [CAL] = auto-discovered from live Finnhub earnings calendar (not on fixed list). These are event-driven opportunities surfaced by scanning all 500+ upcoming earnings.
 ${stockLines}
@@ -1001,22 +974,9 @@ ${calLines||'None confirmed yet'}
 EARNINGS HISTORY:
 ${ehLines || Object.entries(EH).map(([k,v])=>(k+': '+v.label)).join(' | ')}
 
-LIVE NEWS + ANALYST DATA (auto-fetched):
+LIVE NEWS + ANALYST DATA (auto-fetched — use this instead of any prior knowledge about recent earnings):
 ${newsLines || 'Loading in background — refresh for live data'}
 
-KNOWN EVENTS:
-- ORCL: Reports Jun 10 2026 confirmed — 9 days, strong AI cloud growth, BUY candidate
-- DOCU: Reports Jun 4 tonight — BUY if guidance strong, WATCH if billings disappoint
-- AVGO: Reported 3 Jun, beat revenue 48% YoY ($22.19B) BUT Q3 guidance disappointed — stock fell 15% after-hours to ~$413. Wait for stabilisation before buying. max WATCH.\n'
-      '
-- MU: Reporting Jun 24 2026 — stock at $1079 all-time high on HBM/AI memory demand. 4/4 beats. Prime catalyst play.\n'
-      '
-- CRDO: Reported 1 Jun, beat but fell 14% on inline guidance — WATCH until stabilises
-- QCOM: Already reported Q2, weak Q3 guidance, Apple modem risk — max WATCH
-- GOOGL: $80B share issue = dilution = max WATCH
-- FCX: Mine production cut = fundamental problem = max WATCH
-- NOC: Q1 guidance miss, stock fell 16% since — max WATCH
-- LMT: 4.2% avg earnings move — cannot reach 15% gate — max WATCH
 RULES:
 1. Stocks with earnings 33-45 days away are PRIME BUY candidates — especially [CAL] auto-discovered ones
 2. Stock up >8% today = max WATCH
@@ -1029,7 +989,7 @@ RULES:
 9. Plain English only. Short sentences. No jargon.
 10. watchList: 5-8 most interesting. avoidList: 5-8 to avoid.
 
-EXACTLY 10 entries. COMPACT JSON, no spaces. Max 10 words per string. Start with opportunities array. Rank all stocks, best 10. Count them. If you have fewer than 10 BUYs, fill remaining slots with WATCH cards for: NVDA, MRVL, AVGO, GEV, FSLR, ETN, CEG, PLTR — whatever is needed to reach 10.
+EXACTLY 10 entries. COMPACT JSON, no spaces. Max 10 words per string. Start with opportunities array. Rank all stocks, best 10. Count them. If fewer than 10 are BUY, fill remaining slots with the best WATCH candidates from the universe above.
 
 Return ONLY this JSON (EXACTLY 10 opportunity cards — rank all universe stocks, best 10 only):
 {"opportunities":[{"ticker":"","company":"","action":"BUY","currentPrice":"","entryZone":"$X-$Y","stopLoss":"$X","takeProfit":"$X","expectedGain":"15%","riskReward":"3:1","allocation":"10%","whyWeLikeIt":"max 10 words","whatCouldGoWrong":"max 8 words","upcomingEvent":"","eventDate":"DD Mon YYYY","trend":"","entryQuality":"GOOD","returnGate":"PASS","cashChallenge":"PASS","opportunityScore":75}],"marketCondition":"BUY SELECTIVELY","cashRecommendation":"one sentence","cashPct":30,"regime":"one sentence","cio":{"bestTradeToday":"TICKER","bestRiskReward":"TICKER","finalMarketDecision":"BUY SELECTIVELY","watchList":[{"ticker":"","reason":"max 6 words"}],"avoidList":[{"ticker":"","reason":"max 6 words"}]}}`
@@ -1126,13 +1086,13 @@ Return ONLY this JSON (EXACTLY 10 opportunity cards — rank all universe stocks
       setLoading(p=>({...p,opportunities:false}))
       setLoadingStep('')
     }
-  }, [market, claude])
+  }, [market, claude, fetchMacroContext, t212PriceCache, getEH, newsData, techMap])
 
   // ── Global macro ───────────────────────────────────────────────────────────
   const loadGlobal = useCallback(async () => {
     setLoading(p=>({...p,global:true})); setErrors(p=>({...p,global:null}))
     try {
-      const md = await market('global')
+      const [md, mc] = await Promise.all([ market('global'), fetchMacroContext() ])
       const idxLines  = md.indices?.map(m=>`${m.name} ${m.value} ${m.change}`).join(', ')
       const secLines  = md.sectors?.map(s=>s.label+' '+s.change).join(', ')
       const commLines = md.commodities?.map(c=>`${c.name} ${c.value} ${c.change}`).join(', ')
@@ -1145,22 +1105,25 @@ Commodities: ${commLines||'N/A'}
 FX: ${fxLines||'N/A'}
 VIX proxy: ${md.vix||'N/A'} (${md.vixRegime||'N/A'})
 
-You explain financial markets in simple, plain English for beginners. No jargon. Based ONLY on the data above, return JSON:
-{"sentiment":"RISK ON|RISK OFF|NEUTRAL","sentimentReason":"one plain sentence explaining what markets are doing today and why, no jargon","regimeAdvice":"one plain actionable sentence for someone new to investing — what should they do with their money today","keyRisk":"biggest thing that could cause markets to fall, explained simply in one sentence","keyOpportunity":"biggest thing that could push markets higher, explained simply in one sentence","macroEvents":[{"event":"event name in plain English","detail":"one plain sentence explaining why this matters to investors","impact":"HIGH|MEDIUM|LOW"}]}`
+${mc?.macroBlock || ''}
+
+You explain financial markets in simple, plain English for beginners. No jargon.
+Using ALL the data above — especially the macro context, geopolitical risks, Trump dynamics, and upcoming events — return JSON:
+{"sentiment":"RISK ON|RISK OFF|NEUTRAL","sentimentReason":"one plain sentence — what is driving markets TODAY and why (mention specific events)","regimeAdvice":"one plain actionable sentence — what should an investor do with their money this week given ALL the context above","keyRisk":"the single biggest risk to markets right now — name it specifically (e.g. tariff expiry, Fed hawkishness, Iran escalation)","keyOpportunity":"the single best opportunity given current macro — be specific (sector + reason)","macroEvents":[{"event":"event name","detail":"one plain sentence why this matters — name the date","impact":"HIGH|MEDIUM|LOW"}]}`
 
       const ai = repairJSON(await claude(prompt))
-      setData(p=>({...p, global:{ ...md, ...ai }}))
+      setData(p=>({...p, global:{ ...md, ...ai, macroContext: mc }}))
       setLastUp(p=>({...p, global:new Date().toISOString()}))
     } catch(e) { setErrors(p=>({...p,global:e.message})) }
     finally { setLoading(p=>({...p,global:false})) }
-  }, [market, claude])
+  }, [market, claude, fetchMacroContext])
 
   // ── Risk ───────────────────────────────────────────────────────────────────
   const loadRisk = useCallback(async () => {
     setLoading(p=>({...p,risk:true})); setErrors(p=>({...p,risk:null}))
     try {
-      // Fetch VIX and sectors to ground the risk assessment in real data
-      const md = await market('global')
+      const [md, mc] = await Promise.all([ market('global'), fetchMacroContext() ])
+
       const prompt = `Today: ${new Date().toDateString()}
 VIX proxy: ${md.vix||'N/A'} (${md.vixRegime||'N/A'})
 S&P 500 today: ${md.indices?.find(i=>i.name==='S&P 500')?.change||'N/A'}
@@ -1168,18 +1131,20 @@ NASDAQ today: ${md.indices?.find(i=>i.name==='NASDAQ 100')?.change||'N/A'}
 Sector performance today: ${md.sectors?.map(s=>s.label+' '+s.change).join(', ')||'N/A'}
 Gold: ${md.commodities?.find(c=>c.name?.includes('Gold'))?.change||'N/A'}
 
-You explain financial risks in plain, simple English for beginner investors with 1-4 week holding periods.
-Using the live data above plus your knowledge, explain the key risks over the next 8 weeks.
-Name specific upcoming events and dates. No jargon. Short sentences.
-Return JSON:
-{"overallRisk":"HIGH|ELEVATED|MODERATE|LOW","cashSuggestion":"X%","positionSizingAdvice":"one plain sentence — e.g. keep each stock position under 10% of your money","macroRisks":[{"risk":"risk name in plain English","detail":"plain sentence explaining why this could hurt stock prices — name specific dates or events","severity":"HIGH|MEDIUM|LOW","action":"plain sentence on what to do about it"}],"geopoliticalRisks":[{"risk":"","detail":"plain sentence","severity":"","action":"plain sentence"}],"sectorRisks":[{"sector":"sector name","risk":"plain sentence on what could go wrong","severity":"","action":"plain sentence on what to do"}],"hedgeIdeas":["plain sentence explaining a simple protective move and why"],"bestEnvironmentFor":["plain sentence describing what kind of stocks or trades work best right now"]}`
+${mc?.macroBlock || ''}
 
-      const ai = repairJSON(await claude(prompt))
-      setData(p=>({...p, risk:{ ...ai, vix:md.vix, vixRegime:md.vixRegime }}))
+You are a risk analyst explaining risks in plain English for investors with 1-4 week holding periods.
+Using ALL the data above — live market moves, macro context, geopolitical risks, upcoming events, Trump dynamics — identify the real risks right now.
+IMPORTANT: Use the specific events, dates, and geopolitical flags from the macro context above. Do not speak in generalities — name the actual risks (e.g. "tariff pause expires Jun 9", "FOMC Jun 17", "Iran Strait of Hormuz").
+Return JSON:
+{"overallRisk":"HIGH|ELEVATED|MODERATE|LOW","cashSuggestion":"X%","positionSizingAdvice":"one plain sentence with specific % guidance","macroRisks":[{"risk":"specific risk name","detail":"plain sentence — name the date or event","severity":"HIGH|MEDIUM|LOW","action":"plain sentence on what to do"}],"geopoliticalRisks":[{"risk":"specific geopolitical risk","detail":"plain sentence — current status and market impact","severity":"HIGH|MEDIUM|LOW","action":"plain sentence"}],"sectorRisks":[{"sector":"sector name","risk":"specific risk for this sector now","severity":"HIGH|MEDIUM|LOW","action":"plain sentence"}],"hedgeIdeas":["specific hedge — what to buy/hold and why it protects you"],"bestEnvironmentFor":["specific type of stock that works best in this exact environment — name examples"]}`
+
+      const ai = repairJSON(await claude(prompt, 'analyser'))
+      setData(p=>({...p, risk:{ ...ai, vix:md.vix, vixRegime:md.vixRegime, macroContext: mc }}))
       setLastUp(p=>({...p, risk:new Date().toISOString()}))
     } catch(e) { setErrors(p=>({...p,risk:e.message})) }
     finally { setLoading(p=>({...p,risk:false})) }
-  }, [market, claude])
+  }, [market, claude, fetchMacroContext])
 
   // ── Deep dive ──────────────────────────────────────────────────────────────
   const deepDive = useCallback(async (opp) => {
@@ -1248,13 +1213,15 @@ Keep total response under 280 words. Plain English only — no trading jargon.`,
     setPortfolioError(null)
     setPortfolioResult(null)
     try {
-      // Fetch live price, SMA technicals, news+analyst, market context — all parallel
+      // Fetch live price, SMA technicals, news+analyst, market context + macro — all parallel
       const [priceRes, techRes, newsRes, marketRes] = await Promise.allSettled([
         fetch('/api/prices?symbols=' + ticker, { cache:'no-store' }),
         fetch('/api/technicals?symbols=' + ticker, { cache:'no-store' }),
         fetch('/api/news?symbols=' + ticker, { cache:'no-store' }),
         fetch('/api/market?type=global', { cache:'no-store' }),
       ])
+      // Also get macro context (from cache if already loaded)
+      const mc = await fetchMacroContext()
 
       const priceData  = priceRes.status==='fulfilled'  && priceRes.value.ok  ? await priceRes.value.json()  : {}
       const techData   = techRes.status==='fulfilled'   && techRes.value.ok   ? await techRes.value.json()   : {}
@@ -1307,6 +1274,8 @@ MARKET CONTEXT RIGHT NOW:
 VIX: ${marketData.vix || 'N/A'} — ${marketData.vixRegime==='HIGH_FEAR'?'Market fearful, reduce position sizes':marketData.vixRegime==='ELEVATED'?'Elevated uncertainty, be selective':'Market calm, normal position sizing'}
 Sectors today: ${(marketData.sectors||[]).map(s=>s.label+' '+s.change).join(' | ')}
 
+${mc?.macroBlock || ''}
+
 ANALYSIS RULES — follow strictly:
 1. ACTION must be one of: STRONG BUY / BUY / WATCH / AVOID
 2. BUY: uptrend + good entry + catalyst (earnings 15-45 days out OR strong momentum + analyst upgrades)
@@ -1332,7 +1301,7 @@ Return ONLY compact JSON (no spaces, no newlines):
     } finally {
       setPortfolioLoading(false)
     }
-  }, [newTicker, newBuyPrice, newCurrency, getEH, claude])
+  }, [newTicker, newBuyPrice, newCurrency, getEH, claude, fetchMacroContext])
 
   // ── T212 API functions ────────────────────────────────────────────────────
   const fetchT212 = useCallback(async () => {
@@ -1397,6 +1366,8 @@ Return ONLY compact JSON (no spaces, no newlines):
       const localTechMap = techRes.status==='fulfilled'  && techRes.value.ok   ? (await techRes.value.json())?.technicals||{} : {}
       const localNewsMap = newsRes.status==='fulfilled'  && newsRes.value.ok   ? (await newsRes.value.json())?.results||{}    : {}
       const marketData = marketRes.status==='fulfilled' && marketRes.value.ok ? await marketRes.value.json() : {}
+      // Macro context — from cache if available (fetched on mount)
+      const mc = await fetchMacroContext()
 
       // Update React state for card display
       if (Object.keys(localTechMap).length) setTechMap(prev => ({...prev,...localTechMap}))
@@ -1514,7 +1485,7 @@ Return ONLY compact JSON (no spaces, no newlines):
         o.side+' '+o.quantity+' '+o.ticker+' @£'+o.limitPrice
       ).join(' | ') || 'None'
 
-      // Build explicit pie name list so AI can match them exactly
+      // Build explicit pie name list so AI matches them exactly
       const pieNameList = Object.keys(
         allResolved.reduce((acc,p) => {
           if (p.pieName && p.pieName !== 'My Pies') acc[p.pieName] = true
@@ -1533,15 +1504,14 @@ ${posLines}
 PIE GROUPS (you MUST return a verdict for EVERY pie listed here — use the EXACT name):
 ${pieLines || 'No pies'}
 
-EXACT PIE NAMES (copy these verbatim into the pies array — one entry per pie, no exceptions):
+EXACT PIE NAMES (copy verbatim into pies array — one entry per pie, no exceptions):
 ${pieNameList.map((n,i)=>`${i+1}. "${n}"`).join('\n') || 'None'}
 
 PENDING ORDERS: ${pendingLines}
 
-VIX: ${marketData.vix||'N/A'} (${marketData.vixRegime||'N/A'})
-Sectors: ${(marketData.sectors||[]).map(s=>s.label+' '+s.change).join(' | ')}
+${mc?.macroBlock || `VIX: ${marketData.vix||'N/A'} (${marketData.vixRegime||'N/A'})\nSectors: ${(marketData.sectors||[]).map(s=>s.label+' '+s.change).join(' | ')}`}
 
-CRITICAL: The pies array must have exactly ${pieNameList.length} entries — one for each pie above. Use the exact name string. Every pie needs a verdict (HOLD/TRIM/ADD) and a reason (max 10 words).
+CRITICAL: pies array must have exactly ${pieNameList.length} entries. Use exact name strings. Every pie needs verdict (HOLD/TRIM/ADD) and reason (max 10 words). Use macro context above when advising on holdings affected by tariffs, Iran conflict, Fed timing, or Trump policies.
 Output ONLY compact JSON — no spaces, no newlines, no pretty-printing.
 
 Return ONLY compact JSON:
@@ -1558,7 +1528,7 @@ Return ONLY compact JSON:
     } finally {
       setT212AnalysisLoad(false)
     }
-  }, [t212Data, getEH, claude, t212PieMappings])
+  }, [t212Data, getEH, claude, t212PieMappings, fetchMacroContext])
 
 
   const loaders = { opportunities:loadOpps, global:loadGlobal, risk:loadRisk }
@@ -1605,6 +1575,8 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
   }, [claude, cardDrills, getEH])
 
   useEffect(() => { fetchEarningsHistory() }, []) // eslint-disable-line
+  // Fetch shared macro context on mount — available for all tabs before user clicks anything
+  useEffect(() => { fetchMacroContext() }, []) // eslint-disable-line
   useEffect(() => {
     try {
       if (sessionStorage.getItem('catalyst_t212_auth')      === 'true') setT212Unlocked(true)
@@ -2313,26 +2285,9 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
       const totalVal  = stocks.reduce((s,p)=>s+(p.totalValue||0),0)
       const totalPPL  = stocks.reduce((s,p)=>s+(p.ppl||0),0)
       const gainPct   = totalVal > 0 ? (totalPPL / (totalVal - totalPPL) * 100) : 0
+      const pieAI     = t212Result?.pies?.find(x=>x.name===pieName)
+      const col       = pieAI?.verdict==='ADD'?C.up:pieAI?.verdict==='TRIM'?C.amber:pieAI?.verdict==='HOLD'?C.accent:C.muted
       const stockActs = stocks.map(p=>t212Result?.holdings?.find(h=>h.ticker===p.ticker)?.action).filter(Boolean)
-
-      // Find pie AI verdict — exact name first, then fuzzy (strips emoji/punctuation)
-      const norm  = s => s?.toLowerCase().replace(/[^\w\s]/g,'').trim()
-      const pieAI = t212Result?.pies?.find(x => x.name === pieName)
-                 || t212Result?.pies?.find(x => norm(x.name) === norm(pieName))
-
-      // Always show a verdict after analysis — fallback derived from stock actions
-      const fallback = (() => {
-        if (!t212Result) return null
-        if (stockActs.some(a=>a==='SELL ALL'))                             return { verdict:'TRIM', reason:'Some positions need review' }
-        if (stockActs.filter(a=>a==='TRIM').length > stockActs.length/2)   return { verdict:'TRIM', reason:'Multiple positions extended' }
-        if (stockActs.some(a=>a==='BUY MORE'))                             return { verdict:'ADD',  reason:'Opportunities within pie' }
-        if (stockActs.length > 0)                                          return { verdict:'HOLD', reason:'Thesis intact — hold through volatility' }
-        return null
-      })()
-
-      const display = pieAI || fallback
-      const col = display?.verdict==='ADD'?C.up : display?.verdict==='TRIM'?C.amber : display?.verdict==='HOLD'?C.accent : C.muted
-
       return (
         <div style={{ ...card({ padding:0, overflow:'hidden', marginBottom:12 }) }}>
           {/* Pie header */}
@@ -2353,11 +2308,10 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
                     {totalPPL>=0?'+':''}£{totalPPL.toFixed(0)} ({gainPct>=0?'+':''}{gainPct.toFixed(1)}%)
                   </div>
                 </div>
-                {/* Verdict badge — always shown after analysis, fallback if AI missed this pie */}
-                {display && (
-                  <div style={{ background:col+'22', border:`1px solid ${col}`, borderRadius:8, padding:'4px 10px', textAlign:'center', minWidth:64 }}>
-                    <div style={{ color:col, fontWeight:800, fontSize:13 }}>{display.verdict}</div>
-                    {display.reason && <div style={{ color:C.muted, fontSize:10, maxWidth:120 }}>{display.reason}</div>}
+                {pieAI && (
+                  <div style={{ background:col+'22', border:`1px solid ${col}`, borderRadius:8, padding:'4px 10px', textAlign:'center' }}>
+                    <div style={{ color:col, fontWeight:800, fontSize:13 }}>{pieAI.verdict}</div>
+                    {pieAI.reason && <div style={{ color:C.muted, fontSize:10 }}>{pieAI.reason}</div>}
                   </div>
                 )}
                 <span style={{ color:C.muted, fontSize:16 }}>{isOpen?'▲':'▼'}</span>
