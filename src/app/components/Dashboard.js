@@ -890,14 +890,13 @@ export default function Dashboard() {
       // never breaks opportunities. If /api/macro fails, mc is null and prompt skips it.
       const mc = await fetchMacroContext().catch(() => null)
 
-      setLoadingStep('Building AI analysis…')
-      // Destructure FIRST before using stocks
+      setLoadingStep('Fetching signals…')
       const { stocks, earningsCalendar, vix, vixRegime, sectors } = md
-      // Log discovery stats
       if (md.meta?.discoveredFromCalendar) {
         console.log('[CATALYST] Discovered', md.meta.discoveredFromCalendar, 'stocks from live calendar out of', md.meta.calendarScanned, 'scanned')
       }
-      // Override Finnhub prices with T212 prices where available (T212 is always accurate)
+
+      // Override Finnhub prices with T212 prices where available
       const enrichedStocks = (stocks||[]).map(s => {
         const t212p = t212PriceCache[s.ticker]
         if (t212p && t212p.price > 0) {
@@ -906,10 +905,57 @@ export default function Dashboard() {
         return { ...s, priceSource: 'Finnhub' }
       })
 
-      // Build stock lines for prompt
-      // Only include stocks with valid live prices in the AI prompt
+      // ── PRE-FETCH: technicals + news BEFORE building the prompt ──────────────
+      // CRITICAL: these must complete before prompt is built so the AI has:
+      //   - CALC_STOP (stop loss level) → required for R/R calculation and H5 gate
+      //   - lastEarnings BEAT/MISS → required for H3 gate (miss + target cut = WATCH)
+      //   - analyst consensus → required for Q3 gate (miss needs 60% BUY to override)
+      // Both fetches run in parallel, capped to top 15 stocks by earnings proximity.
+      const topTickers = enrichedStocks.filter(s => s.price > 0).slice(0, 15).map(s => s.ticker)
+
+      const [techResults, newsResults] = await Promise.allSettled([
+        // Technicals: batch into two calls of 8 to stay within route cap
+        (async () => {
+          const merged = {}
+          const batches = [topTickers.slice(0, 8), topTickers.slice(8, 15)].filter(b => b.length)
+          await Promise.allSettled(batches.map(async batch => {
+            try {
+              const r = await fetch('/api/technicals?symbols=' + batch.join(','), { cache: 'no-store' })
+              if (r.ok) {
+                const d = await r.json()
+                if (d?.technicals) Object.assign(merged, d.technicals)
+              }
+            } catch {}
+          }))
+          return merged
+        })(),
+        // News + analyst + lastEarnings: always fresh, never skip on refresh
+        (async () => {
+          try {
+            const r = await fetch('/api/news?symbols=' + topTickers.join(','), { cache: 'no-store' })
+            if (r.ok) {
+              const d = await r.json()
+              return d?.results || {}
+            }
+          } catch {}
+          return {}
+        })(),
+      ])
+
+      // Merge fresh data into local maps for this run (also update React state for card display)
+      const freshTech = techResults.status === 'fulfilled' ? techResults.value : {}
+      const freshNews = newsResults.status === 'fulfilled' ? newsResults.value : {}
+      const localTechMap = { ...techMap, ...freshTech }
+      const localNewsMap = { ...newsData, ...freshNews }
+      if (Object.keys(freshTech).length) setTechMap(prev => ({ ...prev, ...freshTech }))
+      if (Object.keys(freshNews).length) setNewsData(prev => ({ ...prev, ...freshNews }))
+
+      setLoadingStep('Building AI analysis…')
+
+      // Build stock lines for prompt — uses localTechMap/localNewsMap (fresh this run)
       const stockLines = enrichedStocks.filter(s => s.price && s.price > 0).map(s => {
         const hist = getEH(s.ticker)
+        const nd   = localNewsMap[s.ticker] || {}
         const parts = [
           s.ticker+'('+s.name+')'+(s.discoveredFromCalendar?' [CAL]':'')+(s.priceSource==='T212'?' [T212]':' [FH]')+': $'+s.price?.toFixed(2)+' '+s.change1d,
           s.hasVerifiedEarnings
@@ -917,14 +963,17 @@ export default function Dashboard() {
             : 'NO_EARNINGS',
           s.bigMoverToday ? 'GAP_UP>8%_APPLY_PENALTY' : '',
           hist ? 'HIST:'+hist.label+(hist.live?' [LIVE]':'') : '',
-          // Technicals — live SMA data from /api/technicals
-          // Shows: trend, entry quality, % above/below 200 SMA, calculated stop
-          (()=>{const t=techMap[s.ticker]||{}; return[
+          // Last earnings beat/miss — CRITICAL for H3 hard stop
+          nd.lastEarnings ? 'LAST_EPS:'+(nd.lastEarnings.beat?'BEAT':'MISS')+nd.lastEarnings.surprise+'('+nd.lastEarnings.period+')' : '',
+          // Analyst consensus — CRITICAL for Q3 gate
+          nd.analyst ? 'ANALYSTS:'+nd.analyst.consensus+'('+nd.analyst.buy+'buy/'+nd.analyst.hold+'hold/'+nd.analyst.sell+'sell,'+nd.analyst.total+'total)' : '',
+          // Technicals from localTechMap — CRITICAL for CALC_STOP (H5 gate) and trend
+          (()=>{const t=localTechMap[s.ticker]||{}; return[
             t.trend             ? 'TREND:'+t.trend               : '',
             t.entryQuality      ? 'ENTRY:'+t.entryQuality        : '',
             t.sma200            ? 'SMA200:$'+t.sma200+(t.pctAbove200!=null?'('+(t.pctAbove200>=0?'+':'')+t.pctAbove200+'%)':'') : '',
             t.sma50             ? 'SMA50:$'+t.sma50+(t.pctAbove50!=null?'('+(t.pctAbove50>=0?'+':'')+t.pctAbove50+'%)':'')     : '',
-            t.suggestedStopLoss ? 'CALC_STOP:$'+t.suggestedStopLoss+'('+t.distToStopPct+'%_below)' : '',
+            t.suggestedStopLoss ? 'CALC_STOP:$'+t.suggestedStopLoss+'('+t.distToStopPct+'%_below)' : 'CALC_STOP:UNAVAILABLE',
           ].filter(Boolean).join(' | ')})(),
         ]
         return parts.filter(Boolean).join(' | ')
@@ -949,16 +998,17 @@ export default function Dashboard() {
         return e.ticker+' → '+e.date+' ('+e.tradingDaysAway+'d) '+conf+(e.epsEstimate?' EPS_est=$'+e.epsEstimate:'')
       }).join('\n')
 
-      // Build live news context from background fetch
-      const newsLines = Object.entries(newsData)
+      // Build live news context — localNewsMap is always fresh (fetched above before prompt)
+      const newsLines = Object.entries(localNewsMap)
         .filter(([, d]) => d?.news?.length || d?.analyst || d?.lastEarnings)
         .map(([ticker, d]) => {
           const parts = []
-          if (d.analyst) parts.push('Analysts:'+d.analyst.consensus+'('+d.analyst.total+' covering)')
+          // LastEPS FIRST — critical for H3 gate (MISS = automatic WATCH)
           if (d.lastEarnings) {
             const e = d.lastEarnings
-            parts.push('Last earnings:'+(e.beat?'BEAT':'MISS')+' by '+e.surprise+' ('+e.period+')')
+            parts.push('LastEPS:'+(e.beat?'BEAT':'MISS')+' by '+e.surprise+' ('+e.period+')')
           }
+          if (d.analyst) parts.push('Analysts:'+d.analyst.consensus+'('+d.analyst.buy+'buy/'+d.analyst.hold+'hold/'+d.analyst.sell+'sell)')
           if (d.news?.length) parts.push(...d.news.slice(0,2).map(n=>n.date+':'+n.headline.slice(0,80)))
           return parts.length ? ticker+': '+parts.join(' | ') : null
         })
@@ -1005,47 +1055,6 @@ Every whatCouldGoWrong must name a specific real risk, not a generic phrase.
 Return ONLY this JSON (EXACTLY 10 opportunity cards — rank all universe stocks, best 10 only):
 {"opportunities":[{"ticker":"","company":"","action":"WATCH","currentPrice":"","entryZone":"$X-$Y","stopLoss":"$X","takeProfit":"$X","expectedGain":"15%","riskReward":"3:1","allocation":"10%","whyWeLikeIt":"max 10 words","whatCouldGoWrong":"max 8 words","upcomingEvent":"","eventDate":"DD Mon YYYY","trend":"","entryQuality":"GOOD","returnGate":"PASS","cashChallenge":"PASS","opportunityScore":75}],"marketCondition":"BUY SELECTIVELY","cashRecommendation":"one sentence","cashPct":30,"regime":"one sentence","cio":{"bestTradeToday":"TICKER","bestRiskReward":"TICKER","finalMarketDecision":"BUY SELECTIVELY","watchList":[{"ticker":"","reason":"max 6 words"}],"avoidList":[{"ticker":"","reason":"max 6 words"}]}}`
 
-
-      // Direct browser API call — no Vercel timeout
-      // Pre-fetch SMA for discovered stocks BEFORE AI runs
-      // Fetch top 10 by priority (stocks sorted by earnings proximity)
-      // Split into 2 parallel calls of 5 to stay within technicals route cap
-      const topTickers = (stocks||[]).slice(0, 10).map(s => s.ticker)
-      if (topTickers.length) {
-        try {
-          const batch1 = topTickers.slice(0, 5)
-          const batch2 = topTickers.slice(5, 10)
-          const fetches = [
-            fetch('/api/technicals?symbols=' + batch1.join(','), { cache: 'no-store' }),
-            batch2.length ? fetch('/api/technicals?symbols=' + batch2.join(','), { cache: 'no-store' }) : null,
-          ].filter(Boolean)
-          const results = await Promise.allSettled(fetches)
-          for (const r of results) {
-            if (r.status === 'fulfilled' && r.value.ok) {
-              const techData = await r.value.json()
-              if (techData?.technicals) {
-                setTechMap(prev => ({ ...prev, ...techData.technicals }))
-              }
-            }
-          }
-        } catch {}
-      }
-
-      // Fetch live news/analyst data BEFORE AI call so it's in the prompt
-      // (background fetchNews happens after, but won't help the current run)
-      if (Object.keys(newsData).length === 0) {
-        // First load — fetch inline so AI has real analyst data
-        try {
-          const topT = enrichedStocks.filter(s=>s.price>0).slice(0,10).map(s=>s.ticker).join(',')
-          if (topT) {
-            const nr = await fetch('/api/news?symbols='+topT, { cache:'no-store' })
-            if (nr.ok) {
-              const nd = await nr.json()
-              if (nd.results) setNewsData(prev => ({ ...prev, ...nd.results }))
-            }
-          }
-        } catch {}
-      }
 
       const ai = repairJSON(await claude(prompt, 'cio'))
 
