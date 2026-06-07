@@ -882,11 +882,14 @@ export default function Dashboard() {
     setErrors(p=>({...p,opportunities:null}))
     setLoadingStep('Fetching live prices…')
     try {
-      // Fetch macro context in parallel with market data
-      const [md, mc] = await Promise.all([
-        market('opportunities' + (Object.keys(t212PriceCache).filter(t=>t.length<=6).length ? '&extra='+Object.keys(t212PriceCache).filter(t=>t.length<=6).join(',') : '')),
-        fetchMacroContext(),
-      ])
+      // Fetch market data first — required, failure here shows an error to user
+      const extraTickers = Object.keys(t212PriceCache).filter(t=>t.length<=6)
+      const md = await market('opportunities' + (extraTickers.length ? '&extra='+extraTickers.join(',') : ''))
+
+      // Macro context is optional enrichment — fetch separately so any error here
+      // never breaks opportunities. If /api/macro fails, mc is null and prompt skips it.
+      const mc = await fetchMacroContext().catch(() => null)
+
       setLoadingStep('Building AI analysis…')
       // Destructure FIRST before using stocks
       const { stocks, earningsCalendar, vix, vixRegime, sectors } = md
@@ -1096,7 +1099,8 @@ Return ONLY this JSON (EXACTLY 10 opportunity cards — rank all universe stocks
   const loadGlobal = useCallback(async () => {
     setLoading(p=>({...p,global:true})); setErrors(p=>({...p,global:null}))
     try {
-      const [md, mc] = await Promise.all([ market('global'), fetchMacroContext() ])
+      const md = await market('global')
+      const mc = await fetchMacroContext().catch(() => null)
       const idxLines  = md.indices?.map(m=>`${m.name} ${m.value} ${m.change}`).join(', ')
       const secLines  = md.sectors?.map(s=>s.label+' '+s.change).join(', ')
       const commLines = md.commodities?.map(c=>`${c.name} ${c.value} ${c.change}`).join(', ')
@@ -1126,7 +1130,8 @@ Using ALL the data above — especially the macro context, geopolitical risks, T
   const loadRisk = useCallback(async () => {
     setLoading(p=>({...p,risk:true})); setErrors(p=>({...p,risk:null}))
     try {
-      const [md, mc] = await Promise.all([ market('global'), fetchMacroContext() ])
+      const md = await market('global')
+      const mc = await fetchMacroContext().catch(() => null)
 
       const prompt = `Today: ${new Date().toDateString()}
 VIX proxy: ${md.vix||'N/A'} (${md.vixRegime||'N/A'})
@@ -1225,7 +1230,7 @@ Keep total response under 280 words. Plain English only — no trading jargon.`,
         fetch('/api/market?type=global', { cache:'no-store' }),
       ])
       // Also get macro context (from cache if already loaded)
-      const mc = await fetchMacroContext()
+      const mc = await fetchMacroContext().catch(() => null)
 
       const priceData  = priceRes.status==='fulfilled'  && priceRes.value.ok  ? await priceRes.value.json()  : {}
       const techData   = techRes.status==='fulfilled'   && techRes.value.ok   ? await techRes.value.json()   : {}
@@ -1371,7 +1376,7 @@ Return ONLY compact JSON (no spaces, no newlines):
       const localNewsMap = newsRes.status==='fulfilled'  && newsRes.value.ok   ? (await newsRes.value.json())?.results||{}    : {}
       const marketData = marketRes.status==='fulfilled' && marketRes.value.ok ? await marketRes.value.json() : {}
       // Macro context — from cache if available (fetched on mount)
-      const mc = await fetchMacroContext()
+      const mc = await fetchMacroContext().catch(() => null)
 
       // Update React state for card display
       if (Object.keys(localTechMap).length) setTechMap(prev => ({...prev,...localTechMap}))
