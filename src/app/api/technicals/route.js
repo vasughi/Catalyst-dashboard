@@ -21,10 +21,13 @@ const FH  = 'https://finnhub.io/api/v1'
 const KEY = process.env.FINNHUB_API_KEY
 
 // ── Module-level cache ────────────────────────────────────────────────────────
-// Note: serverless functions may restart between requests
-// Cache helps within a warm instance but won't persist cold starts
+// Vercel serverless functions may cold-start — cache helps within warm instances.
+// TTL set to 4h so intraday refreshes are fast after first load.
 const CACHE = {}
-const TTL   = 4 * 60 * 60 * 1000  // 4 hours (reduced to handle restarts)
+const TTL   = 4 * 60 * 60 * 1000
+
+// Delay helper — Finnhub rate limits hard on simultaneous candle requests
+const delay = ms => new Promise(r => setTimeout(r, ms))
 
 async function fh(path) {
   const sep = path.includes('?') ? '&' : '?'
@@ -122,19 +125,25 @@ export async function GET(request) {
 
   const { searchParams } = new URL(request.url)
   const raw = searchParams.get('symbols') || ''
-  const symbols = [...new Set(raw.split(',').map(s=>s.trim().toUpperCase()).filter(Boolean))].slice(0, 5)
+  // Cap at 4 per call — Finnhub allows ~5 calls/sec, 220-day candle fetch is heavy
+  // Dashboard sends batches of 4 to match this cap
+  const symbols = [...new Set(raw.split(',').map(s=>s.trim().toUpperCase()).filter(Boolean))].slice(0, 4)
 
   if (!symbols.length) return NextResponse.json({ error: 'No symbols. Use ?symbols=NVDA,AVGO' }, { status: 400 })
 
   const results = {}
-  await Promise.allSettled(symbols.map(async sym => {
+
+  // Sequential with 300ms gap — avoids Finnhub rate limit on candle endpoint
+  // Parallel was causing silent drops when 5+ candle requests hit simultaneously
+  for (const sym of symbols) {
     try {
       const data = await computeTechnicals(sym)
       results[sym] = data || null
     } catch {
       results[sym] = null
     }
-  }))
+    if (symbols.indexOf(sym) < symbols.length - 1) await delay(300)
+  }
 
   return NextResponse.json({
     technicals: results,
