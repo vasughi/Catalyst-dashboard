@@ -1068,6 +1068,9 @@ Return ONLY this JSON (EXACTLY 10 opportunity cards — rank all universe stocks
       const pm = Object.fromEntries((stocks||[]).map(s=>[s.ticker,s]))
       const grounded = (ai.opportunities||[]).map(o => {
         const live = pm[o.ticker]||{}
+        // Merge localTechMap — this is the freshly-fetched SMA/trend/CALC_STOP data
+        // localTechMap is authoritative over market route's basic trend estimate
+        const tc = localTechMap[o.ticker] || {}
         return {
           ...o,
           // Map new plain-English field names back to display fields
@@ -1076,8 +1079,11 @@ Return ONLY this JSON (EXACTLY 10 opportunity cards — rank all universe stocks
           catalyst:    o.upcomingEvent     || o.catalyst     || '',
           catalystDate:o.eventDate         || o.catalystDate || '',
           company:                 live.name || o.company || o.ticker,
-          // Always prefer verified live price
-          currentPrice:            live.priceFormatted || (o.currentPrice && o.currentPrice !== 'N/A' ? o.currentPrice : '—'),
+          // Price: prefer verified live price from market route, then AI's stated price
+          currentPrice: live.priceFormatted
+            || (live.price ? '$'+Number(live.price).toFixed(2) : null)
+            || (o.currentPrice && o.currentPrice !== 'N/A' && o.currentPrice !== '—' ? o.currentPrice : null)
+            || '—',
           change1d:                live.change1d || null,
           changePctToday:          live.changePct || 0,
           direction:               live.direction || 'up',
@@ -1086,16 +1092,18 @@ Return ONLY this JSON (EXACTLY 10 opportunity cards — rank all universe stocks
           earningsTradingDaysAway: live.earningsTradingDaysAway ?? null,
           earningsSource:          live.earningsSource || null,
           hasVerifiedEarnings:     live.hasVerifiedEarnings || false,
-          // Verified technical data from market route
-          trend:        live.trend        || o.trend        || null,
-          setup:        live.setup        || o.setup        || null,
-          entryQuality: live.entryQuality || o.entryQuality || null,
-          sma20:        live.sma20        ?? null,
-          sma50:        live.sma50        ?? null,
-          sma200:       live.sma200       ?? null,
-          pctAbove200:  live.pctAbove200  ?? null,
-          nearestSupport:    live.nearestSupport    || null,
-          suggestedStopLoss: live.suggestedStopLoss || null,
+          // Technical data: localTechMap first (fresh SMA computation), then market route, then AI
+          trend:        tc.trend        || live.trend        || o.trend        || null,
+          setup:        tc.setup        || live.setup        || o.setup        || null,
+          entryQuality: tc.entryQuality || live.entryQuality || o.entryQuality || null,
+          sma20:        tc.sma20        ?? live.sma20        ?? null,
+          sma50:        tc.sma50        ?? live.sma50        ?? null,
+          sma200:       tc.sma200       ?? live.sma200       ?? null,
+          pctAbove200:  tc.pctAbove200  ?? live.pctAbove200  ?? null,
+          pctAbove50:   tc.pctAbove50   ?? live.pctAbove50   ?? null,
+          nearestSupport:    tc.nearestSupport    || live.nearestSupport    || null,
+          suggestedStopLoss: tc.suggestedStopLoss || live.suggestedStopLoss || null,
+          distToStopPct:     tc.distToStopPct     || live.distToStopPct     || null,
         }
       })
 
