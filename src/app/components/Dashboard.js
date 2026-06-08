@@ -914,10 +914,16 @@ export default function Dashboard() {
       const topTickers = enrichedStocks.filter(s => s.price > 0).slice(0, 15).map(s => s.ticker)
 
       const [techResults, newsResults] = await Promise.allSettled([
-        // Technicals: batch into two calls of 8 to stay within route cap
+        // Technicals: batches of 4 to match route cap (route silently drops >4)
+        // 15 stocks = 4 batches of 4/4/4/3 — all run in parallel since each batch is sequential internally
         (async () => {
           const merged = {}
-          const batches = [topTickers.slice(0, 8), topTickers.slice(8, 15)].filter(b => b.length)
+          const batches = [
+            topTickers.slice(0,  4),
+            topTickers.slice(4,  8),
+            topTickers.slice(8,  12),
+            topTickers.slice(12, 15),
+          ].filter(b => b.length)
           await Promise.allSettled(batches.map(async batch => {
             try {
               const r = await fetch('/api/technicals?symbols=' + batch.join(','), { cache: 'no-store' })
@@ -1375,17 +1381,29 @@ Return ONLY compact JSON (no spaces, no newlines):
       const top20    = sorted.slice(0, 20)
       const tickers  = top20.map(p => p.ticker)
 
-      // Parallel fetch — all in one go
-      const [priceRes, techRes, newsRes, marketRes, calRes] = await Promise.allSettled([
+      // Parallel fetch — prices, news, market, earnings all at once
+      // Technicals fetched separately in batches of 4 (route cap)
+      const [priceRes, newsRes, marketRes, calRes] = await Promise.allSettled([
         fetch('/api/prices?symbols='    + tickers.join(','),            { cache:'no-store' }),
-        fetch('/api/technicals?symbols='+ tickers.slice(0,5).join(','), { cache:'no-store' }),
         fetch('/api/news?symbols='      + tickers.slice(0,8).join(','), { cache:'no-store' }),
         fetch('/api/market?type=global',                                { cache:'no-store' }),
         fetch('/api/earnings-history',                                    { cache:'no-store' }),
       ])
 
+      // Technicals in batches of 4 to match route cap — top 12 T212 holdings
+      const localTechMap = {}
+      const techBatches = [tickers.slice(0,4), tickers.slice(4,8), tickers.slice(8,12)].filter(b=>b.length)
+      await Promise.allSettled(techBatches.map(async batch => {
+        try {
+          const r = await fetch('/api/technicals?symbols='+batch.join(','), { cache:'no-store' })
+          if (r.ok) {
+            const d = await r.json()
+            if (d?.technicals) Object.assign(localTechMap, d.technicals)
+          }
+        } catch {}
+      }))
+
       const priceData  = priceRes.status==='fulfilled'  && priceRes.value.ok  ? await priceRes.value.json()  : {}
-      const localTechMap = techRes.status==='fulfilled'  && techRes.value.ok   ? (await techRes.value.json())?.technicals||{} : {}
       const localNewsMap = newsRes.status==='fulfilled'  && newsRes.value.ok   ? (await newsRes.value.json())?.results||{}    : {}
       const marketData = marketRes.status==='fulfilled' && marketRes.value.ok ? await marketRes.value.json() : {}
       // Macro context — from cache if available (fetched on mount)
