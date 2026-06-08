@@ -51,7 +51,7 @@ H1. DOWNTREND = below 200 SMA = WATCH. Never BUY below 200 SMA.
 H2. GAP-UP >8% today = WATCH. Never chase gaps.
 H3. Last earnings MISS + analyst target CUT in last 60 days = WATCH. Both conditions together = disqualified.
 H4. Stock down >25% from 52-week high without base-building = WATCH. Falling knives kill accounts.
-H5. CALC_STOP not available in data = WATCH. Never BUY without a verified stop level.
+H5. CALC_STOP:UNAVAILABLE in the stock data = WATCH, no exceptions. If you see CALC_STOP:UNAVAILABLE, you MUST set action to WATCH. This is non-negotiable — buying without a stop is gambling, not trading.
 H6. VIX>25 = maximum 1 BUY in the entire 10 cards. All others WATCH. Hard cap.
 H7. Sector ETF down >5% today = all stocks in that sector are WATCH unless the individual stock is UP today.
 
@@ -80,7 +80,9 @@ MANDATORY whatCouldGoWrong field — must name the REAL risk:
 - If analyst targets cut: say "analysts cutting targets, sentiment turning"
 - Never leave this as a generic phrase. Specific risk or nothing.
 
-When in doubt: WATCH not BUY. There is always another opportunity. There is no recovering from a large loss.`,
+When in doubt: WATCH not BUY. There is always another opportunity. There is no recovering from a large loss.
+
+FINAL CHECK before outputting each card: ask yourself — does this stock have CALC_STOP available? If CALC_STOP:UNAVAILABLE, action must be WATCH. Is VIX>25? Max 1 BUY total. Is VIX 20-25? Max 3 BUYs total. Count your BUYs before finalising.`,
 
   // ── Stock Analyser — single ticker, thorough analysis ─────────────────────
   analyser: `You are a master swing trader and analyst. Output ONLY raw JSON — no markdown, no backticks. Start with {.
