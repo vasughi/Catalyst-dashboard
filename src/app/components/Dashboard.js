@@ -879,10 +879,21 @@ export default function Dashboard() {
   }, [])
 
   const market = useCallback(async (type) => {
-    const r = await fetch(`/api/market?type=${type}`, { cache:'no-store' })
-    const d = await r.json()
-    if (!r.ok) throw new Error(d.error||`Market ${r.status}`)
-    return d
+    // Add a generous timeout so a slow market route gives a clear error, not cryptic "Load failed"
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 55000)
+    try {
+      const r = await fetch(`/api/market?type=${type}`, { cache:'no-store', signal: controller.signal })
+      let d
+      try { d = await r.json() } catch { throw new Error(`Market route returned invalid response (${r.status})`) }
+      if (!r.ok) throw new Error(d.error || `Market route error ${r.status}`)
+      return d
+    } catch (e) {
+      if (e.name === 'AbortError') throw new Error('Market data timed out — the discovery scan took too long. Try Refresh again.')
+      throw new Error(e.message || 'Could not reach market data service')
+    } finally {
+      clearTimeout(timeout)
+    }
   }, [])
 
   // Fetch shared macro context — called once on mount, result reused by all tabs
