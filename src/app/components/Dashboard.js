@@ -331,6 +331,33 @@ function GateBadge({ label, pass }) {
   return <Pill tone={t} size="sm">{i} {label}</Pill>
 }
 
+// Parse a price string like "$285" or "285.00" → number, or null
+function parsePrice(v) {
+  if (v == null) return null
+  const n = parseFloat(String(v).replace(/[^0-9.]/g, ''))
+  return isNaN(n) || n <= 0 ? null : n
+}
+
+// Compute the 15%+ path gate from the ACTUAL target vs current price.
+// This is authoritative over any AI-provided returnGate field so the badge
+// can never contradict the target/expected-gain shown on the same card.
+// Returns true / false / null (unknown).
+function computeReturnGate(opp) {
+  const price  = parsePrice(opp.currentPrice)
+  const target = parsePrice(opp.takeProfit) || parsePrice(opp.target)
+  if (price && target) {
+    return ((target - price) / price) >= 0.15
+  }
+  // Fall back to expectedGain percentage if target/price unavailable
+  const gainPct = parseFloat(String(opp.expectedGain || '').replace(/[^0-9.]/g, ''))
+  if (!isNaN(gainPct) && gainPct > 0) return gainPct >= 15
+  // Last resort: AI's own gate field
+  if (opp.returnGate === 'PASS') return true
+  if (opp.returnGate === 'FAIL') return false
+  return null
+}
+
+
 function ScoreBar({ score }) {
   const pct   = Math.min(score, 100)
   const color = score>=80 ? C.up : score>=70 ? C.accent : score>=60 ? C.amber : C.down
@@ -443,7 +470,7 @@ function OppCard({ opp, rank, active, onClick, onDeepDive, deepDiveLoading, deep
 
       {/* Gates */}
       <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:12 }}>
-        <GateBadge label="15%+ PATH EXISTS" pass={opp.returnGate==='PASS'?true:opp.returnGate==='FAIL'?false:null} />
+        <GateBadge label="15%+ PATH EXISTS" pass={computeReturnGate(opp)} />
         <GateBadge label="BEATS HOLDING CASH" pass={opp.cashChallenge==='PASS'?true:opp.cashChallenge==='FAIL'?false:null} />
         <Pill tone="green" size="sm">✓ LIVE PRICE</Pill>
       </div>
@@ -1044,6 +1071,7 @@ RULES:
 1. Stocks with earnings 33-45 days away are PRIME BUY candidates — especially [CAL] auto-discovered ones
 2. Stock up >8% today = max WATCH
 3. Only BUY if 15%+ gain path within 45 trading days
+   returnGate field: set PASS only if (takeProfit - currentPrice) / currentPrice >= 15%. Otherwise FAIL. The takeProfit you give MUST be consistent with returnGate — if takeProfit is 20% above price, returnGate MUST be PASS.
 4. TREND:DOWNTREND = max WATCH — never BUY a downtrend
 5. TREND:PULLBACK_IN_UPTREND = ideal entry — prioritise these for BUY
 6. If SMA200 available: use CALC_STOP as stop loss, calculate R/R from real numbers
@@ -2162,7 +2190,7 @@ Mark each sentence with (FACT), (ANALYSIS) or (OPINION). Under 260 words.`, 'dee
 
                 {/* Gates */}
                 <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:12 }}>
-                  <GateBadge label="15%+ PATH EXISTS" pass={opp.returnGate==='PASS'?true:opp.returnGate==='FAIL'?false:null}/>
+                  <GateBadge label="15%+ PATH EXISTS" pass={computeReturnGate(opp)}/>
                   <GateBadge label="BEATS HOLDING CASH" pass={opp.cashChallenge==='PASS'?true:opp.cashChallenge==='FAIL'?false:null}/>
                   <Pill tone="green" size="sm">✓ LIVE PRICE</Pill>
                 </div>
