@@ -131,20 +131,18 @@ async function computeTechnicals(sym, price) {
 }
 
 export async function GET(request) {
-  if (!KEY) return NextResponse.json({ error: 'FINNHUB_API_KEY not set' }, { status: 500 })
+  if (!TD_KEY) return NextResponse.json({ error: 'TWELVE_DATA_API_KEY not set', technicals: {} }, { status: 200 })
 
   const { searchParams } = new URL(request.url)
   const raw = searchParams.get('symbols') || ''
-  // Cap at 4 per call — Finnhub allows ~5 calls/sec, 220-day candle fetch is heavy
-  // Dashboard sends batches of 4 to match this cap
+  // Cap at 4 per call — TwelveData free tier rate-limited, candle fetch is one call each
   const symbols = [...new Set(raw.split(',').map(s=>s.trim().toUpperCase()).filter(Boolean))].slice(0, 4)
 
-  if (!symbols.length) return NextResponse.json({ error: 'No symbols. Use ?symbols=NVDA,AVGO' }, { status: 400 })
+  if (!symbols.length) return NextResponse.json({ error: 'No symbols. Use ?symbols=NVDA,AVGO', technicals: {} }, { status: 200 })
 
   const results = {}
 
-  // Sequential with 300ms gap — avoids Finnhub rate limit on candle endpoint
-  // Parallel was causing silent drops when 5+ candle requests hit simultaneously
+  // Sequential with 1s gap — stays within TwelveData free-tier rate limit
   for (const sym of symbols) {
     try {
       const data = await computeTechnicals(sym)
