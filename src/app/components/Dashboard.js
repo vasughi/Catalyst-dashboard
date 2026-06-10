@@ -954,23 +954,18 @@ export default function Dashboard() {
       const topTickers = enrichedStocks.filter(s => s.price > 0).slice(0, 8).map(s => s.ticker)
 
       const [techResults, newsResults] = await Promise.allSettled([
-        // Technicals: 2 batches of 4, each batch fetches sequentially with 1s gap
+        // Technicals: all 8 in ONE call — route batches them into a single TwelveData
+        // request (1 rate-limit hit total, not 8). Cached results return instantly.
         (async () => {
           const merged = {}
-          const batches = [
-            topTickers.slice(0, 4),
-            topTickers.slice(4, 8),
-          ].filter(b => b.length)
-          // Run batches sequentially (not parallel) to respect TwelveData rate limit
-          for (const batch of batches) {
-            try {
-              const r = await fetch('/api/technicals?symbols=' + batch.join(','), { cache: 'no-store' })
-              if (r.ok) {
-                const d = await r.json()
-                if (d?.technicals) Object.assign(merged, d.technicals)
-              }
-            } catch {}
-          }
+          try {
+            const r = await fetch('/api/technicals?symbols=' + topTickers.join(','), { cache: 'no-store' })
+            if (r.ok) {
+              const d = await r.json()
+              if (d?.technicals) Object.assign(merged, d.technicals)
+              if (d?.rateLimited) console.warn('[CATALYST] Technicals rate-limited by TwelveData — some SMA data unavailable this load')
+            }
+          } catch {}
           return merged
         })(),
         // News + analyst + lastEarnings: always fresh, never skip on refresh
@@ -1437,18 +1432,15 @@ Return ONLY compact JSON (no spaces, no newlines):
         fetch('/api/earnings-history',                                    { cache:'no-store' }),
       ])
 
-      // Technicals in batches of 4 to match route cap — top 12 T212 holdings
+      // Technicals — top 8 holdings in ONE batch call (route batches into single TwelveData request)
       const localTechMap = {}
-      const techBatches = [tickers.slice(0,4), tickers.slice(4,8), tickers.slice(8,12)].filter(b=>b.length)
-      await Promise.allSettled(techBatches.map(async batch => {
-        try {
-          const r = await fetch('/api/technicals?symbols='+batch.join(','), { cache:'no-store' })
-          if (r.ok) {
-            const d = await r.json()
-            if (d?.technicals) Object.assign(localTechMap, d.technicals)
-          }
-        } catch {}
-      }))
+      try {
+        const r = await fetch('/api/technicals?symbols='+tickers.slice(0,8).join(','), { cache:'no-store' })
+        if (r.ok) {
+          const d = await r.json()
+          if (d?.technicals) Object.assign(localTechMap, d.technicals)
+        }
+      } catch {}
 
       const priceData  = priceRes.status==='fulfilled'  && priceRes.value.ok  ? await priceRes.value.json()  : {}
       const localNewsMap = newsRes.status==='fulfilled'  && newsRes.value.ok   ? (await newsRes.value.json())?.results||{}    : {}
