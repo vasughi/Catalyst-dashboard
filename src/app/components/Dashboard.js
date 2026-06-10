@@ -938,20 +938,20 @@ export default function Dashboard() {
       //   - lastEarnings BEAT/MISS → required for H3 gate (miss + target cut = WATCH)
       //   - analyst consensus → required for Q3 gate (miss needs 60% BUY to override)
       // Both fetches run in parallel, capped to top 15 stocks by earnings proximity.
-      const topTickers = enrichedStocks.filter(s => s.price > 0).slice(0, 15).map(s => s.ticker)
+      // TwelveData free tier is rate-limited (~8 calls/min), so fetch technicals
+      // for the top 8 stocks only — these are the highest-priority by earnings proximity
+      const topTickers = enrichedStocks.filter(s => s.price > 0).slice(0, 8).map(s => s.ticker)
 
       const [techResults, newsResults] = await Promise.allSettled([
-        // Technicals: batches of 4 to match route cap (route silently drops >4)
-        // 15 stocks = 4 batches of 4/4/4/3 — all run in parallel since each batch is sequential internally
+        // Technicals: 2 batches of 4, each batch fetches sequentially with 1s gap
         (async () => {
           const merged = {}
           const batches = [
-            topTickers.slice(0,  4),
-            topTickers.slice(4,  8),
-            topTickers.slice(8,  12),
-            topTickers.slice(12, 15),
+            topTickers.slice(0, 4),
+            topTickers.slice(4, 8),
           ].filter(b => b.length)
-          await Promise.allSettled(batches.map(async batch => {
+          // Run batches sequentially (not parallel) to respect TwelveData rate limit
+          for (const batch of batches) {
             try {
               const r = await fetch('/api/technicals?symbols=' + batch.join(','), { cache: 'no-store' })
               if (r.ok) {
@@ -959,7 +959,7 @@ export default function Dashboard() {
                 if (d?.technicals) Object.assign(merged, d.technicals)
               }
             } catch {}
-          }))
+          }
           return merged
         })(),
         // News + analyst + lastEarnings: always fresh, never skip on refresh
