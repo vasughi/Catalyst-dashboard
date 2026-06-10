@@ -35,23 +35,48 @@ const delay = ms => new Promise(r => setTimeout(r, ms))
 
 // Fetch daily closes from TwelveData /time_series (works on free tier)
 // Returns array of closing prices oldest→newest, or null
-async function getDailyCandles(sym, days = 220) {
-  if (!TD_KEY) return null
+// Fetch daily closes for MULTIPLE symbols in ONE call using TwelveData batch.
+// TwelveData allows comma-separated symbols — this means 1 rate-limit hit for all
+// 4 stocks instead of 4 separate hits (critical on the 8-calls/min free tier).
+// Returns { SYM: [closes oldest→newest], ... } and a rateLimited flag.
+async function getBatchCandles(symbols, days = 220) {
+  if (!TD_KEY || !symbols.length) return { data: {}, rateLimited: false }
+  const out = {}
+  let rateLimited = false
   try {
-    const url = `${TD}/time_series?symbol=${encodeURIComponent(sym)}&interval=1day&outputsize=${days}&apikey=${TD_KEY}`
-    const res = await fetch(url, { cache: 'no-store' })
-    if (!res.ok) return null
-    const d = await res.json()
-    if (d.status === 'error' || !Array.isArray(d.values) || d.values.length < 20) return null
-    // TwelveData returns newest first — reverse to oldest→newest for SMA
-    const closes = d.values
-      .map(v => parseFloat(v.close))
-      .filter(n => !isNaN(n) && n > 0)
-      .reverse()
-    return closes.length >= 20 ? closes : null
+    const syms = symbols.join(',')
+    const url  = `${TD}/time_series?symbol=${encodeURIComponent(syms)}&interval=1day&outputsize=${days}&apikey=${TD_KEY}`
+    const res  = await fetch(url, { cache: 'no-store' })
+    if (!res.ok) {
+      if (res.status === 429) rateLimited = true
+      return { data: {}, rateLimited }
+    }
+    const json = await res.json()
+
+    // TwelveData returns different shapes for single vs multi symbol:
+    // - single symbol: { values: [...], status: 'ok' }
+    // - multi symbol:  { 'AAPL': { values: [...] }, 'MSFT': { values: [...] } }
+    const extract = obj => {
+      if (!obj) return null
+      // 429 / error comes back as { code: 429, status: 'error', message: '...' }
+      if (obj.status === 'error') {
+        if (obj.code === 429 || /rate limit|api credits/i.test(obj.message || '')) rateLimited = true
+        return null
+      }
+      if (!Array.isArray(obj.values) || obj.values.length < 20) return null
+      const closes = obj.values.map(v => parseFloat(v.close)).filter(n => !isNaN(n) && n > 0).reverse()
+      return closes.length >= 20 ? closes : null
+    }
+
+    if (symbols.length === 1) {
+      out[symbols[0]] = extract(json)
+    } else {
+      for (const sym of symbols) out[sym] = extract(json[sym])
+    }
   } catch {
-    return null
+    // network error — leave out empty
   }
+  return { data: out, rateLimited }
 }
 
 function sma(closes, n) {
@@ -59,15 +84,11 @@ function sma(closes, n) {
   return parseFloat((closes.slice(-n).reduce((a,b)=>a+b,0)/n).toFixed(2))
 }
 
-async function computeTechnicals(sym, price) {
-  // Check cache first
-  const cached = CACHE[sym]
-  if (cached && Date.now() - cached.ts < TTL) return cached.data
+// Compute technicals from already-fetched closes (no fetching here)
+function computeTechnicals(sym, closes) {
+  if (!closes || closes.length < 20) return null
 
-  const closes = await getDailyCandles(sym)
-  if (!closes) return null
-
-  const p    = price || closes[closes.length - 1]
+  const p    = closes[closes.length - 1]
   const s20  = sma(closes, 20)
   const s50  = sma(closes, Math.min(50,  closes.length))
   const s200 = sma(closes, Math.min(200, closes.length))
@@ -126,7 +147,6 @@ async function computeTechnicals(sym, price) {
     computedAt:        new Date().toISOString(),
   }
 
-  CACHE[sym] = { data, ts: Date.now() }
   return data
 }
 
@@ -135,29 +155,38 @@ export async function GET(request) {
 
   const { searchParams } = new URL(request.url)
   const raw = searchParams.get('symbols') || ''
-  // Cap at 4 per call — TwelveData free tier rate-limited, candle fetch is one call each
-  const symbols = [...new Set(raw.split(',').map(s=>s.trim().toUpperCase()).filter(Boolean))].slice(0, 4)
+  // Up to 8 symbols — but they're fetched in ONE batch call, so only 1 rate-limit hit
+  const symbols = [...new Set(raw.split(',').map(s=>s.trim().toUpperCase()).filter(Boolean))].slice(0, 8)
 
   if (!symbols.length) return NextResponse.json({ error: 'No symbols. Use ?symbols=NVDA,AVGO', technicals: {} }, { status: 200 })
 
   const results = {}
 
-  // Sequential with 1s gap — stays within TwelveData free-tier rate limit
+  // 1. Serve from cache where fresh — these don't count against rate limit
+  const needFetch = []
   for (const sym of symbols) {
-    try {
-      const data = await computeTechnicals(sym)
-      results[sym] = data || null
-    } catch {
-      results[sym] = null
+    const c = CACHE[sym]
+    if (c && Date.now() - c.ts < TTL) results[sym] = c.data
+    else needFetch.push(sym)
+  }
+
+  // 2. Batch-fetch the rest in ONE TwelveData call (1 rate-limit hit for all)
+  let rateLimited = false
+  if (needFetch.length) {
+    const { data: candlesBySym, rateLimited: rl } = await getBatchCandles(needFetch)
+    rateLimited = rl
+    for (const sym of needFetch) {
+      const closes = candlesBySym[sym]
+      const computed = closes ? computeTechnicals(sym, closes) : null
+      results[sym] = computed
+      if (computed) CACHE[sym] = { data: computed, ts: Date.now() }
     }
-    if (symbols.indexOf(sym) < symbols.length - 1) await delay(1000)
   }
 
   return NextResponse.json({
     technicals: results,
-    cached: Object.keys(results).filter(s => {
-      const c = CACHE[s]; return c && Date.now()-c.ts < TTL
-    }).length,
+    cached: symbols.filter(s => { const c = CACHE[s]; return c && Date.now()-c.ts < TTL }).length,
+    rateLimited,
     fetchedAt: new Date().toISOString(),
   }, {
     headers: { 'Cache-Control': 'no-store' }
