@@ -17,8 +17,12 @@ import { NextResponse } from 'next/server'
 export const dynamic    = 'force-dynamic'
 export const maxDuration = 60
 
-const FH  = 'https://finnhub.io/api/v1'
-const KEY = process.env.FINNHUB_API_KEY
+// TwelveData provides daily candles on the free tier (Finnhub /stock/candle is premium-only now)
+const TD     = 'https://api.twelvedata.com'
+const TD_KEY = process.env.TWELVE_DATA_API_KEY
+// Finnhub kept as fallback for quote only
+const FH     = 'https://finnhub.io/api/v1'
+const FH_KEY = process.env.FINNHUB_API_KEY
 
 // ── Module-level cache ────────────────────────────────────────────────────────
 // Vercel serverless functions may cold-start — cache helps within warm instances.
@@ -26,22 +30,28 @@ const KEY = process.env.FINNHUB_API_KEY
 const CACHE = {}
 const TTL   = 4 * 60 * 60 * 1000
 
-// Delay helper — Finnhub rate limits hard on simultaneous candle requests
+// Delay helper — stay within TwelveData free-tier rate limits (8 calls/min)
 const delay = ms => new Promise(r => setTimeout(r, ms))
 
-async function fh(path) {
-  const sep = path.includes('?') ? '&' : '?'
-  const res = await fetch(`${FH}${path}${sep}token=${KEY}`, { cache: 'no-store' })
-  if (!res.ok) throw new Error(`${res.status}`)
-  return res.json()
-}
-
+// Fetch daily closes from TwelveData /time_series (works on free tier)
+// Returns array of closing prices oldest→newest, or null
 async function getDailyCandles(sym, days = 220) {
-  const to   = Math.floor(Date.now() / 1000)
-  const from = to - days * 86400
-  const d    = await fh(`/stock/candle?symbol=${encodeURIComponent(sym)}&resolution=D&from=${from}&to=${to}`)
-  if (!d || d.s !== 'ok' || !Array.isArray(d.c) || d.c.length < 20) return null
-  return d.c
+  if (!TD_KEY) return null
+  try {
+    const url = `${TD}/time_series?symbol=${encodeURIComponent(sym)}&interval=1day&outputsize=${days}&apikey=${TD_KEY}`
+    const res = await fetch(url, { cache: 'no-store' })
+    if (!res.ok) return null
+    const d = await res.json()
+    if (d.status === 'error' || !Array.isArray(d.values) || d.values.length < 20) return null
+    // TwelveData returns newest first — reverse to oldest→newest for SMA
+    const closes = d.values
+      .map(v => parseFloat(v.close))
+      .filter(n => !isNaN(n) && n > 0)
+      .reverse()
+    return closes.length >= 20 ? closes : null
+  } catch {
+    return null
+  }
 }
 
 function sma(closes, n) {
@@ -142,7 +152,7 @@ export async function GET(request) {
     } catch {
       results[sym] = null
     }
-    if (symbols.indexOf(sym) < symbols.length - 1) await delay(300)
+    if (symbols.indexOf(sym) < symbols.length - 1) await delay(1000)
   }
 
   return NextResponse.json({
