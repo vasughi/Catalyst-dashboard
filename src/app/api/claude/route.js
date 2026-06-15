@@ -25,7 +25,7 @@ const MODELS = {
   cio:      'claude-sonnet-4-6',           // Opportunities — Sonnet handles structured JSON ranking well
   analyser: 'claude-sonnet-4-6',           // Stock Analyser — structured output, Sonnet fine
   t212:     'claude-sonnet-4-6',            // T212 portfolio — Sonnet follows compact JSON instruction reliably
-  deepdive: 'claude-opus-4-6',             // Deep dive — narrative quality, Opus only here
+  deepdive: 'claude-opus-4-8',             // Deep dive — narrative quality, current flagship Opus
   json:     'claude-haiku-4-5-20251001',   // Non-critical: JSON repair only
 }
 
@@ -67,6 +67,16 @@ STRONG UPTREND = above 200 SMA + above 50 SMA + within 10% of 52-week high
 PULLBACK IN UPTREND = above 200 SMA, pulled back to support, not extended
 RECOVERING = above 200 SMA but down 15-25% from recent high = WATCH, not BUY
 DOWNTREND = below 200 SMA = never BUY
+
+POST-EARNINGS PULLBACK PLAYS (stocks tagged RECENT_BEAT):
+These reported in the last 30 days and BEAT — their catalyst is behind them, not ahead.
+This is a valid setup type. Evaluate them as: did the stock beat, run up, then pull back
+to a buyable technical level (near 50 SMA or recent support)?
+- If pulled back to support + still above 200 SMA + R/R works = legitimate BUY candidate
+- If still extended near post-earnings highs = WATCH for the pullback
+- If now below 200 SMA or falling hard = AVOID (the beat didn't hold)
+- No upcoming earnings catalyst means these are mean-reversion + thesis trades, so note
+  in whatCouldGoWrong that there's no near-term catalyst to drive the next leg.
 
 MACRO FACTORS (from macro context block):
 - Iran conflict = defence thesis stronger, but check if the specific stock had recent miss
