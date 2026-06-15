@@ -859,11 +859,17 @@ export default function Dashboard() {
   const claude = useCallback(async (prompt, mode='json') => {
     // Use streaming via /api/claude — collects full streamed response,
     // bypassing Vercel timeout by using Edge runtime (no 10s limit)
-    const r = await fetch('/api/claude', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, mode }),
-    })
+    let r
+    try {
+      r = await fetch('/api/claude', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, mode }),
+      })
+    } catch (e) {
+      // Raw network failure — give a clear message instead of "Load failed"
+      throw new Error('Could not reach the AI service (network or timeout). Try Refresh again.')
+    }
     // Handle streaming response
     if (r.headers.get('content-type')?.includes('text/plain')) {
       const text = await r.text()
@@ -889,7 +895,12 @@ export default function Dashboard() {
       if (!r.ok) throw new Error(d.error || `Market route error ${r.status}`)
       return d
     } catch (e) {
-      if (e.name === 'AbortError') throw new Error('Market data timed out — the discovery scan took too long. Try Refresh again.')
+      if (e.name === 'AbortError') throw new Error('Market data timed out (>55s). The discovery scan is too heavy for the current plan — enable Fluid Compute in Vercel settings, or tap Retry.')
+      // Safari/Chrome throw "TypeError: Load failed" / "Failed to fetch" when the
+      // serverless function is killed by Vercel's 10s Hobby-plan timeout before responding
+      if (e.name === 'TypeError' || /load failed|failed to fetch/i.test(e.message || '')) {
+        throw new Error('Market data request was cut off (likely Vercel 10s timeout). Enable Fluid Compute in Vercel project settings to fix, then tap Retry.')
+      }
       throw new Error(e.message || 'Could not reach market data service')
     } finally {
       clearTimeout(timeout)
