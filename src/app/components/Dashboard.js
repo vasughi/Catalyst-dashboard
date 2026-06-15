@@ -416,6 +416,7 @@ function OppCard({ opp, rank, active, onClick, onDeepDive, deepDiveLoading, deep
             </span>
           )}
           {gapUp && <Pill tone="amber" size="sm">⚠ GAP UP</Pill>}
+          {opp.recentEarnings && <Pill tone="blue" size="sm">↩ POST-EARNINGS</Pill>}
         </div>
         <ActionBadge action={opp.action} size="lg" />
       </div>
@@ -1011,6 +1012,8 @@ export default function Dashboard() {
           s.hasVerifiedEarnings
             ? ('EARNINGS='+s.earningsDate+' in_'+s.earningsTradingDaysAway+'d'+(s.earningsSource==='estimate'?' [EST]':' [VERIFIED]')+(s.epsEstimate?' EPS=$'+s.epsEstimate:''))
             : 'NO_EARNINGS',
+          // Post-earnings pullback play — reported recently and beat, catalyst behind it
+          s.recentEarnings ? 'RECENT_BEAT:reported_'+s.recentEarnings.daysAgo+'d_ago_evaluate_as_pullback_to_support' : '',
           s.bigMoverToday ? 'GAP_UP>8%_APPLY_PENALTY' : '',
           hist ? 'HIST:'+hist.label+(hist.live?' [LIVE]':'') : '',
           // Last earnings beat/miss — CRITICAL for H3 hard stop
@@ -1137,6 +1140,7 @@ Return ONLY this JSON (EXACTLY 10 opportunity cards — rank all universe stocks
           earningsTradingDaysAway: live.earningsTradingDaysAway ?? null,
           earningsSource:          live.earningsSource || null,
           hasVerifiedEarnings:     live.hasVerifiedEarnings || false,
+          recentEarnings:          live.recentEarnings || null,
           // Technical data: localTechMap first (fresh SMA computation), then market route, then AI
           trend:        tc.trend        || live.trend        || o.trend        || null,
           setup:        tc.setup        || live.setup        || o.setup        || null,
