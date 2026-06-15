@@ -330,14 +330,39 @@ export async function GET(request) {
     const in45  = addDays(today, 45)
 
     // Phase 1: Fetch everything in parallel
-    // - Full earnings calendar (all stocks) for next 45 days
+    // - Full earnings calendar (all stocks) for next 45 days (FORWARD scan)
+    // - Recent earnings calendar (last 30 days) for POST-EARNINGS PULLBACK plays (BACKWARD scan)
     // - Sector ETF prices for context
     // - VIX
-    const [rawCalendar, sectorQ, vixQ] = await Promise.all([
+    const back30 = addDays(today, -30)
+    const [rawCalendar, recentCalendar, sectorQ, vixQ] = await Promise.all([
       fhSafe('/calendar/earnings?from=' + isoDate(today) + '&to=' + isoDate(in45)).then(d => d?.earningsCalendar || []),
+      fhSafe('/calendar/earnings?from=' + isoDate(back30) + '&to=' + isoDate(today)).then(d => d?.earningsCalendar || []),
       fetchPrices(['XLK','ITA','XSD','CIBR','XLE']),
       safeQuote('VIXY'),
     ])
+
+    // Build a set of stocks that reported in the last 30 days (for pullback detection)
+    // Maps ticker → { date, daysAgo, epsActual, epsEstimate, beat } so the AI can
+    // evaluate "recent beat + pullback to support" setups like CIEN that the forward
+    // scan misses entirely (their catalyst is behind them, not ahead).
+    const recentEarnings = {}
+    recentCalendar.forEach(e => {
+      if (!e.symbol) return
+      if (!QUALITY_UNIVERSE.has(e.symbol) && !extraTickers.includes(e.symbol)) return
+      const daysAgo = e.date ? Math.round((today - new Date(e.date)) / 86400000) : null
+      if (daysAgo === null || daysAgo < 0 || daysAgo > 30) return
+      // Determine beat/miss if both actual and estimate are present
+      const act = e.epsActual ?? null
+      const est = e.epsEstimate ?? null
+      const beat = (act != null && est != null) ? act > est : null
+      if (!recentEarnings[e.symbol] || daysAgo < recentEarnings[e.symbol].daysAgo) {
+        recentEarnings[e.symbol] = {
+          ticker: e.symbol, date: e.date, daysAgo,
+          epsActual: act, epsEstimate: est, beat,
+        }
+      }
+    })
 
     // Phase 2: Filter calendar to quality universe
     // Build a map of upcoming earnings for quality stocks only
@@ -421,14 +446,37 @@ export async function GET(request) {
       }
     })
 
+    // Phase 3.5: Add RECENT BEATERS (reported in last 30 days) that aren't already
+    // in the map. These are post-earnings pullback candidates — the catalyst is behind
+    // them, so the forward scan missed them, but a beat + pullback to support is a
+    // valid swing setup (e.g. CIEN: beat Jun 4, ran up, pulled back to support).
+    Object.values(recentEarnings).forEach(re => {
+      // Only surface beats — a recent miss that's falling is a falling knife, not a setup
+      if (re.beat === false) return
+      if (!earningsMap[re.ticker]) {
+        earningsMap[re.ticker] = {
+          ticker: re.ticker, date: null, tradingDaysAway: null,
+          epsEstimate: null, source: null,
+          discoveryMethod: 'recent-beat',
+          recentEarnings: re,   // attach so Phase 5 can flag it
+        }
+      } else {
+        // Already in map — annotate with recent earnings info
+        earningsMap[re.ticker].recentEarnings = re
+      }
+    })
+
     // Phase 4: Fetch prices for all candidates (up to 50)
     const candidates = Object.keys(earningsMap)
-    // Prioritise: earnings within 45 days first, then watches
-    const prioritised = candidates.sort((a, b) => {
-      const aD = earningsMap[a].tradingDaysAway ?? 999
-      const bD = earningsMap[b].tradingDaysAway ?? 999
-      return aD - bD
-    }).slice(0, 45)  // cap at 45 — quality filter keeps this manageable
+    // Prioritise: upcoming earnings within 45 days first, then recent beaters
+    // (post-earnings pullback plays), then plain watches.
+    const sortPriority = sym => {
+      const e = earningsMap[sym]
+      if (e.tradingDaysAway != null) return e.tradingDaysAway          // 0-45: soonest first
+      if (e.recentEarnings) return 100 + e.recentEarnings.daysAgo      // recent beaters: 100-130
+      return 999                                                       // plain watchlist last
+    }
+    const prioritised = candidates.sort((a, b) => sortPriority(a) - sortPriority(b)).slice(0, 45)
 
     const priceMap = await fetchPrices(prioritised)
 
@@ -453,7 +501,8 @@ export async function GET(request) {
           earningsSource:          ec.source ?? null,
           hasVerifiedEarnings:     !!ec.date,
           discoveredFromCalendar:  ec.source === 'finnhub',
-          discoveryMethod:         ec.discoveryMethod || null,  // 'calendar' | 'fallback' | 'watchlist'
+          discoveryMethod:         ec.discoveryMethod || null,  // 'calendar' | 'fallback' | 'watchlist' | 'recent-beat'
+          recentEarnings:          ec.recentEarnings || null,    // { date, daysAgo, beat } for post-earnings pullback plays
         }
       })
       .sort((a, b) => {
